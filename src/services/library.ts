@@ -13,6 +13,7 @@ import type {
   LiteraturePaper,
   MoveCategoryRequest,
   RelocateAttachmentRequest,
+  ReorderPapersRequest,
   UpdatePaperRequest,
   UpdateCategoryRequest,
 } from '../types/library';
@@ -116,6 +117,16 @@ export async function listLibraryPapers(
     return await invoke<LiteraturePaper[]>('library_list_papers', { request });
   } catch (error) {
     throw new Error(toErrorMessage(error, '读取文献列表失败'));
+  }
+}
+
+export async function reorderLibraryPapers(
+  request: ReorderPapersRequest,
+): Promise<void> {
+  try {
+    await invoke('library_reorder_papers', { request });
+  } catch (error) {
+    throw new Error(toErrorMessage(error, '保存文献排序失败'));
   }
 }
 

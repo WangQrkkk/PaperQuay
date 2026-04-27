@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::time::Duration;
 
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
@@ -22,6 +23,7 @@ pub struct OpenAICompatibleSummaryOptions {
     title: String,
     authors: Option<String>,
     year: Option<String>,
+    output_language: Option<String>,
     blocks: Vec<SummaryBlockInput>,
     document_text: Option<String>,
 }
@@ -118,6 +120,76 @@ const SUMMARY_FIELD_NAMES: [&str; 12] = [
     "takeaways",
     "keywords",
 ];
+
+const ABSTRACT_KEYS: [&str; 5] = ["abstract", "摘要", "summary", "overview", "synopsis"];
+const BACKGROUND_KEYS: [&str; 8] = [
+    "introduction",
+    "background",
+    "motivation",
+    "related work",
+    "literature",
+    "existing",
+    "背景",
+    "相关工作",
+];
+const PROBLEM_KEYS: [&str; 9] = [
+    "problem",
+    "challenge",
+    "objective",
+    "goal",
+    "constraint",
+    "uncertain",
+    "gap",
+    "问题",
+    "挑战",
+];
+const REVIEW_METHOD_KEYS: [&str; 12] = [
+    "review",
+    "survey",
+    "taxonomy",
+    "classification",
+    "categor",
+    "compare",
+    "comparison",
+    "method",
+    "approach",
+    "algorithm",
+    "综述",
+    "分类",
+];
+const EXPERIMENT_KEYS: [&str; 12] = [
+    "experiment",
+    "evaluation",
+    "result",
+    "simulation",
+    "benchmark",
+    "dataset",
+    "metric",
+    "performance",
+    "case study",
+    "validation",
+    "实验",
+    "结果",
+];
+const CONCLUSION_KEYS: [&str; 10] = [
+    "conclusion",
+    "discussion",
+    "future",
+    "limitation",
+    "open issue",
+    "open challenge",
+    "finding",
+    "takeaway",
+    "结论",
+    "局限",
+];
+
+#[derive(Debug, Clone)]
+struct SummaryEvidenceUnit {
+    index: usize,
+    label: String,
+    text: String,
+}
 
 fn build_chat_completions_url(base_url: &str) -> String {
     let trimmed = base_url.trim().trim_end_matches('/');
@@ -640,6 +712,148 @@ fn materialize_summary(raw: RawPaperSummary, fallback_title: &str) -> PaperSumma
     }
 }
 
+fn prefers_chinese(language: &str) -> bool {
+    let lower = language.to_lowercase();
+    lower.contains("chinese") || lower.contains("zh") || language.contains('中')
+}
+
+fn evidence_snippets(document_context: &str, limit: usize) -> Vec<String> {
+    document_context
+        .lines()
+        .filter_map(|line| {
+            let trimmed = line.trim();
+
+            if !trimmed.starts_with("- [") {
+                return None;
+            }
+
+            let text = trimmed
+                .split_once("] ")
+                .map(|(_, value)| value)
+                .unwrap_or(trimmed)
+                .trim()
+                .trim_start_matches("- ")
+                .trim()
+                .to_string();
+
+            if text.is_empty() {
+                return None;
+            }
+
+            Some(truncate_chars(&text, 220))
+        })
+        .take(limit)
+        .collect()
+}
+
+fn build_extractive_fallback_summary(
+    title: &str,
+    authors: Option<&str>,
+    year: Option<&str>,
+    document_context: &str,
+    output_language: &str,
+) -> PaperSummary {
+    let snippets = evidence_snippets(document_context, 8);
+    let joined = if snippets.is_empty() {
+        title.to_string()
+    } else {
+        snippets.join(" ")
+    };
+
+    if prefers_chinese(output_language) {
+        return PaperSummary {
+            title: title.to_string(),
+            r#abstract: format!(
+                "本地稳定兜底摘要：{}",
+                truncate_chars(&joined, 420)
+            ),
+            overview: format!(
+                "模型返回结果无法稳定解析为结构化 JSON，因此当前概览使用本地抽取式证据兜底生成。该摘要只依据文档中被抽取出的代表性片段，适合快速判断论文主题，但建议重新生成以获得更完整的 AI 分析。{}{}",
+                authors.map(|value| format!("作者：{}。", value)).unwrap_or_default(),
+                year.map(|value| format!("年份：{}。", value)).unwrap_or_default(),
+            ),
+            background: snippets
+                .get(0)
+                .cloned()
+                .unwrap_or_else(|| "未在当前内容中明确说明。".to_string()),
+            research_problem: snippets
+                .get(1)
+                .cloned()
+                .unwrap_or_else(|| "未在当前内容中明确说明。".to_string()),
+            approach: snippets
+                .get(2)
+                .cloned()
+                .unwrap_or_else(|| "未在当前内容中明确说明。".to_string()),
+            experiment_setup: snippets
+                .get(3)
+                .cloned()
+                .unwrap_or_else(|| "未在当前内容中明确说明。".to_string()),
+            key_findings: if snippets.is_empty() {
+                vec!["未从当前内容中提炼出明确发现。".to_string()]
+            } else {
+                snippets.iter().take(6).cloned().collect()
+            },
+            conclusions: snippets
+                .last()
+                .cloned()
+                .unwrap_or_else(|| "未在当前内容中明确说明。".to_string()),
+            limitations: "本地兜底摘要无法替代模型对全文证据链的综合分析；请在模型配置稳定后重新生成摘要。".to_string(),
+            takeaways: vec![
+                "这是本地抽取式兜底结果，优先保证可用性和不编造。".to_string(),
+                "建议检查 MinerU 解析质量和摘要模型配置后重新生成。".to_string(),
+                "若论文是综述，请重点查看分类、比较维度、未来方向和局限部分。".to_string(),
+            ],
+            keywords: vec!["本地兜底".to_string(), "抽取式摘要".to_string(), "论文概览".to_string()],
+        };
+    }
+
+    PaperSummary {
+        title: title.to_string(),
+        r#abstract: format!("Local extractive fallback summary: {}", truncate_chars(&joined, 420)),
+        overview: format!(
+            "The model response could not be parsed as stable structured JSON, so this overview was generated by a deterministic local extractive fallback. It uses representative snippets from the document evidence pack and is intended for quick triage rather than full AI analysis. {}{}",
+            authors.map(|value| format!("Authors: {}. ", value)).unwrap_or_default(),
+            year.map(|value| format!("Year: {}.", value)).unwrap_or_default(),
+        ),
+        background: snippets
+            .get(0)
+            .cloned()
+            .unwrap_or_else(|| "Not clearly stated in the provided content.".to_string()),
+        research_problem: snippets
+            .get(1)
+            .cloned()
+            .unwrap_or_else(|| "Not clearly stated in the provided content.".to_string()),
+        approach: snippets
+            .get(2)
+            .cloned()
+            .unwrap_or_else(|| "Not clearly stated in the provided content.".to_string()),
+        experiment_setup: snippets
+            .get(3)
+            .cloned()
+            .unwrap_or_else(|| "Not clearly stated in the provided content.".to_string()),
+        key_findings: if snippets.is_empty() {
+            vec!["No clear findings were extracted from the provided content.".to_string()]
+        } else {
+            snippets.iter().take(6).cloned().collect()
+        },
+        conclusions: snippets
+            .last()
+            .cloned()
+            .unwrap_or_else(|| "Not clearly stated in the provided content.".to_string()),
+        limitations: "This local fallback cannot replace a full model-based synthesis of the evidence chain; regenerate the summary after the model configuration is stable.".to_string(),
+        takeaways: vec![
+            "This is a deterministic extractive fallback designed to avoid fabrication.".to_string(),
+            "Check MinerU parsing quality and model configuration, then regenerate the summary.".to_string(),
+            "For review papers, inspect taxonomy, comparison criteria, future directions, and limitations.".to_string(),
+        ],
+        keywords: vec![
+            "local fallback".to_string(),
+            "extractive summary".to_string(),
+            "paper overview".to_string(),
+        ],
+    }
+}
+
 #[allow(dead_code)]
 fn parse_summary_content(content: &str, fallback_title: &str) -> Result<PaperSummary, String> {
     let cleaned = strip_json_fences(content);
@@ -703,42 +917,282 @@ fn build_summary_header(title: &str, authors: Option<&str>, year: Option<&str>) 
     sections
 }
 
+fn normalize_evidence_text(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn truncate_chars(text: &str, max_chars: usize) -> String {
+    if text.chars().count() <= max_chars {
+        return text.to_string();
+    }
+
+    let mut truncated = text.chars().take(max_chars).collect::<String>();
+    truncated.push_str("...");
+    truncated
+}
+
+fn collect_units_from_blocks(blocks: &[SummaryBlockInput]) -> Vec<SummaryEvidenceUnit> {
+    blocks
+        .iter()
+        .enumerate()
+        .filter_map(|(index, block)| {
+            let text = normalize_evidence_text(&block.text);
+
+            if text.chars().count() < 24 {
+                return None;
+            }
+
+            Some(SummaryEvidenceUnit {
+                index,
+                label: format!(
+                    "page {} / {} / {}",
+                    block.page_index + 1,
+                    block.block_type,
+                    block.block_id
+                ),
+                text,
+            })
+        })
+        .collect()
+}
+
+fn collect_units_from_text(document_text: &str) -> Vec<SummaryEvidenceUnit> {
+    let mut units = Vec::new();
+    let mut current = String::new();
+    let mut current_label = "text".to_string();
+
+    let flush = |units: &mut Vec<SummaryEvidenceUnit>, label: &str, text: &mut String| {
+        let normalized = normalize_evidence_text(text);
+
+        if normalized.chars().count() >= 32 {
+            units.push(SummaryEvidenceUnit {
+                index: units.len(),
+                label: label.to_string(),
+                text: normalized,
+            });
+        }
+
+        text.clear();
+    };
+
+    for line in document_text.lines() {
+        let trimmed = line.trim();
+
+        if trimmed.is_empty() {
+            flush(&mut units, &current_label, &mut current);
+            continue;
+        }
+
+        if trimmed.starts_with('#') {
+            flush(&mut units, &current_label, &mut current);
+            current_label = trimmed
+                .trim_start_matches('#')
+                .trim()
+                .chars()
+                .take(80)
+                .collect();
+            continue;
+        }
+
+        if current.chars().count() > 1_200 {
+            flush(&mut units, &current_label, &mut current);
+        }
+
+        if !current.is_empty() {
+            current.push(' ');
+        }
+        current.push_str(trimmed);
+    }
+
+    flush(&mut units, &current_label, &mut current);
+    units
+}
+
+fn unit_keyword_score(unit: &SummaryEvidenceUnit, keys: &[&str]) -> usize {
+    let haystack = format!("{} {}", unit.label, unit.text).to_lowercase();
+
+    keys.iter()
+        .filter(|key| haystack.contains(&key.to_lowercase()))
+        .count()
+}
+
+fn pick_units_by_keywords(
+    units: &[SummaryEvidenceUnit],
+    keys: &[&str],
+    limit: usize,
+    max_chars: usize,
+    selected: &mut HashSet<usize>,
+) -> Vec<SummaryEvidenceUnit> {
+    let mut scored = units
+        .iter()
+        .filter_map(|unit| {
+            let score = unit_keyword_score(unit, keys);
+
+            if score == 0 {
+                return None;
+            }
+
+            Some((score, unit.index, unit))
+        })
+        .collect::<Vec<_>>();
+
+    scored.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| left.1.cmp(&right.1)));
+
+    let mut picked = Vec::new();
+    let mut char_count = 0usize;
+
+    for (_, _, unit) in scored {
+        if picked.len() >= limit || selected.contains(&unit.index) {
+            continue;
+        }
+
+        let unit_len = unit.text.chars().count();
+
+        if char_count > 0 && char_count + unit_len > max_chars {
+            continue;
+        }
+
+        char_count += unit_len;
+        selected.insert(unit.index);
+        picked.push(unit.clone());
+    }
+
+    picked
+}
+
+fn pick_representative_units(
+    units: &[SummaryEvidenceUnit],
+    limit: usize,
+    selected: &mut HashSet<usize>,
+) -> Vec<SummaryEvidenceUnit> {
+    if units.is_empty() {
+        return Vec::new();
+    }
+
+    let last = units.len().saturating_sub(1);
+    let candidate_positions = [
+        0,
+        1.min(last),
+        units.len() / 4,
+        units.len() / 2,
+        (units.len() * 3) / 4,
+        last.saturating_sub(1),
+        last,
+    ];
+    let mut picked = Vec::new();
+
+    for position in candidate_positions {
+        if picked.len() >= limit {
+            break;
+        }
+
+        if let Some(unit) = units.get(position) {
+            if selected.insert(unit.index) {
+                picked.push(unit.clone());
+            }
+        }
+    }
+
+    picked
+}
+
+fn append_evidence_section(
+    sections: &mut Vec<String>,
+    title: &str,
+    units: Vec<SummaryEvidenceUnit>,
+) {
+    if units.is_empty() {
+        return;
+    }
+
+    let mut lines = vec![format!("## {}", title)];
+
+    for unit in units {
+        lines.push(format!(
+            "- [{}] {}",
+            unit.label,
+            truncate_chars(&unit.text, 900)
+        ));
+    }
+
+    sections.push(lines.join("\n"));
+}
+
+fn build_summary_context_from_units(
+    title: &str,
+    authors: Option<&str>,
+    year: Option<&str>,
+    units: &[SummaryEvidenceUnit],
+) -> String {
+    let mut sections = build_summary_header(title, authors, year);
+    let mut selected = HashSet::new();
+
+    sections.push(
+        "The following evidence pack is deterministically extracted from the paper. Use only this evidence and the metadata above. Sections are sampled from the beginning, topical matches, and later parts of the document so review papers are not summarized from the first pages only."
+            .to_string(),
+    );
+
+    append_evidence_section(
+        &mut sections,
+        "Abstract / scope evidence",
+        pick_units_by_keywords(units, &ABSTRACT_KEYS, 4, 4_000, &mut selected),
+    );
+    append_evidence_section(
+        &mut sections,
+        "Background / motivation evidence",
+        pick_units_by_keywords(units, &BACKGROUND_KEYS, 5, 5_000, &mut selected),
+    );
+    append_evidence_section(
+        &mut sections,
+        "Problem / challenge evidence",
+        pick_units_by_keywords(units, &PROBLEM_KEYS, 5, 5_000, &mut selected),
+    );
+    append_evidence_section(
+        &mut sections,
+        "Methods / taxonomy / review evidence",
+        pick_units_by_keywords(units, &REVIEW_METHOD_KEYS, 8, 8_000, &mut selected),
+    );
+    append_evidence_section(
+        &mut sections,
+        "Experiment / validation evidence",
+        pick_units_by_keywords(units, &EXPERIMENT_KEYS, 6, 6_000, &mut selected),
+    );
+    append_evidence_section(
+        &mut sections,
+        "Conclusion / limitation / future-work evidence",
+        pick_units_by_keywords(units, &CONCLUSION_KEYS, 6, 6_000, &mut selected),
+    );
+    append_evidence_section(
+        &mut sections,
+        "Representative whole-document samples",
+        pick_representative_units(units, 7, &mut selected),
+    );
+
+    if sections.len() <= 2 {
+        append_evidence_section(
+            &mut sections,
+            "Available document evidence",
+            units.iter().take(12).cloned().collect(),
+        );
+    }
+
+    let mut context = sections.join("\n\n");
+    let max_chars = 28_000usize;
+
+    if context.chars().count() > max_chars {
+        context = context.chars().take(max_chars).collect();
+    }
+
+    context
+}
+
 fn build_summary_context_from_blocks(
     title: &str,
     authors: Option<&str>,
     year: Option<&str>,
     blocks: &[SummaryBlockInput],
 ) -> String {
-    let mut sections = build_summary_header(title, authors, year);
-    let mut char_count = 0usize;
-    let max_chars = 18_000usize;
-
-    sections.push("Document blocks:".to_string());
-
-    for block in blocks {
-        let text = block.text.trim();
-
-        if text.is_empty() {
-            continue;
-        }
-
-        let line = format!(
-            "[page {}][{}][{}] {}",
-            block.page_index + 1,
-            block.block_id,
-            block.block_type,
-            text
-        );
-
-        if char_count + line.len() > max_chars {
-            break;
-        }
-
-        char_count += line.len();
-        sections.push(line);
-    }
-
-    sections.join("\n")
+    build_summary_context_from_units(title, authors, year, &collect_units_from_blocks(blocks))
 }
 
 fn build_summary_context_from_text(
@@ -747,22 +1201,12 @@ fn build_summary_context_from_text(
     year: Option<&str>,
     document_text: &str,
 ) -> String {
-    let mut sections = build_summary_header(title, authors, year);
-    let max_chars = 24_000usize;
-    let mut normalized_text = document_text
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .collect::<Vec<_>>()
-        .join("\n");
-
-    if normalized_text.chars().count() > max_chars {
-        normalized_text = normalized_text.chars().take(max_chars).collect();
-    }
-
-    sections.push("Document text:".to_string());
-    sections.push(normalized_text);
-    sections.join("\n\n")
+    build_summary_context_from_units(
+        title,
+        authors,
+        year,
+        &collect_units_from_text(document_text),
+    )
 }
 
 async fn request_summary(
@@ -866,16 +1310,28 @@ fn build_summary_schema() -> serde_json::Value {
     })
 }
 
-fn build_summary_messages(document_context: &str) -> serde_json::Value {
+fn build_summary_messages(document_context: &str, output_language: &str) -> serde_json::Value {
+    let language = output_language.trim();
+    let language = if language.is_empty() {
+        "Chinese"
+    } else {
+        language
+    };
+
     json!([
       {
         "role": "system",
-        "content": "你是一名专业的学术论文分析者，擅长阅读和拆解计算机、工程、自然科学与交叉学科论文。你的任务不是泛泛复述，而是像严谨的研究者一样，基于给定论文内容提炼研究背景、核心问题、方法设计、实验证据、结论价值与局限性。只能依据提供的论文内容生成结果，并使用简体中文作答。请忠实于原文，避免臆测；如果某个字段缺乏证据支持，必须明确写“未在当前内容中明确说明。”输出必须是严格 JSON，且字段内容要具体、细致、可用于学术阅读。"
+        "content": format!(
+          "You are a careful academic paper analyst. Read the supplied evidence pack and produce a structured paper overview. Output every field in {}. Use only the provided evidence and metadata. Do not invent claims, numbers, datasets, baselines, or conclusions. If evidence is missing for a field, explicitly say that it is not clearly stated in the provided content, in {}. Return strict JSON only; no markdown, no code fences, no commentary.",
+          language,
+          language
+        )
       },
       {
         "role": "user",
         "content": format!(
-          "请基于下列论文内容生成模块化论文总览，适合在桌面阅读器中展示。\n要求：\n1. 所有字段使用简体中文，只能依据给定内容总结，不要编造论文中未出现的结论。\n2. 输出内容要体现“专业学术论文分析者”的视角，强调研究动机、技术路线、证据链和学术价值，避免空泛套话。\n3. overview 用 3-5 句概括整篇论文，至少覆盖研究对象、核心问题、方法主线、实验或证据支撑、最终结论。\n4. abstract 给出忠实且信息密度高的压缩版摘要；如果没有识别到摘要段落，也要给出基于全文的摘要说明。\n5. background 用 2-4 句说明研究领域背景、应用场景、已有工作的整体脉络，以及为什么这个问题值得研究。\n6. researchProblem 用 2-4 句明确指出论文试图解决的具体问题、技术挑战、约束条件，以及现有方法的不足。\n7. approach 用 3-5 句细致说明方法框架、关键模块、核心创新点、方法相对基线或传统方案的差异，不要只写“提出了一个方法”。\n8. experimentSetup 必须重点细致分析，可用 3-6 句。优先覆盖：任务设置、数据集/基准、实验对象、对比基线、评价指标、训练或实现设置、消融实验、泛化/鲁棒性验证，以及实验设计是否充分。若论文不是实验型研究，也要明确说明其验证方式或缺失之处。\n9. keyFindings 输出 4-8 条，尽量写成有信息量的结论，优先总结实验结果、性能提升、关键观察、定性/定量证据，而不是重复字段标题。\n10. conclusions 用 2-4 句概括论文最终结论、实际意义和学术贡献。\n11. limitations 用 2-4 句明确指出论文已承认或从内容中可以直接看出的局限，例如数据规模、实验范围、假设条件、泛化性、计算代价、缺少真实部署验证等；没有依据时不要臆测。\n12. takeaways 输出 3-5 条，写成对读者有价值的阅读提示，例如这篇论文最值得关注的贡献、最可信的证据、最需要保留怀疑的部分。\n13. keywords 输出 5-10 个关键词，优先覆盖任务、方法、数据、指标、领域术语。\n14. 若论文中存在实验部分，请在 experimentSetup 和 keyFindings 中特别重视以下内容：实验是否覆盖主张、对比是否公平、指标是否匹配任务目标、结果提升是否显著、作者是否通过消融或附加实验解释性能来源。\n\n论文内容：\n{}",
+          "Create a modular paper overview for a desktop literature reader.\n\nOutput language: {}\n\nRules:\n1. Return exactly one JSON object matching the schema fields: title, abstract, overview, background, researchProblem, approach, experimentSetup, keyFindings, conclusions, limitations, takeaways, keywords.\n2. Keep the field names in English exactly as specified, but write all field values in the output language.\n3. overview: 3-5 sentences covering the paper object, core problem, method or review axis, evidence base, and final conclusion.\n4. abstract: dense faithful compressed summary. If the original abstract is unavailable, state that it is inferred from the provided evidence.\n5. background: 2-4 sentences about domain background, application scenarios, and why the problem matters.\n6. researchProblem: 2-4 sentences describing the concrete problem, constraints, uncertainty, and method gaps.\n7. approach: 3-5 sentences. For a survey/review paper, explain the taxonomy, compared method families, communication or modeling assumptions, and analysis criteria. For an empirical method paper, explain the model/framework, modules, novelty, and relation to baselines.\n8. experimentSetup: 3-6 sentences. If the paper is a review rather than an experimental study, do not fabricate experiments; describe the review evidence base, comparison dimensions, and whether empirical validation is absent or secondary.\n9. keyFindings: 4-8 specific findings. Prefer concrete method categories, trade-offs, application scenarios, strengths, limitations, and evidence patterns.\n10. conclusions: 2-4 sentences about the final contribution and practical/academic value.\n11. limitations: 2-4 evidence-based limitations only.\n12. takeaways: 3-5 useful reading notes for a student or researcher.\n13. keywords: 5-10 concise terms.\n14. Be stable and conservative: if the evidence pack says this is a review/survey, summarize it as a review/survey, not as a newly proposed algorithm.\n\nEvidence pack:\n{}",
+          language,
           document_context
         )
       }
@@ -892,6 +1348,13 @@ pub async fn summarize_document_openai_compatible(
     let title = options.title.trim();
     let authors = options.authors;
     let year = options.year;
+    let output_language = options
+        .output_language
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("Chinese")
+        .to_string();
     let document_text = options.document_text.unwrap_or_default();
     let blocks = options
         .blocks
@@ -931,8 +1394,8 @@ pub async fn summarize_document_openai_compatible(
     };
     let base_body = json!({
       "model": model,
-      "temperature": 0.2,
-      "messages": build_summary_messages(&document_context)
+      "temperature": 0.1,
+      "messages": build_summary_messages(&document_context, &output_language)
     });
 
     let first_try_body = json!({
@@ -949,5 +1412,14 @@ pub async fn summarize_document_openai_compatible(
         Err(_) => request_summary(&client, &endpoint, api_key, base_body).await?,
     };
 
-    parse_summary_content_resilient(&content, title)
+    match parse_summary_content_resilient(&content, title) {
+        Ok(summary) => Ok(summary),
+        Err(_) => Ok(build_extractive_fallback_summary(
+            title,
+            authors.as_deref(),
+            year.as_deref(),
+            &document_context,
+            &output_language,
+        )),
+    }
 }

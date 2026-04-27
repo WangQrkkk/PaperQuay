@@ -1,4 +1,4 @@
-import { X } from 'lucide-react';
+import { RefreshCw, X } from 'lucide-react';
 import { useLocaleText } from '../../../i18n/uiLanguage';
 import type { LiteratureCategory } from '../../../types/library';
 import { getFileNameFromPath, truncateMiddle } from '../../../utils/text';
@@ -18,8 +18,10 @@ interface ImportConfirmationDialogProps {
   drafts: ImportDraftItem[];
   categories: LiteratureCategory[];
   working: boolean;
+  metadataWorking: boolean;
   onDraftChange: (path: string, patch: Partial<ImportDraftItem>) => void;
   onRemoveDraft: (path: string) => void;
+  onAutoFillMetadata: () => void;
   onClose: () => void;
   onConfirm: () => void;
 }
@@ -60,8 +62,10 @@ export default function ImportConfirmationDialog({
   drafts,
   categories,
   working,
+  metadataWorking,
   onDraftChange,
   onRemoveDraft,
+  onAutoFillMetadata,
   onClose,
   onConfirm,
 }: ImportConfirmationDialogProps) {
@@ -85,8 +89,8 @@ export default function ImportConfirmationDialog({
             </h2>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-500 dark:text-[#a0a0a0]">
               {l(
-                '第一版先从文件名推断标题，你可以在这里补充作者、年份、期刊和 DOI。后续会接入 DOI、Crossref、Semantic Scholar 自动补全。',
-                'The first version infers titles from filenames. You can add authors, year, venue, and DOI here. DOI, Crossref, and Semantic Scholar enrichment can be added later.',
+                '系统会尝试通过 DOI 或标题从 Crossref 自动补全标题、作者、年份和期刊；你仍然可以在导入前手动修改。',
+                'The app tries to enrich title, authors, year, and venue from Crossref by DOI or title. You can still edit everything before import.',
               )}
             </p>
           </div>
@@ -202,6 +206,18 @@ export default function ImportConfirmationDialog({
             {l(`待导入 ${drafts.length} 个 PDF`, `${drafts.length} PDFs pending import`)}
           </div>
           <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onAutoFillMetadata}
+              disabled={working || metadataWorking || drafts.length === 0}
+              className="inline-flex items-center rounded-2xl border border-teal-200 bg-teal-50 px-4 py-2.5 text-sm font-semibold text-teal-700 transition hover:bg-teal-100 disabled:opacity-60 dark:border-teal-300/18 dark:bg-teal-300/10 dark:text-teal-100 dark:hover:bg-teal-300/14"
+            >
+              <RefreshCw
+                className={metadataWorking ? 'mr-2 h-4 w-4 animate-spin' : 'mr-2 h-4 w-4'}
+                strokeWidth={1.9}
+              />
+              {metadataWorking ? l('正在补全...', 'Enriching...') : l('自动补全元数据', 'Auto-Fill Metadata')}
+            </button>
             <button
               type="button"
               onClick={onClose}

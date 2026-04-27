@@ -14,9 +14,14 @@ export function truncateMiddle(value: string, maxLength = 56): string {
     return value;
   }
 
-  const sideLength = Math.floor((maxLength - 1) / 2);
+  if (maxLength <= 3) {
+    return value.slice(0, maxLength);
+  }
 
-  return `${value.slice(0, sideLength)}閳?{value.slice(-sideLength)}`;
+  const sideLength = Math.floor((maxLength - 3) / 2);
+  const tailLength = maxLength - 3 - sideLength;
+
+  return `${value.slice(0, sideLength)}...${value.slice(-tailLength)}`;
 }
 
 export function joinReadableText(parts: string[]): string {
@@ -37,8 +42,8 @@ export function normalizeSelectionText(value: string): string {
 
   const cjkChar = '[\\u3400-\\u4DBF\\u4E00-\\u9FFF\\u3040-\\u30FF\\uAC00-\\uD7AF]';
   const cjkClosePunctuation =
-    '[\\u3400-\\u4DBF\\u4E00-\\u9FFF\\u3040-\\u30FF\\uAC00-\\uD7AF，。！？；：、）》】」』％,.;:!?%\\]\\)]';
-  const cjkOpenPunctuation = '[（《【「『]';
+    '[\\u3400-\\u4DBF\\u4E00-\\u9FFF\\u3040-\\u30FF\\uAC00-\\uD7AF\\uFF0C\\u3002\\uFF01\\uFF1F\\uFF1B\\uFF1A\\u3001\\uFF09\\u300B\\u3011\\u300D\\u300F\\uFF05,.;:!?%\\]\\)]';
+  const cjkOpenPunctuation = '[\\uFF08\\u300A\\u3010\\u300C\\u300E]';
 
   text = text
     .replace(new RegExp(`(${cjkChar})\\s+(${cjkClosePunctuation})`, 'g'), '$1$2')

@@ -18,12 +18,13 @@ import {
   flattenMineruPages,
   parseMineruPages,
 } from '../../services/mineru';
-import { askDocumentOpenAICompatible } from '../../services/qa';
+import { askDocumentOpenAICompatibleStream } from '../../services/qa';
 import { summarizeDocumentOpenAICompatible } from '../../services/summary';
 import {
   buildMineruMarkdownDocument,
   buildSummaryBlockInputs,
   extractPdfTextByPdfJs,
+  resolveSummaryOutputLanguage,
   SUMMARY_PROMPT_VERSION,
 } from '../../services/summarySource';
 import { translateBlocksOpenAICompatible } from '../../services/translation';
@@ -152,6 +153,7 @@ export interface ReaderTabBridgeState {
   onTranslate: () => void;
   onClearTranslations: () => void;
   onCloudParse: () => void;
+  onGenerateSummary: () => void;
 }
 
 export interface LibraryPreviewSyncPayload {
@@ -860,19 +862,21 @@ function DocumentReaderTab({
       return '';
     }
 
+    const summaryLanguage = resolveSummaryOutputLanguage(settings);
+
     if (settings.summarySourceMode === 'pdf-text') {
       if (!pdfData) {
         return '';
       }
 
-      return `${currentDocument.itemKey}::${SUMMARY_PROMPT_VERSION}::pdf-text::${pdfPath || currentPdfName}::${pdfData.byteLength}`;
+      return `${currentDocument.itemKey}::${SUMMARY_PROMPT_VERSION}::${summaryLanguage}::pdf-text::${pdfPath || currentPdfName}::${pdfData.byteLength}`;
     }
 
     if (!mineruPath && flatBlocks.length === 0) {
       return '';
     }
 
-    return `${currentDocument.itemKey}::${SUMMARY_PROMPT_VERSION}::mineru-markdown::${mineruPath || currentJsonName}::${flatBlocks.length}`;
+    return `${currentDocument.itemKey}::${SUMMARY_PROMPT_VERSION}::${summaryLanguage}::mineru-markdown::${mineruPath || currentJsonName}::${flatBlocks.length}`;
   }, [
     currentDocument,
     currentJsonName,
@@ -881,7 +885,9 @@ function DocumentReaderTab({
     mineruPath,
     pdfData,
     pdfPath,
+    settings.summaryOutputLanguage,
     settings.summarySourceMode,
+    settings.uiLanguage,
   ]);
   const libraryPreviewSourceKey =
     paperSummarySourceKey ||
@@ -2130,8 +2136,8 @@ function DocumentReaderTab({
 
     throw new Error(
       lRef.current(
-        '请先加载 MinerU 的 full.md，再使用 MinerU Markdown 作为摘要来源。',
-        'Load MinerU full.md before using MinerU Markdown as the summary source.',
+        '请先加载 MinerU 的 full.md，再使用 MinerU Markdown 作为概览来源。',
+        'Load MinerU full.md before using MinerU Markdown as the overview source.',
       ),
     );
   }, [
@@ -2146,8 +2152,8 @@ function DocumentReaderTab({
       if (!pdfData) {
         throw new Error(
           lRef.current(
-            '请先加载 PDF，或切换摘要来源后再生成摘要。',
-            'Load a PDF, or switch the summary source before generating a summary.',
+            '请先加载 PDF，或切换概览来源后再生成概览。',
+            'Load a PDF, or switch the overview source before generating an overview.',
           ),
         );
       }
@@ -2157,8 +2163,8 @@ function DocumentReaderTab({
       if (!documentText.trim()) {
         throw new Error(
           lRef.current(
-            '当前 PDF 未提取到可用文本，请尝试切换摘要来源或重新加载 PDF。',
-            'No usable text was extracted from the current PDF. Try switching the summary source or reloading the PDF.',
+            '当前 PDF 未提取到可用文本，请尝试切换概览来源或重新加载 PDF。',
+            'No usable text was extracted from the current PDF. Try switching the overview source or reloading the PDF.',
           ),
         );
       }
@@ -2241,14 +2247,14 @@ function DocumentReaderTab({
         summaryRequestIdRef.current = requestId;
         setPaperSummaryLoading(true);
         setPaperSummaryError('');
-        setStatusMessage(lRef.current('正在加载 Welcome 内置摘要…', 'Loading the built-in Welcome summary...'));
+        setStatusMessage(lRef.current('正在加载 Welcome 内置概览…', 'Loading the built-in Welcome overview...'));
 
         try {
           const response = await fetch(`${ONBOARDING_WELCOME_CACHE_DIR}/summaries/614ada92.json`);
           const parsed = response.ok ? (await response.json()) as Partial<SummaryCacheEnvelope> : null;
 
           if (!parsed?.summary) {
-            throw new Error(lRef.current('未找到 Welcome 内置摘要', 'The built-in Welcome summary was not found'));
+            throw new Error(lRef.current('未找到 Welcome 内置概览', 'The built-in Welcome overview was not found'));
           }
 
           if (summaryRequestIdRef.current !== requestId) {
@@ -2259,8 +2265,8 @@ function DocumentReaderTab({
           setPaperSummarySourceKey(parsed.sourceKey || 'onboarding:welcome::summary');
           setStatusMessage(
             lRef.current(
-              '已显示 Welcome 内置 AI 摘要，没有调用 API。',
-              'Displayed the built-in Welcome AI summary without calling any API.',
+              '已显示 Welcome 内置 AI 概览，没有调用 API。',
+              'Displayed the built-in Welcome AI overview without calling any API.',
             ),
           );
         } catch (nextError) {
@@ -2269,8 +2275,8 @@ function DocumentReaderTab({
           }
 
           setPaperSummary(null);
-          setPaperSummaryError(nextError instanceof Error ? nextError.message : lRef.current('加载内置摘要失败', 'Failed to load the built-in summary'));
-          setStatusMessage(lRef.current('加载内置摘要失败', 'Failed to load the built-in summary'));
+          setPaperSummaryError(nextError instanceof Error ? nextError.message : lRef.current('加载内置概览失败', 'Failed to load the built-in overview'));
+          setStatusMessage(lRef.current('加载内置概览失败', 'Failed to load the built-in overview'));
         } finally {
           if (summaryRequestIdRef.current === requestId) {
             setPaperSummaryLoading(false);
@@ -2284,11 +2290,11 @@ function DocumentReaderTab({
         setPaperSummary(null);
         setPaperSummaryError(
           lRef.current(
-            '请先加载 MinerU JSON，再基于 MinerU Markdown 生成摘要。',
-            'Load a MinerU JSON file before generating a summary from MinerU Markdown.',
+            '请先加载 MinerU JSON，再基于 MinerU Markdown 生成概览。',
+            'Load a MinerU JSON file before generating an overview from MinerU Markdown.',
           ),
         );
-        setStatusMessage(lRef.current('请先加载 MinerU JSON 后再生成摘要', 'Load MinerU JSON before generating the summary'));
+        setStatusMessage(lRef.current('请先加载 MinerU JSON 后再生成概览', 'Load MinerU JSON before generating the overview'));
         return;
       }
 
@@ -2296,11 +2302,11 @@ function DocumentReaderTab({
         setPaperSummary(null);
         setPaperSummaryError(
           lRef.current(
-            '请先在设置中填写摘要模型的 OpenAI 兼容 Base URL。',
-            'Configure the summary model OpenAI-compatible Base URL in Settings first.',
+            '请先在设置中填写概览模型的 OpenAI 兼容 Base URL。',
+            'Configure the overview model OpenAI-compatible Base URL in Settings first.',
           ),
         );
-        setStatusMessage(lRef.current('缺少摘要接口 Base URL', 'Missing summary Base URL'));
+        setStatusMessage(lRef.current('缺少概览接口 Base URL', 'Missing overview Base URL'));
 
         if (openPreferencesOnMissingKey) {
           onOpenPreferences();
@@ -2310,12 +2316,12 @@ function DocumentReaderTab({
       }
 
       if (!summaryModelPreset || !summaryModelPreset.apiKey.trim()) {
-        setStatusMessage(lRef.current('缺少摘要接口 API Key', 'Missing summary API key'));
+        setStatusMessage(lRef.current('缺少概览接口 API Key', 'Missing overview API key'));
         setPaperSummary(null);
         setPaperSummaryError(
           lRef.current(
-            '请先在设置中填写摘要模型的 API Key。',
-            'Configure the summary model API key in Settings first.',
+            '请先在设置中填写概览模型的 API Key。',
+            'Configure the overview model API key in Settings first.',
           ),
         );
 
@@ -2330,11 +2336,11 @@ function DocumentReaderTab({
         setPaperSummary(null);
         setPaperSummaryError(
           lRef.current(
-            '请先在设置中填写摘要模型名称。',
-            'Configure the summary model name in Settings first.',
+            '请先在设置中填写概览模型名称。',
+            'Configure the overview model name in Settings first.',
           ),
         );
-        setStatusMessage(lRef.current('缺少摘要模型名称', 'Missing summary model name'));
+        setStatusMessage(lRef.current('缺少概览模型名称', 'Missing overview model name'));
 
         if (openPreferencesOnMissingKey) {
           onOpenPreferences();
@@ -2348,7 +2354,7 @@ function DocumentReaderTab({
 
       setPaperSummaryLoading(true);
       setPaperSummaryError('');
-      setStatusMessage(lRef.current('正在生成论文摘要…', 'Generating the paper summary...'));
+      setStatusMessage(lRef.current('正在生成论文概览…', 'Generating the paper overview...'));
 
       try {
         const summaryRequest = await resolveSummaryRequest();
@@ -2361,7 +2367,7 @@ function DocumentReaderTab({
 
           setPaperSummary(cachedSummary);
           setPaperSummarySourceKey(paperSummaryNextSourceKey);
-          setStatusMessage(lRef.current('已从本地缓存恢复论文摘要', 'Restored the paper summary from the local cache'));
+          setStatusMessage(lRef.current('已从本地缓存恢复论文概览', 'Restored the paper overview from the local cache'));
           return;
         }
 
@@ -2372,6 +2378,7 @@ function DocumentReaderTab({
           title: currentDocument.title,
           authors: currentDocument.creators || undefined,
           year: currentDocument.year || undefined,
+          outputLanguage: resolveSummaryOutputLanguage(settings),
           blocks: summaryRequest.blocks,
           documentText: summaryRequest.documentText,
         });
@@ -2385,7 +2392,7 @@ function DocumentReaderTab({
         await saveSummaryCache(currentDocument, paperSummaryNextSourceKey, summary).catch(
           () => undefined,
         );
-        setStatusMessage(lRef.current('论文摘要已生成', 'Paper summary generated'));
+        setStatusMessage(lRef.current('论文概览已生成', 'Paper overview generated'));
       } catch (nextError) {
         if (summaryRequestIdRef.current !== requestId) {
           return;
@@ -2397,7 +2404,7 @@ function DocumentReaderTab({
             ? nextError.message
             : lRef.current('生成论文概览失败', 'Failed to generate the paper overview'),
         );
-        setStatusMessage(lRef.current('论文摘要生成失败', 'Failed to generate the paper summary'));
+        setStatusMessage(lRef.current('论文概览生成失败', 'Failed to generate the paper overview'));
       } finally {
         if (summaryRequestIdRef.current === requestId) {
           setPaperSummaryLoading(false);
@@ -2410,7 +2417,9 @@ function DocumentReaderTab({
       paperSummaryNextSourceKey,
       resolveSummaryRequest,
       saveSummaryCache,
+      settings.summaryOutputLanguage,
       settings.summarySourceMode,
+      settings.uiLanguage,
       summaryBlockInputs.length,
       summaryModelPreset,
       tryLoadSavedSummary,
@@ -3271,12 +3280,20 @@ function DocumentReaderTab({
       ...currentSession.messages,
       nextUserMessage,
     ];
+    const nextAssistantMessage = createChatMessage('assistant', '', {
+      modelId: activeQaPreset.id,
+      modelLabel: activeQaPreset.label,
+    });
+    const streamingMessages: DocumentChatMessage[] = [
+      ...nextMessages,
+      nextAssistantMessage,
+    ];
     const pendingSession: DocumentChatSession = {
       ...currentSession,
       title: buildQaSessionTitle(localeRef.current, nextMessages),
       createdAt: currentSession.createdAt || nextUserMessage.createdAt,
-      updatedAt: nextUserMessage.createdAt,
-      messages: nextMessages,
+      updatedAt: nextAssistantMessage.createdAt,
+      messages: streamingMessages,
     };
 
     setQaSessions((current) => updateQaSession(current, pendingSession));
@@ -3286,40 +3303,59 @@ function DocumentReaderTab({
     setQaLoading(true);
     setQaError('');
 
+    let streamedAnswer = '';
+
     try {
-      const answer = await askDocumentOpenAICompatible({
-        baseUrl: activeQaPreset.baseUrl,
-        apiKey: activeQaPreset.apiKey.trim(),
-        model: activeQaPreset.model,
-        title: currentDocument.title,
-        authors: currentDocument.creators || undefined,
-        year: currentDocument.year || undefined,
-        excerptText: selectedExcerpt?.text || undefined,
-        documentText: qaRequest.documentText,
-        blocks: qaRequest.blocks,
-        messages: nextMessages.slice(-8),
-      });
+      const updateStreamingAnswer = (answer: string) => {
+        streamedAnswer = answer;
+        const updatedAssistantMessage: DocumentChatMessage = {
+          ...nextAssistantMessage,
+          content: answer,
+          createdAt: Date.now(),
+        };
 
-      const nextAnswerMessage = createChatMessage('assistant', answer, {
-        modelId: activeQaPreset.id,
-        modelLabel: activeQaPreset.label,
-      });
+        setQaSessions((current) =>
+          updateQaSession(current, {
+            ...pendingSession,
+            updatedAt: updatedAssistantMessage.createdAt,
+            messages: [
+              ...nextMessages,
+              updatedAssistantMessage,
+            ],
+          }),
+        );
+      };
 
-      setQaSessions((current) =>
-        updateQaSession(current, {
-          ...pendingSession,
-          updatedAt: nextAnswerMessage.createdAt,
-          messages: [
-            ...nextMessages,
-            nextAnswerMessage,
-          ],
-        }),
+      const answer = await askDocumentOpenAICompatibleStream(
+        {
+          baseUrl: activeQaPreset.baseUrl,
+          apiKey: activeQaPreset.apiKey.trim(),
+          model: activeQaPreset.model,
+          title: currentDocument.title,
+          authors: currentDocument.creators || undefined,
+          year: currentDocument.year || undefined,
+          excerptText: selectedExcerpt?.text || undefined,
+          documentText: qaRequest.documentText,
+          blocks: qaRequest.blocks,
+          messages: nextMessages.slice(-8),
+        },
+        {
+          onDelta: (_delta, fullText) => updateStreamingAnswer(fullText),
+        },
       );
+
+      if (answer !== streamedAnswer) {
+        updateStreamingAnswer(answer);
+      }
+
       setStatusMessage(lRef.current('文档问答已完成', 'Document QA completed'));
     } catch (nextError) {
-      setQaSessions(previousSessions);
-      setSelectedQaSessionId(previousSelectedSessionId);
-      setQaAttachments(previousAttachments);
+      if (!streamedAnswer.trim()) {
+        setQaSessions(previousSessions);
+        setSelectedQaSessionId(previousSelectedSessionId);
+        setQaAttachments(previousAttachments);
+      }
+
       setQaError(nextError instanceof Error ? nextError.message : lRef.current('文档问答失败', 'Document QA failed'));
     } finally {
       setQaLoading(false);
@@ -3685,6 +3721,9 @@ function DocumentReaderTab({
       onCloudParse: () => {
         void handleCloudParse();
       },
+      onGenerateSummary: () => {
+        void handleGeneratePaperSummary();
+      },
     });
 
     return () => {
@@ -3698,6 +3737,7 @@ function DocumentReaderTab({
     translatedCount,
     translating,
     handleCloudParse,
+    handleGeneratePaperSummary,
   ]);
 
   return (

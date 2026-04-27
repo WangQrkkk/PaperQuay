@@ -1,18 +1,47 @@
-# Dependencies
+# Package managers
 node_modules/
 .npm-cache/
+.pnpm-store/
+.yarn/
+!.yarn/releases/
+!.yarn/plugins/
+!.yarn/sdks/
+!.yarn/versions/
 
-# Build outputs
+# Frontend build output and caches
 dist/
+build/
 coverage/
+.vite/
 *.tsbuildinfo
 
-# Tauri / Rust build outputs
+# Tauri / Rust build output
+target/
 src-tauri/target/
+src-tauri/gen/schemas/
 
-# Local runtime data
+# Local application runtime data
 .appdata/
 .localappdata/
+*.sqlite
+*.sqlite3
+*.db
+*.db-shm
+*.db-wal
+
+# Secrets and local-only configuration
+.env
+.env.*
+!.env.example
+apikey.txt
+*apikey*
+*api-key*
+*api_key*
+credentials*.json
+secrets*.json
+token*.json
+*.pem
+*.key
 
 # Logs
 *.log
@@ -21,21 +50,67 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
+# Backups, archives, and scratch work
+.backups/
+.mojibake-backup/
+.tmp/
+.tmp-*/
+.tmp*/
+backup*/
+backup*.zip
+backup*.tar
+backup*.tar.gz
+*.bak
+*.backup
+*.old
+*.orig
+*.zip
+*.7z
+*.rar
+*.tar
+*.tar.gz
+
+# Local test papers and parser outputs
+*.pdf
+/content_list*.json
+/middle.json
+/full.md
+/paper_reader_manifest.json
+/images/
+/summaries/
+/translations/
+/mineru-cloud-test.zip
+
+# Bundled onboarding demo assets are part of the app.
+!public/onboarding/**/*.pdf
+!public/onboarding/**/content_list*.json
+!public/onboarding/**/middle.json
+!public/onboarding/**/full.md
+!public/onboarding/**/paper_reader_manifest.json
+!public/onboarding/**/images/
+!public/onboarding/**/images/**
+!public/onboarding/**/summaries/
+!public/onboarding/**/summaries/**
+!public/onboarding/**/translations/
+!public/onboarding/**/translations/**
+
+# LaTeX build artifacts
+*.aux
+*.out
+*.synctex
+*.synctex.gz
+*.toc
+*.fls
+*.fdb_latexmk
+
 # Editor / OS files
 .DS_Store
 Thumbs.db
+desktop.ini
 .idea/
 .vscode/
 *.swp
 *.swo
 
-# Secrets
-apikey.txt
-.env
-.env.*
-!.env.example
-
-# Local test assets / sample papers
-content_list_v2.json
-mineru-cloud-test.zip
-s10846-023-02011-0.pdf
+# Local accidental folders
+新建文件夹/

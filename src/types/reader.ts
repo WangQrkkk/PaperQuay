@@ -250,6 +250,7 @@ export interface OpenAICompatibleSummaryOptions {
   title: string;
   authors?: string;
   year?: string;
+  outputLanguage?: string;
   blocks: SummaryBlockInput[];
   documentText?: string;
 }
@@ -334,6 +335,7 @@ export interface ReaderSettings {
   selectionTranslationModelPresetId: string;
   summaryModelPresetId: string;
   summarySourceMode: SummarySourceMode;
+  summaryOutputLanguage: string;
   qaSourceMode: QaSourceMode;
   translationSourceLanguage: string;
   translationTargetLanguage: string;

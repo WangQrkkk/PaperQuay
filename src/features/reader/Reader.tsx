@@ -48,15 +48,19 @@ import {
 } from '../../services/desktop';
 import type { AppDefaultPaths } from '../../services/desktop';
 import {
+  extractTextFromMineruBlock,
   flattenMineruPages,
   parseMineruPages,
 } from '../../services/mineru';
 import { testOpenAICompatibleChat } from '../../services/llm';
+import { updateLibraryPaper } from '../../services/library';
 import { summarizeDocumentOpenAICompatible } from '../../services/summary';
+import { translateBlocksOpenAICompatible } from '../../services/translation';
 import {
   buildMineruMarkdownDocument,
   buildSummaryBlockInputs,
   extractPdfTextByPdfJs,
+  resolveSummaryOutputLanguage,
   SUMMARY_PROMPT_VERSION,
 } from '../../services/summarySource';
 import {
@@ -84,6 +88,7 @@ import type {
   ReaderSettings,
   SummarySourceMode,
   TranslationDisplayMode,
+  TranslationMap,
   UiLanguage,
   PositionedMineruBlock,
   WorkspaceItem,
@@ -98,6 +103,7 @@ import {
   buildLegacyMineruSummaryCachePath,
   buildMineruCachePaths,
   buildMineruSummaryCachePath,
+  buildMineruTranslationCachePath,
   guessSiblingJsonPath,
   guessSiblingMarkdownPath,
 } from '../../utils/mineruCache';
@@ -157,6 +163,19 @@ function buildLanguageOptions(locale: UiLanguage) {
     { value: 'auto', label: pickLocaleText(locale, '自动识别', 'Auto Detect') },
     { value: 'English', label: 'English' },
     { value: 'Chinese', label: pickLocaleText(locale, '中文', 'Chinese') },
+    { value: 'Japanese', label: pickLocaleText(locale, '日语', 'Japanese') },
+    { value: 'Korean', label: pickLocaleText(locale, '韩语', 'Korean') },
+    { value: 'French', label: pickLocaleText(locale, '法语', 'French') },
+    { value: 'German', label: 'Deutsch' },
+    { value: 'Spanish', label: pickLocaleText(locale, '西班牙语', 'Spanish') },
+  ];
+}
+
+function buildSummaryLanguageOptions(locale: UiLanguage) {
+  return [
+    { value: 'follow-ui', label: pickLocaleText(locale, '跟随界面语言', 'Follow UI Language') },
+    { value: 'Chinese', label: pickLocaleText(locale, '中文', 'Chinese') },
+    { value: 'English', label: 'English' },
     { value: 'Japanese', label: pickLocaleText(locale, '日语', 'Japanese') },
     { value: 'Korean', label: pickLocaleText(locale, '韩语', 'Korean') },
     { value: 'French', label: pickLocaleText(locale, '法语', 'French') },
@@ -243,6 +262,7 @@ const DEFAULT_SETTINGS: ReaderSettings = {
   selectionTranslationModelPresetId: 'default',
   summaryModelPresetId: 'default',
   summarySourceMode: 'mineru-markdown',
+  summaryOutputLanguage: 'follow-ui',
   qaSourceMode: 'mineru-markdown',
   translationSourceLanguage: 'English',
   translationTargetLanguage: 'Chinese',
@@ -419,7 +439,7 @@ function buildLegacyModelPresets(
   ) {
     const legacySummaryPreset = createQaPreset({
       id: 'legacy-summary',
-      label: settings.summaryModel?.trim() || 'Paper Summary',
+      label: settings.summaryModel?.trim() || 'Paper Overview',
       model: settings.summaryModel?.trim() || DEFAULT_QA_PRESET.model,
       baseUrl: settings.summaryBaseUrl?.trim() || DEFAULT_QA_PRESET.baseUrl,
       apiKey: secrets.summaryApiKey?.trim() || '',
@@ -469,6 +489,14 @@ interface SummaryCacheEnvelope {
   sourceKey: string;
   summarizedAt: string;
   summary: PaperSummary;
+}
+
+interface TranslationCacheEnvelope {
+  version: number;
+  sourceLanguage: string;
+  targetLanguage: string;
+  translatedAt: string;
+  translations: TranslationMap;
 }
 
 interface BatchProgressState {
@@ -527,9 +555,10 @@ function getAutoParseAttemptKey(item: WorkspaceItem): string {
 function getAutoSummaryAttemptKey(
   item: WorkspaceItem,
   sourceMode: SummarySourceMode,
+  outputLanguage: string,
   hasParse: boolean,
 ): string {
-  return `${item.workspaceId}::${sourceMode}::${item.localPdfPath?.trim() ?? ''}::${hasParse ? 'parsed' : 'unparsed'}`;
+  return `${item.workspaceId}::${sourceMode}::${outputLanguage}::${item.localPdfPath?.trim() ?? ''}::${hasParse ? 'parsed' : 'unparsed'}`;
 }
 
 function clampBatchConcurrency(value: number): number {
@@ -589,6 +618,7 @@ function normalizeReaderSettings(value?: Partial<ReaderSettings> | null): Reader
     libraryBatchConcurrency: clampBatchConcurrency(merged.libraryBatchConcurrency),
     translationBatchSize: clampTranslationBatchSize(merged.translationBatchSize),
     translationConcurrency: clampTranslationConcurrency(merged.translationConcurrency),
+    summaryOutputLanguage: merged.summaryOutputLanguage?.trim() || 'follow-ui',
     translationDisplayMode: 'translated',
   };
 }
@@ -737,6 +767,48 @@ function createNativeLibraryWorkspaceItem(paper: LiteraturePaper): WorkspaceItem
     workspaceId,
     groupKey: workspaceId,
   };
+}
+
+function textSignature(value: string): string {
+  let hash = 0;
+
+  for (let index = 0; index < value.length; index += 1) {
+    hash = Math.imul(31, hash) + value.charCodeAt(index);
+    hash |= 0;
+  }
+
+  return `${value.length}:${(hash >>> 0).toString(36)}`;
+}
+
+function chunkItems<T>(items: T[], size: number): T[][] {
+  const normalizedSize = Math.max(1, size);
+  const chunks: T[][] = [];
+
+  for (let index = 0; index < items.length; index += normalizedSize) {
+    chunks.push(items.slice(index, index + normalizedSize));
+  }
+
+  return chunks;
+}
+
+function formatPaperSummaryForLibrary(summary: PaperSummary): string {
+  const sections = [
+    ['Overview', summary.overview || summary.abstract],
+    ['Background', summary.background],
+    ['Research Problem', summary.researchProblem],
+    ['Approach', summary.approach],
+    ['Experiment Setup', summary.experimentSetup],
+    ['Key Findings', summary.keyFindings.join('\n')],
+    ['Conclusions', summary.conclusions],
+    ['Limitations', summary.limitations],
+    ['Takeaways', summary.takeaways.join('\n')],
+    ['Keywords', summary.keywords.join(', ')],
+  ]
+    .map(([title, content]) => [title, content.trim()] as const)
+    .filter(([, content]) => content.length > 0)
+    .map(([title, content]) => `## ${title}\n${content}`);
+
+  return sections.join('\n\n').trim();
 }
 
 function buildFlatCollections(collections: ZoteroCollection[]): FlatCollection[] {
@@ -1046,8 +1118,10 @@ function PreferencesWindow({
   const uiLanguage = settings.uiLanguage;
   const l = <T,>(zh: T, en: T) => pickLocaleText(uiLanguage, zh, en);
   const languageOptions = buildLanguageOptions(uiLanguage);
+  const summaryLanguageOptions = buildSummaryLanguageOptions(uiLanguage);
   const summarySourceOptions = buildSummarySourceOptions(uiLanguage);
   const qaSourceOptions = buildQaSourceOptions(uiLanguage);
+  const resolvedSummaryLanguage = resolveSummaryOutputLanguage(settings);
   const [activeSection, setActiveSection] = useState<PreferencesSectionKey>('general');
   const [llmTestLoading, setLlmTestLoading] = useState(false);
   const [llmTestResult, setLlmTestResult] = useState<OpenAICompatibleTestResult | null>(null);
@@ -1192,8 +1266,8 @@ function PreferencesWindow({
     },
     {
       key: 'summaryQa' as const,
-      title: l('摘要与问答', 'Summary & QA'),
-      description: l('摘要输入、批量摘要和问答上下文', 'Summary input, batch summary, and QA context'),
+      title: l('概览与问答', 'Overview & QA'),
+      description: l('概览输入、批量概览和问答上下文', 'Overview input, batch overview, and QA context'),
       icon: <Database className="h-4 w-4" strokeWidth={1.8} />,
     },
   ];
@@ -1630,8 +1704,8 @@ function PreferencesWindow({
                   <SettingsField
                     label={l('模型预设库', 'Model Presets')}
                     description={l(
-                      '统一维护翻译、摘要与问答共用的 OpenAI 兼容模型配置。',
-                      'Maintain shared OpenAI-compatible model configurations for translation, summary, and QA.',
+                      '统一维护翻译、概览与问答共用的 OpenAI 兼容模型配置。',
+                      'Maintain shared OpenAI-compatible model configurations for translation, overview, and QA.',
                     )}
                   >
                     <div className="space-y-3">
@@ -1785,8 +1859,8 @@ function PreferencesWindow({
                   <SettingsField
                     label={l('功能角色绑定', 'Feature Role Binding')}
                     description={l(
-                      '为文档翻译、划词翻译、摘要与问答分别选择默认模型。',
-                      'Choose default presets for document translation, selection translation, summary, and QA.',
+                      '为文档翻译、划词翻译、概览与问答分别选择默认模型。',
+                      'Choose default presets for document translation, selection translation, overview, and QA.',
                     )}
                   >
                     <div className="grid gap-3 md:grid-cols-2">
@@ -1826,7 +1900,7 @@ function PreferencesWindow({
                       </div>
                       <div className="space-y-2">
                         <div className="text-xs font-medium text-slate-500">
-                          {l('论文摘要', 'Paper Summary')}
+                          {l('论文概览', 'Paper Overview')}
                         </div>
                         <SettingsSelect
                           value={settings.summaryModelPresetId}
@@ -1872,7 +1946,7 @@ function PreferencesWindow({
                           preset: activeSelectionTranslationPreset ?? activeTranslationPreset,
                         },
                         {
-                          label: 'Summary / Preview',
+                          label: 'Overview / Preview',
                           preset: activeSummaryPreset ?? activeTranslationPreset,
                         },
                       ].map((item) => (
@@ -2088,15 +2162,15 @@ function PreferencesWindow({
               {activeSection === 'summaryQa' ? (
                 <>
                   <SettingsField
-                    label={l('摘要输入来源', 'Summary Input Source')}
+                    label={l('概览输入来源', 'Overview Input Source')}
                     description={l(
-                      '决定摘要优先读取 PDF 文本还是 MinerU Markdown。',
-                      'Decide whether summary generation should prefer PDF text or MinerU Markdown.',
+                      '决定概览生成优先读取 PDF 文本还是 MinerU Markdown。',
+                      'Decide whether overview generation should prefer PDF text or MinerU Markdown.',
                     )}
                   >
                     <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-3">
                       <div className="text-xs font-medium uppercase tracking-[0.14em] text-slate-400">
-                        {l('当前摘要模型', 'Current Summary Preset')}
+                        {l('当前概览模型', 'Current Overview Preset')}
                       </div>
                       <div className="mt-2 text-sm font-medium text-slate-900">
                         {activeSummaryPreset?.label ||
@@ -2110,7 +2184,7 @@ function PreferencesWindow({
 
                     <div>
                       <div className="mb-2 text-xs font-medium text-slate-500">
-                        {l('摘要输入模式', 'Summary Source Mode')}
+                        {l('概览输入模式', 'Overview Source Mode')}
                       </div>
                       <div className="grid gap-2">
                         {summarySourceOptions.map((option) => (
@@ -2131,6 +2205,62 @@ function PreferencesWindow({
                             </div>
                           </button>
                         ))}
+                      </div>
+                    </div>
+                  </SettingsField>
+
+                  <SettingsField
+                    label={l('概览输出语言', 'Overview Output Language')}
+                    description={l(
+                      '控制 AI 概览的生成语言；切换后会使用新的缓存 key，不会混用旧语言结果。',
+                      'Choose the language used for AI overviews. Changing it uses a separate cache key.',
+                    )}
+                  >
+                    <div className="grid gap-3">
+                      <SettingsSelect
+                        value={
+                          summaryLanguageOptions.some((option) => option.value === settings.summaryOutputLanguage)
+                            ? settings.summaryOutputLanguage
+                            : 'custom'
+                        }
+                        onChange={(event) => {
+                          if (event.target.value === 'custom') {
+                            return;
+                          }
+
+                          onSettingChange('summaryOutputLanguage', event.target.value);
+                        }}
+                      >
+                        {summaryLanguageOptions.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                        <option value="custom">{l('自定义语言', 'Custom Language')}</option>
+                      </SettingsSelect>
+
+                      <SettingsInput
+                        value={
+                          settings.summaryOutputLanguage === 'follow-ui'
+                            ? ''
+                            : settings.summaryOutputLanguage
+                        }
+                        placeholder={l(
+                          `例如：Chinese / English / Japanese；留空则${resolvedSummaryLanguage}`,
+                          `e.g. Chinese / English / Japanese; leave empty for ${resolvedSummaryLanguage}`,
+                        )}
+                        onChange={(event) =>
+                          onSettingChange(
+                            'summaryOutputLanguage',
+                            event.target.value.trimStart() || 'follow-ui',
+                          )
+                        }
+                      />
+                      <div className="text-xs text-slate-500 dark:text-chrome-300">
+                        {l(
+                          `当前实际输出语言：${resolvedSummaryLanguage}`,
+                          `Effective output language: ${resolvedSummaryLanguage}`,
+                        )}
                       </div>
                     </div>
                   </SettingsField>
@@ -2165,18 +2295,18 @@ function PreferencesWindow({
                   </SettingsField>
 
                   <SettingsField
-                    label={l('批量摘要生成', 'Batch Summary Generation')}
+                    label={l('批量概览生成', 'Batch Overview Generation')}
                     description={l(
-                      '为文库中已解析的论文批量生成摘要。',
-                      'Generate summaries in batch for parsed papers in the library.',
+                      '为文库中已解析的论文批量生成概览。',
+                      'Generate overviews in batch for parsed papers in the library.',
                     )}
                   >
                     <div className="space-y-3">
                       <ToggleRow
-                        title={l('自动生成摘要', 'Auto Generate Summary')}
+                        title={l('自动生成概览', 'Auto Generate Overview')}
                         description={l(
-                          '检测到结构化内容后自动生成摘要预览。',
-                          'Automatically generate a summary preview once structured content is available.',
+                          '检测到结构化内容后自动生成概览预览。',
+                          'Automatically generate an overview preview once structured content is available.',
                         )}
                         checked={settings.autoGenerateSummary}
                         onChange={(checked) => onSettingChange('autoGenerateSummary', checked)}
@@ -2190,7 +2320,7 @@ function PreferencesWindow({
                         >
                           {batchSummaryRunning
                             ? l('处理中...', 'Processing...')
-                            : l('全部生成摘要', 'Generate All Summaries')}
+                            : l('全部生成概览', 'Generate All Overviews')}
                         </button>
                         {batchSummaryRunning ? (
                           <button
@@ -2212,7 +2342,7 @@ function PreferencesWindow({
                         ) : null}
                       </div>
                       <BatchProgressCard
-                        title={l('批量摘要生成进度', 'Batch Summary Progress')}
+                        title={l('批量概览生成进度', 'Batch Overview Progress')}
                         progress={batchSummaryProgress}
                         tone="emerald"
                       />
@@ -2283,6 +2413,7 @@ function Reader() {
   const [statusMessage, setStatusMessage] = useState('');
   const [error, setError] = useState('');
   const [readerBridges, setReaderBridges] = useState<Record<string, ReaderTabBridgeState>>({});
+  const savedNativeSummaryKeysRef = useRef<Set<string>>(new Set());
   const { mode: themeMode, setMode: setThemeMode } = useThemeStore();
   const [libraryPreviewStates, setLibraryPreviewStates] = useState<
     Record<string, LibraryPreviewState>
@@ -2292,6 +2423,7 @@ function Reader() {
   );
   const [pendingCloudParseTabId, setPendingCloudParseTabId] = useState<string | null>(null);
   const [pendingTranslateTabId, setPendingTranslateTabId] = useState<string | null>(null);
+  const [pendingSummaryTabId, setPendingSummaryTabId] = useState<string | null>(null);
   const [batchMineruRunning, setBatchMineruRunning] = useState(false);
   const [batchSummaryRunning, setBatchSummaryRunning] = useState(false);
   const [batchMineruPaused, setBatchMineruPaused] = useState(false);
@@ -2766,8 +2898,8 @@ function Reader() {
         statusMessage: onboardingDemoReveal.parsed
           ? onboardingDemoReveal.translated
             ? l(
-                'Welcome 演示文档已显示内置解析和全文翻译结果，可以继续查看摘要或进入阅读器。',
-                'The Welcome demo now shows the built-in parse and full-translation results. Continue to the summary or open the reader.',
+                'Welcome 演示文档已显示内置解析和全文翻译结果，可以继续查看概览或进入阅读器。',
+                'The Welcome demo now shows the built-in parse and full-translation results. Continue to the overview or open the reader.',
               )
             : activeLibraryPreviewState.statusMessage ||
               l(
@@ -2891,8 +3023,63 @@ function Reader() {
     });
   }, []);
 
+  const persistNativeLibraryOverview = useCallback(
+    async (item: WorkspaceItem, summary: PaperSummary, sourceKey: string) => {
+      if (item.source !== 'native-library') {
+        return;
+      }
+
+      const summaryText = formatPaperSummaryForLibrary(summary);
+
+      if (!summaryText) {
+        return;
+      }
+
+      const saveKey = `${item.itemKey}::${sourceKey || 'overview'}::${textSignature(summaryText)}`;
+
+      if (savedNativeSummaryKeysRef.current.has(saveKey)) {
+        return;
+      }
+
+      savedNativeSummaryKeysRef.current.add(saveKey);
+      const updatedPaper = await updateLibraryPaper({
+        paperId: item.itemKey,
+        aiSummary: summaryText,
+      });
+
+      window.dispatchEvent(
+        new CustomEvent('paperquay:native-summary-updated', {
+          detail: {
+            paperId: updatedPaper.id,
+            aiSummary: updatedPaper.aiSummary,
+          },
+        }),
+      );
+    },
+    [],
+  );
+
   const handleLibraryPreviewSync = useCallback((payload: LibraryPreviewSyncPayload) => {
     const isWelcomeDemoPayload = isOnboardingWelcomeItem(payload.item);
+
+    if (payload.summary) {
+      void persistNativeLibraryOverview(
+        payload.item,
+        payload.summary,
+        payload.sourceKey ?? 'overview',
+      ).catch(() => undefined);
+    }
+
+    if (payload.item.source === 'native-library' && payload.hasBlocks) {
+      window.dispatchEvent(
+        new CustomEvent('paperquay:native-mineru-status-updated', {
+          detail: {
+            paperId: payload.item.itemKey,
+            mineruParsed: true,
+          },
+        }),
+      );
+    }
 
     setItemParseStatusMap((current) => ({
       ...current,
@@ -2935,7 +3122,13 @@ function Reader() {
         },
       };
     });
-  }, [l, onboardingDemoReveal.parsed, onboardingDemoReveal.summarized, onboardingOpen]);
+  }, [
+    l,
+    onboardingDemoReveal.parsed,
+    onboardingDemoReveal.summarized,
+    onboardingOpen,
+    persistNativeLibraryOverview,
+  ]);
 
   const resolveMineruJsonCandidatePaths = useCallback((item: WorkspaceItem): string[] => {
     const candidates = new Set<string>();
@@ -3365,6 +3558,7 @@ function Reader() {
     blocks: PositionedMineruBlock[],
   ) => {
     const summaryInputs = buildLibraryPreviewSummaryInputs(blocks);
+    const summaryLanguage = resolveSummaryOutputLanguage(settings);
 
     if (isOnboardingWelcomeItem(item)) {
       try {
@@ -3373,14 +3567,14 @@ function Reader() {
 
         return {
           summaryInputs,
-          sourceKey: `${item.workspaceId}::${SUMMARY_PROMPT_VERSION}::mineru-markdown::welcome::${blocks.length}`,
+          sourceKey: `${item.workspaceId}::${SUMMARY_PROMPT_VERSION}::${summaryLanguage}::mineru-markdown::welcome::${blocks.length}`,
           documentText,
           errorMessage: '',
         };
       } catch {
         return {
           summaryInputs,
-          sourceKey: `${item.workspaceId}::${SUMMARY_PROMPT_VERSION}::mineru-markdown::welcome::${blocks.length}`,
+          sourceKey: `${item.workspaceId}::${SUMMARY_PROMPT_VERSION}::${summaryLanguage}::mineru-markdown::welcome::${blocks.length}`,
           documentText: buildMineruMarkdownDocument(blocks),
           errorMessage: '',
         };
@@ -3389,7 +3583,7 @@ function Reader() {
 
     if (settings.summarySourceMode === 'pdf-text') {
       const pdfPath = item.localPdfPath?.trim() ?? '';
-      const sourceKey = `${item.workspaceId}::${SUMMARY_PROMPT_VERSION}::pdf-text::${pdfPath || 'no-pdf'}`;
+      const sourceKey = `${item.workspaceId}::${SUMMARY_PROMPT_VERSION}::${summaryLanguage}::pdf-text::${pdfPath || 'no-pdf'}`;
 
       if (!pdfPath) {
         return {
@@ -3397,8 +3591,8 @@ function Reader() {
           sourceKey,
           documentText: '',
           errorMessage: l(
-            '摘要模式要求读取 PDF 文本，但当前文献没有可用 PDF。',
-            'Summary mode requires PDF text, but no PDF is available for the current document.',
+            '概览模式要求读取 PDF 文本，但当前文献没有可用 PDF。',
+            'Overview mode requires PDF text, but no PDF is available for the current document.',
           ),
         };
       }
@@ -3448,7 +3642,7 @@ function Reader() {
         if (documentText.trim()) {
           return {
             summaryInputs,
-            sourceKey: `${item.workspaceId}::${SUMMARY_PROMPT_VERSION}::mineru-markdown::${candidatePath}::${blocks.length}`,
+            sourceKey: `${item.workspaceId}::${SUMMARY_PROMPT_VERSION}::${summaryLanguage}::mineru-markdown::${candidatePath}::${blocks.length}`,
             documentText,
             errorMessage: '',
           };
@@ -3463,7 +3657,7 @@ function Reader() {
     if (!documentText.trim()) {
       return {
         summaryInputs,
-        sourceKey: `${item.workspaceId}::${SUMMARY_PROMPT_VERSION}::mineru-markdown::empty`,
+        sourceKey: `${item.workspaceId}::${SUMMARY_PROMPT_VERSION}::${summaryLanguage}::mineru-markdown::empty`,
         documentText: '',
         errorMessage: l(
           '未能生成可用的 MinerU Markdown 内容。',
@@ -3474,7 +3668,7 @@ function Reader() {
 
     return {
       summaryInputs,
-      sourceKey: `${item.workspaceId}::${SUMMARY_PROMPT_VERSION}::mineru-markdown::blocks::${blocks.length}`,
+      sourceKey: `${item.workspaceId}::${SUMMARY_PROMPT_VERSION}::${summaryLanguage}::mineru-markdown::blocks::${blocks.length}`,
       documentText,
       errorMessage: '',
     };
@@ -3569,8 +3763,8 @@ function Reader() {
             statusMessage:
               cachedState.statusMessage ||
               l(
-                '结构化内容已就绪，可以手动生成摘要。',
-                'Structured content is ready. You can generate the summary manually.',
+                '结构化内容已就绪，可以手动生成概览。',
+                'Structured content is ready. You can generate the overview manually.',
               ),
           },
         }));
@@ -3592,8 +3786,8 @@ function Reader() {
         currentPdfName: item.localPdfPath ? getFileNameFromPath(item.localPdfPath) : noPdfLoadedText,
         currentJsonName: current[item.workspaceId]?.currentJsonName ?? notLoadedText,
         statusMessage: l(
-          '正在整理预览内容并生成 AI 摘要...',
-          'Preparing the preview and generating the AI summary...',
+          '正在整理预览内容并生成 AI 概览...',
+          'Preparing the preview and generating the AI overview...',
         ),
         sourceKey: current[item.workspaceId]?.sourceKey ?? '',
       },
@@ -3647,10 +3841,11 @@ function Reader() {
             blockCount: previewContext.blocks.length,
             currentPdfName: previewContext.currentPdfName,
             currentJsonName: previewContext.currentJsonName,
-            statusMessage: l('已从阅读历史恢复摘要', 'Summary restored from reading history'),
+            statusMessage: l('已从阅读历史恢复概览', 'Overview restored from reading history'),
             sourceKey,
           },
         }));
+        void persistNativeLibraryOverview(item, historySummary, sourceKey).catch(() => undefined);
         return 'loaded';
       }
 
@@ -3665,10 +3860,11 @@ function Reader() {
             blockCount: previewContext.blocks.length,
             currentPdfName: previewContext.currentPdfName,
             currentJsonName: previewContext.currentJsonName,
-            statusMessage: l('已加载缓存摘要', 'Loaded the cached summary'),
+            statusMessage: l('已加载缓存概览', 'Loaded the cached overview'),
             sourceKey,
           },
         }));
+        void persistNativeLibraryOverview(item, cachedSummary, sourceKey).catch(() => undefined);
         return 'loaded';
       }
 
@@ -3684,8 +3880,8 @@ function Reader() {
             currentPdfName: previewContext.currentPdfName,
             currentJsonName: previewContext.currentJsonName,
             statusMessage: l(
-              '摘要模型尚未配置完成，请检查 Base URL、模型名称和 API Key。',
-              'The summary model is not configured yet. Check the Base URL, model name, and API key.',
+              '概览模型尚未配置完成，请检查 Base URL、模型名称和 API Key。',
+              'The overview model is not configured yet. Check the Base URL, model name, and API key.',
             ),
             sourceKey,
           },
@@ -3717,8 +3913,8 @@ function Reader() {
             currentJsonName: previewContext.currentJsonName,
             statusMessage: previewContext.blocks.length > 0
               ? l(
-                  '结构化内容已就绪，可以手动生成摘要。',
-                  'Structured content is ready. You can generate the summary manually.',
+                  '结构化内容已就绪，可以手动生成概览。',
+                  'Structured content is ready. You can generate the overview manually.',
                 )
               : previewContext.statusMessage,
             sourceKey,
@@ -3734,6 +3930,7 @@ function Reader() {
         title: item.title,
         authors: item.creators || undefined,
         year: item.year || undefined,
+        outputLanguage: resolveSummaryOutputLanguage(settings),
         blocks: summaryInputs,
         documentText,
       });
@@ -3754,10 +3951,11 @@ function Reader() {
           blockCount: previewContext.blocks.length,
           currentPdfName: previewContext.currentPdfName,
           currentJsonName: previewContext.currentJsonName,
-          statusMessage: l('AI 摘要已生成', 'AI summary generated'),
+          statusMessage: l('AI 概览已生成', 'AI overview generated'),
           sourceKey,
         },
       }));
+      void persistNativeLibraryOverview(item, summary, sourceKey).catch(() => undefined);
       return 'generated';
     } catch (nextError) {
       if (libraryPreviewRequestIdRef.current[item.workspaceId] !== requestId) {
@@ -3772,20 +3970,331 @@ function Reader() {
           error:
             nextError instanceof Error
               ? nextError.message
-              : l('生成预览摘要失败', 'Failed to generate the preview summary'),
+              : l('生成预览概览失败', 'Failed to generate the preview overview'),
           hasBlocks: current[item.workspaceId]?.hasBlocks ?? false,
           blockCount: current[item.workspaceId]?.blockCount ?? 0,
           currentPdfName:
             current[item.workspaceId]?.currentPdfName ??
             (item.localPdfPath ? getFileNameFromPath(item.localPdfPath) : noPdfLoadedText),
           currentJsonName: current[item.workspaceId]?.currentJsonName ?? notLoadedText,
-          statusMessage: l('生成预览摘要失败', 'Failed to generate the preview summary'),
+          statusMessage: l('生成预览概览失败', 'Failed to generate the preview overview'),
           sourceKey: current[item.workspaceId]?.sourceKey ?? '',
         },
       }));
       return 'failed';
     }
   };
+
+  const saveLibraryTranslationCache = useCallback(
+    async (item: WorkspaceItem, translations: TranslationMap) => {
+      if (!settings.mineruCacheDir.trim()) {
+        return;
+      }
+
+      const cachePath = buildMineruTranslationCachePath(
+        settings.mineruCacheDir.trim(),
+        item,
+        settings.translationTargetLanguage,
+      );
+      const payload: TranslationCacheEnvelope = {
+        version: 1,
+        sourceLanguage: settings.translationSourceLanguage,
+        targetLanguage: settings.translationTargetLanguage,
+        translatedAt: new Date().toISOString(),
+        translations,
+      };
+
+      await writeLocalTextFile(cachePath, JSON.stringify(payload, null, 2));
+    },
+    [
+      settings.mineruCacheDir,
+      settings.translationSourceLanguage,
+      settings.translationTargetLanguage,
+    ],
+  );
+
+  const runLibraryItemMineruParse = useCallback(
+    async (item: WorkspaceItem) => {
+      const pdfPath = item.localPdfPath?.trim() ?? '';
+
+      if (!pdfPath) {
+        const message = l('这篇文献缺少可解析的 PDF 文件', 'This paper has no PDF file to parse');
+        setError(message);
+        setStatusMessage(message);
+        return;
+      }
+
+      setError('');
+      setLibraryPreviewStates((current) => ({
+        ...current,
+        [item.workspaceId]: {
+          ...(current[item.workspaceId] ?? EMPTY_LIBRARY_PREVIEW_STATE),
+          loading: true,
+          error: '',
+          currentPdfName: getFileNameFromPath(pdfPath),
+          statusMessage: l('正在执行 MinerU 解析...', 'Running MinerU parsing...'),
+        },
+      }));
+      setStatusMessage(l(`正在解析：${item.title}`, `Parsing: ${item.title}`));
+
+      try {
+        const existingParse = await findExistingMineruJson(item);
+
+        if (existingParse) {
+          syncLibraryParsedState(
+            item,
+            existingParse.jsonText,
+            existingParse.path,
+            l('已复用已有的 MinerU 结果', 'Reused the existing MinerU result'),
+          );
+          window.dispatchEvent(
+            new CustomEvent('paperquay:native-mineru-status-updated', {
+              detail: {
+                paperId: item.itemKey,
+                mineruParsed: true,
+              },
+            }),
+          );
+          setStatusMessage(l('已复用已有的 MinerU 解析结果', 'Reused the existing MinerU parse result'));
+          return;
+        }
+
+        if (!mineruApiToken.trim()) {
+          setPreferredPreferencesSection('mineru');
+          setPreferencesOpen(true);
+          throw new Error(l('缺少 MinerU API Token', 'MinerU API Token is missing'));
+        }
+
+        const cachePaths = settings.mineruCacheDir.trim()
+          ? buildMineruCachePaths(settings.mineruCacheDir.trim(), item)
+          : null;
+        const result = await runMineruCloudParse({
+          apiToken: mineruApiToken.trim(),
+          pdfPath,
+          extractDir: cachePaths?.directory,
+          language: 'ch',
+          modelVersion: 'vlm',
+          enableFormula: true,
+          enableTable: true,
+          isOcr: false,
+          timeoutSecs: 900,
+          pollIntervalSecs: 5,
+        });
+        const jsonText = result.contentJsonText ?? result.middleJsonText;
+
+        if (!jsonText?.trim()) {
+          throw new Error(l('MinerU 未返回可用的 JSON 结果', 'MinerU did not return a usable JSON result'));
+        }
+
+        const savedPaths = await saveLibraryMineruParseCache({
+          item,
+          pdfPath,
+          sourceKind: 'cloud',
+          contentJsonText: result.contentJsonText,
+          middleJsonText: result.middleJsonText,
+          markdownText: result.markdownText,
+          batchId: result.batchId,
+          dataId: result.dataId,
+          fileName: result.fileName,
+          zipEntries: result.zipEntries,
+        }).catch(() => null);
+        const resolvedJsonPath =
+          result.contentJsonPath ||
+          result.middleJsonPath ||
+          (savedPaths
+            ? result.contentJsonText?.trim()
+              ? savedPaths.contentJsonPath
+              : savedPaths.middleJsonPath
+            : 'content_list_v2.json');
+
+        syncLibraryParsedState(
+          item,
+          jsonText,
+          resolvedJsonPath,
+          savedPaths
+            ? l(
+                `已完成 MinerU 解析并写入缓存：${savedPaths.directory}`,
+                `MinerU parsing finished and was cached in: ${savedPaths.directory}`,
+              )
+            : l('已完成 MinerU 解析', 'MinerU parsing finished'),
+        );
+        window.dispatchEvent(
+          new CustomEvent('paperquay:native-mineru-status-updated', {
+            detail: {
+              paperId: item.itemKey,
+              mineruParsed: true,
+            },
+          }),
+        );
+        setStatusMessage(l('MinerU 解析已完成', 'MinerU parsing finished'));
+      } catch (nextError) {
+        const message =
+          nextError instanceof Error
+            ? nextError.message
+            : l('MinerU 解析失败', 'MinerU parsing failed');
+        setError(message);
+        setStatusMessage(message);
+        setLibraryPreviewStates((current) => ({
+          ...current,
+          [item.workspaceId]: {
+            ...(current[item.workspaceId] ?? EMPTY_LIBRARY_PREVIEW_STATE),
+            loading: false,
+            error: message,
+            statusMessage: message,
+          },
+        }));
+      }
+    },
+    [
+      findExistingMineruJson,
+      l,
+      mineruApiToken,
+      saveLibraryMineruParseCache,
+      settings.mineruCacheDir,
+      syncLibraryParsedState,
+    ],
+  );
+
+  const runLibraryItemTranslation = useCallback(
+    async (item: WorkspaceItem) => {
+      if (!translationModelPreset?.apiKey.trim() || !translationModelPreset.baseUrl.trim()) {
+        setPreferredPreferencesSection('models');
+        setPreferencesOpen(true);
+        const message = l('请先配置可用的翻译模型', 'Configure an available translation model first');
+        setError(message);
+        setStatusMessage(message);
+        return;
+      }
+
+      setError('');
+      setLibraryPreviewStates((current) => ({
+        ...current,
+        [item.workspaceId]: {
+          ...(current[item.workspaceId] ?? EMPTY_LIBRARY_PREVIEW_STATE),
+          loading: true,
+          error: '',
+          statusMessage: l('正在准备全文翻译...', 'Preparing full-document translation...'),
+        },
+      }));
+      setStatusMessage(l(`正在准备翻译：${item.title}`, `Preparing translation: ${item.title}`));
+
+      try {
+        const previewContext = await loadLibraryPreviewBlocks(item);
+        const blocksToTranslate = previewContext.blocks
+          .map((block) => ({
+            blockId: block.blockId,
+            text: extractTextFromMineruBlock(block),
+          }))
+          .filter((block) => block.text.trim().length > 0);
+
+        if (blocksToTranslate.length === 0) {
+          throw new Error(l('当前没有可翻译的结构化文本，请先执行 MinerU 解析。', 'There is no structured text to translate. Run MinerU parsing first.'));
+        }
+
+        const batchSize = Math.max(1, settings.translationBatchSize);
+        const concurrency = Math.max(1, settings.translationConcurrency);
+        const batches = chunkItems(blocksToTranslate, batchSize);
+        const collectedTranslations = new Map<string, string>();
+        let completedBlocks = 0;
+        let cursor = 0;
+
+        const runWorker = async () => {
+          while (true) {
+            const currentIndex = cursor;
+            cursor += 1;
+
+            if (currentIndex >= batches.length) {
+              return;
+            }
+
+            const batch = batches[currentIndex];
+            const translations = await translateBlocksOpenAICompatible({
+              baseUrl: translationModelPreset.baseUrl,
+              apiKey: translationModelPreset.apiKey.trim(),
+              model: translationModelPreset.model,
+              sourceLanguage: settings.translationSourceLanguage,
+              targetLanguage: settings.translationTargetLanguage,
+              blocks: batch,
+              batchSize: batch.length,
+              concurrency: 1,
+            });
+
+            for (const translation of translations) {
+              if (translation.translatedText.trim()) {
+                collectedTranslations.set(translation.blockId, translation.translatedText);
+              }
+            }
+
+            completedBlocks = Math.min(blocksToTranslate.length, completedBlocks + batch.length);
+            setStatusMessage(
+              l(
+                `正在翻译 ${completedBlocks}/${blocksToTranslate.length} 个块`,
+                `Translating ${completedBlocks}/${blocksToTranslate.length} blocks`,
+              ),
+            );
+          }
+        };
+
+        await Promise.all(
+          Array.from({ length: Math.min(concurrency, batches.length) }, () => runWorker()),
+        );
+
+        const translations: TranslationMap = {};
+
+        for (const [blockId, translatedText] of collectedTranslations.entries()) {
+          translations[blockId] = translatedText;
+        }
+
+        await saveLibraryTranslationCache(item, translations).catch(() => undefined);
+        setLibraryPreviewStates((current) => ({
+          ...current,
+          [item.workspaceId]: {
+            ...(current[item.workspaceId] ?? EMPTY_LIBRARY_PREVIEW_STATE),
+            loading: false,
+            error: '',
+            hasBlocks: previewContext.blocks.length > 0,
+            blockCount: previewContext.blocks.length,
+            currentPdfName: previewContext.currentPdfName,
+            currentJsonName: previewContext.currentJsonName,
+            statusMessage: l(
+              `全文翻译完成，已生成 ${Object.keys(translations).length} 段译文`,
+              `Full translation complete. Generated ${Object.keys(translations).length} translated blocks`,
+            ),
+          },
+        }));
+        setStatusMessage(
+          l(
+            `全文翻译完成：${Object.keys(translations).length} 段`,
+            `Full translation complete: ${Object.keys(translations).length} blocks`,
+          ),
+        );
+      } catch (nextError) {
+        const message =
+          nextError instanceof Error ? nextError.message : l('全文翻译失败', 'Full translation failed');
+        setError(message);
+        setStatusMessage(message);
+        setLibraryPreviewStates((current) => ({
+          ...current,
+          [item.workspaceId]: {
+            ...(current[item.workspaceId] ?? EMPTY_LIBRARY_PREVIEW_STATE),
+            loading: false,
+            error: message,
+            statusMessage: message,
+          },
+        }));
+      }
+    },
+    [
+      l,
+      loadLibraryPreviewBlocks,
+      saveLibraryTranslationCache,
+      settings.translationBatchSize,
+      settings.translationConcurrency,
+      settings.translationSourceLanguage,
+      settings.translationTargetLanguage,
+      translationModelPreset,
+    ],
+  );
 
   const handleBatchMineruParse = useCallback(
     async (options?: { auto?: boolean }) => {
@@ -4068,15 +4577,15 @@ function Reader() {
       if (!summaryConfigured) {
         if (!auto) {
           setPreferencesOpen(true);
-          setError(l('缺少摘要模型配置', 'Summary model configuration is missing'));
-          setStatusMessage(l('缺少摘要模型配置', 'Summary model configuration is missing'));
+          setError(l('缺少概览模型配置', 'Overview model configuration is missing'));
+          setStatusMessage(l('缺少概览模型配置', 'Overview model configuration is missing'));
         }
         return;
       }
 
       if (allKnownItems.length === 0) {
         if (!auto) {
-          setStatusMessage(l('当前没有可生成摘要的文献', 'No documents are available for summary generation'));
+          setStatusMessage(l('当前没有可生成概览的文献', 'No documents are available for overview generation'));
         }
         return;
       }
@@ -4092,6 +4601,7 @@ function Reader() {
           const attemptKey = getAutoSummaryAttemptKey(
             item,
             settings.summarySourceMode,
+            resolveSummaryOutputLanguage(settings),
             hasParse,
           );
 
@@ -4108,7 +4618,7 @@ function Reader() {
 
       if (candidates.length === 0) {
         if (!auto) {
-          setStatusMessage(l('当前没有需要生成摘要的文献', 'No documents require summary generation right now'));
+          setStatusMessage(l('当前没有需要生成概览的文献', 'No documents require overview generation right now'));
         }
         return;
       }
@@ -4178,8 +4688,8 @@ function Reader() {
             if (!auto) {
               setStatusMessage(
                 l(
-                  `正在批量生成摘要：${currentLabel}`,
-                  `Generating summaries in batch: ${currentLabel}`,
+                  `正在批量生成概览：${currentLabel}`,
+                  `Generating overviews in batch: ${currentLabel}`,
                 ),
               );
             }
@@ -4240,13 +4750,13 @@ function Reader() {
           currentLabel:
             wasCancelled
               ? l(
-                  `批量摘要已取消，已完成 ${completedCount}/${candidates.length}`,
-                  `Batch summary cancelled after ${completedCount}/${candidates.length}`,
+                  `批量概览已取消，已完成 ${completedCount}/${candidates.length}`,
+                  `Batch overview cancelled after ${completedCount}/${candidates.length}`,
                 )
               : candidates.length > 0
               ? l(
-                  `批量摘要进度 ${completedCount}/${candidates.length}`,
-                  `Batch summary progress ${completedCount}/${candidates.length}`,
+                  `批量概览进度 ${completedCount}/${candidates.length}`,
+                  `Batch overview progress ${completedCount}/${candidates.length}`,
                 )
               : '',
         });
@@ -4256,12 +4766,12 @@ function Reader() {
         setStatusMessage(
           batchSummaryCancelRequestedRef.current
             ? l(
-                `摘要批处理已取消：成功 ${succeededCount}，跳过 ${skippedCount}，失败 ${failedCount}`,
-                `Summary batch cancelled: succeeded ${succeededCount}, skipped ${skippedCount}, failed ${failedCount}`,
+                `概览批处理已取消：成功 ${succeededCount}，跳过 ${skippedCount}，失败 ${failedCount}`,
+                `Overview batch cancelled: succeeded ${succeededCount}, skipped ${skippedCount}, failed ${failedCount}`,
               )
             : l(
-                `摘要批处理完成：成功 ${succeededCount}，跳过 ${skippedCount}，失败 ${failedCount}`,
-                `Summary batch finished: succeeded ${succeededCount}, skipped ${skippedCount}, failed ${failedCount}`,
+                `概览批处理完成：成功 ${succeededCount}，跳过 ${skippedCount}，失败 ${failedCount}`,
+                `Overview batch finished: succeeded ${succeededCount}, skipped ${skippedCount}, failed ${failedCount}`,
               ),
         );
       }
@@ -4308,7 +4818,7 @@ function Reader() {
     }
   };
 
-  const handleOpenNativeLibraryPaper = useCallback(
+  const registerNativeLibraryWorkspace = useCallback(
     (paper: LiteraturePaper) => {
       const workspaceItem = createNativeLibraryWorkspaceItem(paper);
 
@@ -4324,9 +4834,71 @@ function Reader() {
         return [workspaceItem, ...existingItems];
       });
       setSelectedLibraryItemId(workspaceItem.workspaceId);
-      openTab(workspaceItem.workspaceId, workspaceItem.title);
+      return workspaceItem;
     },
-    [l, openTab],
+    [l],
+  );
+
+  const openNativeLibraryWorkspace = useCallback(
+    (paper: LiteraturePaper) => {
+      const workspaceItem = registerNativeLibraryWorkspace(paper);
+
+      if (!workspaceItem) {
+        return;
+      }
+
+      const tabId = openTab(workspaceItem.workspaceId, workspaceItem.title);
+
+      return { workspaceItem, tabId };
+    },
+    [openTab, registerNativeLibraryWorkspace],
+  );
+
+  const handleOpenNativeLibraryPaper = useCallback(
+    (paper: LiteraturePaper) => {
+      openNativeLibraryWorkspace(paper);
+    },
+    [openNativeLibraryWorkspace],
+  );
+
+  const handleNativeLibraryMineruParse = useCallback(
+    (paper: LiteraturePaper) => {
+      const workspaceItem = registerNativeLibraryWorkspace(paper);
+
+      if (!workspaceItem) {
+        return;
+      }
+
+      void runLibraryItemMineruParse(workspaceItem);
+    },
+    [registerNativeLibraryWorkspace, runLibraryItemMineruParse],
+  );
+
+  const handleNativeLibraryTranslate = useCallback(
+    (paper: LiteraturePaper) => {
+      const workspaceItem = registerNativeLibraryWorkspace(paper);
+
+      if (!workspaceItem) {
+        return;
+      }
+
+      void runLibraryItemTranslation(workspaceItem);
+    },
+    [registerNativeLibraryWorkspace, runLibraryItemTranslation],
+  );
+
+  const handleNativeLibraryGenerateSummary = useCallback(
+    (paper: LiteraturePaper) => {
+      const workspaceItem = registerNativeLibraryWorkspace(paper);
+
+      if (!workspaceItem) {
+        return;
+      }
+
+      setStatusMessage(l(`正在生成概览：${workspaceItem.title}`, `Generating overview: ${workspaceItem.title}`));
+      void generateLibraryPreview(workspaceItem, true, { allowGenerate: true });
+    },
+    [generateLibraryPreview, l, registerNativeLibraryWorkspace],
   );
 
   const handleLibraryItemClick = (item: WorkspaceItem) => {
@@ -4528,16 +5100,13 @@ function Reader() {
       return;
     }
 
-    const tabId = openTab(selectedLibraryItem.workspaceId, selectedLibraryItem.title);
-    const bridge = readerBridges[tabId];
-
-    if (bridge) {
-      bridge.onCloudParse();
-      return;
-    }
-
-    setPendingCloudParseTabId(tabId);
-  }, [generateLibraryPreview, onboardingOpen, openTab, readerBridges, selectedLibraryItem]);
+    void runLibraryItemMineruParse(selectedLibraryItem);
+  }, [
+    generateLibraryPreview,
+    onboardingOpen,
+    runLibraryItemMineruParse,
+    selectedLibraryItem,
+  ]);
 
   const handlePreviewTranslateDocument = useCallback(() => {
     if (!selectedLibraryItem) {
@@ -4550,16 +5119,13 @@ function Reader() {
       return;
     }
 
-    const tabId = openTab(selectedLibraryItem.workspaceId, selectedLibraryItem.title);
-    const bridge = readerBridges[tabId];
-
-    if (bridge) {
-      bridge.onTranslate();
-      return;
-    }
-
-    setPendingTranslateTabId(tabId);
-  }, [generateLibraryPreview, onboardingOpen, openTab, readerBridges, selectedLibraryItem]);
+    void runLibraryItemTranslation(selectedLibraryItem);
+  }, [
+    generateLibraryPreview,
+    onboardingOpen,
+    runLibraryItemTranslation,
+    selectedLibraryItem,
+  ]);
 
   const revealOnboardingWelcomeSummary = useCallback(async () => {
     setOnboardingDemoReveal((current) => ({ ...current, parsed: true, summarized: true }));
@@ -4582,8 +5148,8 @@ function Reader() {
           currentPdfName: 'welcome.pdf',
           currentJsonName: 'content_list_v2.json',
           statusMessage: l(
-            '已显示 Welcome 内置 AI 摘要。这个演示结果来自随软件打包的数据，没有调用 API。',
-            'Displayed the built-in Welcome AI summary. This demo result is bundled with the app and did not call any API.',
+            '已显示 Welcome 内置 AI 概览。这个演示结果来自随软件打包的数据，没有调用 API。',
+            'Displayed the built-in Welcome AI overview. This demo result is bundled with the app and did not call any API.',
           ),
           sourceKey: parsed?.sourceKey || 'onboarding:welcome::summary',
         },
@@ -4594,8 +5160,8 @@ function Reader() {
         [ONBOARDING_WELCOME_ITEM.workspaceId]: {
           ...(current[ONBOARDING_WELCOME_ITEM.workspaceId] ?? EMPTY_LIBRARY_PREVIEW_STATE),
           loading: false,
-          error: nextError instanceof Error ? nextError.message : l('加载内置摘要失败', 'Failed to load the built-in summary'),
-          statusMessage: l('加载内置摘要失败', 'Failed to load the built-in summary'),
+          error: nextError instanceof Error ? nextError.message : l('加载内置概览失败', 'Failed to load the built-in overview'),
+          statusMessage: l('加载内置概览失败', 'Failed to load the built-in overview'),
         },
       }));
     }
@@ -4672,8 +5238,8 @@ function Reader() {
     );
     setStatusMessage(
       nextPaused
-        ? l('已暂停批量摘要生成', 'Paused the batch summary generation')
-        : l('已继续批量摘要生成', 'Resumed the batch summary generation'),
+        ? l('已暂停批量概览生成', 'Paused the batch overview generation')
+        : l('已继续批量概览生成', 'Resumed the batch overview generation'),
     );
   }, [l]);
 
@@ -4699,8 +5265,8 @@ function Reader() {
     );
     setStatusMessage(
       l(
-        '正在取消批量摘要生成，当前进行中的任务完成后将停止。',
-        'Cancelling the batch summary generation. It will stop after the current tasks finish.',
+        '正在取消批量概览生成，当前进行中的任务完成后将停止。',
+        'Cancelling the batch overview generation. It will stop after the current tasks finish.',
       ),
     );
   }, [l]);
@@ -4896,6 +5462,21 @@ function Reader() {
   }, [pendingTranslateTabId, readerBridges]);
 
   useEffect(() => {
+    if (!pendingSummaryTabId) {
+      return;
+    }
+
+    const bridge = readerBridges[pendingSummaryTabId];
+
+    if (!bridge) {
+      return;
+    }
+
+    bridge.onGenerateSummary();
+    setPendingSummaryTabId(null);
+  }, [pendingSummaryTabId, readerBridges]);
+
+  useEffect(() => {
     if (!configHydrated) {
       return;
     }
@@ -4918,7 +5499,9 @@ function Reader() {
     settings.autoGenerateSummary,
     settings.autoLoadSiblingJson,
     settings.mineruCacheDir,
+    settings.summaryOutputLanguage,
     settings.summarySourceMode,
+    settings.uiLanguage,
     summaryConfigured,
   ]);
 
@@ -4935,7 +5518,9 @@ function Reader() {
     settings.autoLoadSiblingJson,
     settings.summaryBaseUrl,
     settings.summaryModel,
+    settings.summaryOutputLanguage,
     settings.summarySourceMode,
+    settings.uiLanguage,
     summaryApiKey,
   ]);
 
@@ -4970,6 +5555,8 @@ function Reader() {
     configHydrated,
     itemParseStatusMap,
     settings.autoGenerateSummary,
+    settings.summaryOutputLanguage,
+    settings.uiLanguage,
     summaryConfigured,
   ]);
 
@@ -5229,6 +5816,11 @@ function Reader() {
               <LiteratureLibraryView
                 onOpenPaper={handleOpenNativeLibraryPaper}
                 onOpenSettings={handleOpenPreferences}
+                mineruCacheDir={settings.mineruCacheDir}
+                autoLoadSiblingJson={settings.autoLoadSiblingJson}
+                onRunMineruParse={handleNativeLibraryMineruParse}
+                onTranslatePaper={handleNativeLibraryTranslate}
+                onGenerateSummary={handleNativeLibraryGenerateSummary}
               />
             )}
           </div>

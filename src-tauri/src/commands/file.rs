@@ -451,6 +451,13 @@ pub fn select_save_pdf_path(
 }
 
 #[tauri::command]
+pub fn path_exists(path: String) -> bool {
+    fs::metadata(PathBuf::from(path))
+        .map(|metadata| metadata.is_file() && metadata.len() > 0)
+        .unwrap_or(false)
+}
+
+#[tauri::command]
 pub fn read_text_file(path: String) -> Result<String, String> {
     let file_path = PathBuf::from(path);
     ensure_file(&file_path)?;

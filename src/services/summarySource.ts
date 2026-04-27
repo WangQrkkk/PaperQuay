@@ -1,6 +1,7 @@
 import { pdfjs } from 'react-pdf';
 import type {
   PositionedMineruBlock,
+  ReaderSettings,
   SummaryBlockInput,
 } from '../types/reader';
 import {
@@ -13,7 +14,17 @@ pdfjs.GlobalWorkerOptions.workerSrc = new URL(
   import.meta.url,
 ).toString();
 
-export const SUMMARY_PROMPT_VERSION = 'summary-prompt-v2';
+export const SUMMARY_PROMPT_VERSION = 'summary-prompt-v3';
+
+export function resolveSummaryOutputLanguage(settings: ReaderSettings): string {
+  const configured = settings.summaryOutputLanguage.trim();
+
+  if (!configured || configured === 'follow-ui') {
+    return settings.uiLanguage === 'en-US' ? 'English' : 'Chinese';
+  }
+
+  return configured;
+}
 
 function normalizePdfPageText(text: string): string {
   return text.replace(/\s+/g, ' ').trim();

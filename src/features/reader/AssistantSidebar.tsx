@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Component, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   ArrowUp,
   Bot,
@@ -133,24 +133,117 @@ function HintPanel({
   );
 }
 
+function formatMarkdownError(error: unknown) {
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+
+  return String(error || 'Unknown markdown render error');
+}
+
+class MarkdownRenderBoundary extends Component<
+  {
+    children: ReactNode;
+    fallback: ReactNode;
+    resetKey: string;
+  },
+  { hasError: boolean }
+> {
+  state = { hasError: false };
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidUpdate(previousProps: { resetKey: string }) {
+    if (previousProps.resetKey !== this.props.resetKey && this.state.hasError) {
+      this.setState({ hasError: false });
+    }
+  }
+
+  render() {
+    return this.state.hasError ? this.props.fallback : this.props.children;
+  }
+}
+
+function MarkdownFallback({
+  content,
+  error,
+}: {
+  content: string;
+  error?: string;
+}) {
+  const l = useLocaleText();
+
+  return (
+    <div className="space-y-3">
+      {error ? (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-700">
+          {l('Markdown 预览暂时无法渲染，已切换为纯文本预览。', 'Markdown preview failed and fell back to plain text.')}
+          <div className="mt-1 break-all opacity-80">{error}</div>
+        </div>
+      ) : null}
+      <pre className="max-h-[420px] overflow-auto whitespace-pre-wrap rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-7 text-slate-700">
+        {content}
+      </pre>
+    </div>
+  );
+}
+
 function MarkdownPreview({
   content,
   className,
+  normalizeMath = true,
 }: {
   content: string;
   className?: string;
+  normalizeMath?: boolean;
 }) {
+  const normalized = useMemo(() => {
+    try {
+      return {
+        content: normalizeMath ? normalizeMarkdownMath(content) : content,
+        error: '',
+      };
+    } catch (error) {
+      return {
+        content,
+        error: formatMarkdownError(error),
+      };
+    }
+  }, [content, normalizeMath]);
+
+  if (normalized.error) {
+    return <MarkdownFallback content={content} error={normalized.error} />;
+  }
+
+  const fallback = <MarkdownFallback content={content} />;
+
   return (
-    <ReactMarkdown
-      className={cn(
-        'prose prose-sm max-w-none text-slate-700 prose-p:my-2 prose-p:leading-relaxed prose-strong:text-slate-900 prose-code:rounded prose-code:bg-slate-100 prose-code:px-1 prose-code:py-0.5 prose-code:text-indigo-700 prose-li:my-1 [&_.katex]:text-slate-900 [&_.katex-display]:my-4 [&_.katex-display]:overflow-x-auto [&_.katex-display]:overflow-y-hidden [&_.katex-display]:py-2',
-        className,
-      )}
-      remarkPlugins={[remarkGfm, remarkMath]}
-      rehypePlugins={[[rehypeKatex, { strict: 'ignore', throwOnError: false }]]}
-    >
-      {normalizeMarkdownMath(content)}
-    </ReactMarkdown>
+    <MarkdownRenderBoundary resetKey={normalized.content} fallback={fallback}>
+      <ReactMarkdown
+        className={cn(
+          'max-w-none space-y-3 text-sm leading-7 text-slate-700',
+          '[&_h1]:mb-3 [&_h1]:mt-5 [&_h1]:border-b [&_h1]:border-slate-200 [&_h1]:pb-2 [&_h1]:text-2xl [&_h1]:font-bold [&_h1]:leading-tight [&_h1]:text-slate-950',
+          '[&_h2]:mb-2.5 [&_h2]:mt-5 [&_h2]:text-xl [&_h2]:font-bold [&_h2]:leading-tight [&_h2]:text-slate-900',
+          '[&_h3]:mb-2 [&_h3]:mt-4 [&_h3]:text-base [&_h3]:font-semibold [&_h3]:text-slate-900',
+          '[&_h4]:mb-1.5 [&_h4]:mt-3 [&_h4]:text-sm [&_h4]:font-semibold [&_h4]:text-slate-800',
+          '[&_p]:my-2 [&_p]:leading-7 [&_strong]:font-semibold [&_strong]:text-slate-950 [&_em]:text-slate-700',
+          '[&_ul]:my-2 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:my-2 [&_ol]:list-decimal [&_ol]:pl-5 [&_li]:my-1 [&_li]:pl-1',
+          '[&_blockquote]:my-3 [&_blockquote]:border-l-4 [&_blockquote]:border-indigo-200 [&_blockquote]:bg-indigo-50/60 [&_blockquote]:py-2 [&_blockquote]:pl-4 [&_blockquote]:pr-3 [&_blockquote]:text-slate-600',
+          '[&_code]:rounded [&_code]:bg-slate-100 [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-[0.88em] [&_code]:text-indigo-700',
+          '[&_pre]:my-3 [&_pre]:overflow-x-auto [&_pre]:rounded-2xl [&_pre]:border [&_pre]:border-slate-200 [&_pre]:bg-slate-950 [&_pre]:p-4 [&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_pre_code]:text-slate-100',
+          '[&_a]:font-medium [&_a]:text-indigo-600 [&_a]:underline [&_a]:underline-offset-2',
+          '[&_table]:my-3 [&_table]:w-full [&_table]:border-collapse [&_table]:overflow-hidden [&_table]:rounded-xl [&_th]:border [&_th]:border-slate-200 [&_th]:bg-slate-50 [&_th]:px-3 [&_th]:py-2 [&_th]:text-left [&_th]:font-semibold [&_td]:border [&_td]:border-slate-200 [&_td]:px-3 [&_td]:py-2',
+          '[&_hr]:my-5 [&_hr]:border-slate-200 [&_.katex]:text-slate-900 [&_.katex-display]:my-4 [&_.katex-display]:overflow-x-auto [&_.katex-display]:overflow-y-hidden [&_.katex-display]:py-2',
+          className,
+        )}
+        remarkPlugins={[remarkGfm, remarkMath]}
+        rehypePlugins={[[rehypeKatex, { strict: 'ignore', throwOnError: true }]]}
+      >
+        {normalized.content}
+      </ReactMarkdown>
+    </MarkdownRenderBoundary>
   );
 }
 
@@ -203,10 +296,10 @@ function SummaryPanel({
 
   return (
     <SectionCard
-      title={compact ? l('论文摘要', 'Paper Summary') : l('AI 摘要', 'AI Summary')}
+      title={compact ? l('论文概览', 'Paper Overview') : l('AI 概览', 'AI Overview')}
       description={l(
-        '根据当前文档内容生成结构化摘要。',
-        'Generate a structured summary from the current document.',
+        '根据当前文档内容生成结构化概览。',
+        'Generate a structured overview from the current document.',
       )}
       icon={<Sparkles className="h-4 w-4" strokeWidth={1.8} />}
       actions={
@@ -220,8 +313,8 @@ function SummaryPanel({
           {loading
             ? l('生成中...', 'Generating...')
             : paperSummary
-              ? l('刷新整篇摘要', 'Regenerate')
-              : l('生成摘要', 'Generate Summary')}
+              ? l('刷新整篇概览', 'Regenerate')
+              : l('生成概览', 'Generate Overview')}
         </button>
       }
       contentClassName="space-y-4"
@@ -229,8 +322,8 @@ function SummaryPanel({
       {!paperSummary && !hasBlocks ? (
         <HintPanel icon={<Bot className="h-4 w-4" strokeWidth={1.8} />}>
           {l(
-            '请先加载 PDF 和对应的 MinerU JSON，再生成摘要。',
-            'Load the PDF and its MinerU JSON before generating a summary.',
+            '请先加载 PDF 和对应的 MinerU JSON，再生成概览。',
+            'Load the PDF and its MinerU JSON before generating an overview.',
           )}
         </HintPanel>
       ) : null}
@@ -238,8 +331,8 @@ function SummaryPanel({
       {!paperSummary && hasBlocks && !aiConfigured ? (
         <HintPanel icon={<Bot className="h-4 w-4" strokeWidth={1.8} />}>
           {l(
-            '请先配置可用的 chat/completions 模型，然后再生成摘要。',
-            'Configure an available chat/completions model before generating a summary.',
+            '请先配置可用的 chat/completions 模型，然后再生成概览。',
+            'Configure an available chat/completions model before generating an overview.',
           )}
         </HintPanel>
       ) : null}
@@ -262,7 +355,7 @@ function SummaryPanel({
         <div className="space-y-4">
           <div className="rounded-[22px] border border-slate-200/80 bg-[linear-gradient(180deg,rgba(248,250,252,0.96),rgba(255,255,255,0.86))] px-5 py-5">
             <div className="flex flex-wrap items-center gap-2">
-              <StatusBadge tone="accent">{l('摘要已生成', 'Summary Ready')}</StatusBadge>
+              <StatusBadge tone="accent">{l('概览已生成', 'Overview Ready')}</StatusBadge>
               <StatusBadge>
                 {l(`${paperSummary.keywords.length} 个关键词`, `${paperSummary.keywords.length} keywords`)}
               </StatusBadge>
@@ -547,6 +640,7 @@ function ChatWorkspacePanel({
   const [compactActionsOpen, setCompactActionsOpen] = useState(false);
   const activePreset =
     qaModelPresets.find((preset) => preset.id === selectedQaPresetId) ?? qaModelPresets[0] ?? null;
+  const streamingAssistantMessage = loading && messages[messages.length - 1]?.role === 'assistant';
   const workspaceMode = layoutMode === 'workspace';
   const orderedSessions = useMemo(
     () => [...sessions].sort((left, right) => right.updatedAt - left.updatedAt),
@@ -936,9 +1030,10 @@ function ChatWorkspacePanel({
                       </div>
 
                       <MarkdownPreview
-                        content={message.content}
+                        content={message.content.trim() || (assistantMessage && loading ? l('正在思考...', 'Thinking...') : '')}
                         className={cn(
                           'text-sm leading-7',
+                          assistantMessage && !message.content.trim() && loading && 'text-slate-400',
                           !assistantMessage &&
                             '!text-slate-50 prose-p:text-slate-50 prose-strong:text-white prose-li:text-slate-100 prose-headings:text-white prose-code:bg-white/10 prose-code:text-white [&_.katex]:text-white',
                         )}
@@ -979,7 +1074,7 @@ function ChatWorkspacePanel({
                 );
               })}
 
-              {loading ? (
+              {loading && !streamingAssistantMessage ? (
                 <div className="flex items-start gap-3">
                   <span className="mt-1 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-900 text-white shadow-[0_10px_24px_rgba(15,23,42,0.14)]">
                     <Bot className="h-4 w-4" strokeWidth={1.9} />
@@ -1413,6 +1508,8 @@ type NotesDrawerContentProps = {
   onAppendSelectedExcerptToNote: () => void;
 };
 
+type WorkspaceNoteViewMode = 'split' | 'edit' | 'preview';
+
 function NotesDrawerContent({
   activeBlockSummary,
   workspaceNoteMarkdown,
@@ -1424,13 +1521,27 @@ function NotesDrawerContent({
   onAppendSelectedExcerptToNote,
 }: NotesDrawerContentProps) {
   const l = useLocaleText();
+  const [viewMode, setViewMode] = useState<WorkspaceNoteViewMode>('split');
+  const noteText = workspaceNoteMarkdown.trim();
+  const noteStats = {
+    characters: workspaceNoteMarkdown.length,
+    lines: workspaceNoteMarkdown ? workspaceNoteMarkdown.split(/\r?\n/).length : 0,
+  };
+  const viewModeOptions: Array<{
+    key: WorkspaceNoteViewMode;
+    label: string;
+  }> = [
+    { key: 'split', label: l('对照', 'Split') },
+    { key: 'edit', label: l('编辑', 'Edit') },
+    { key: 'preview', label: l('预览', 'Preview') },
+  ];
 
   return (
     <div className="h-full overflow-y-auto px-4 py-4">
       <div className="space-y-4">
         {activeBlockSummary ? (
           <SectionCard
-            title={l('当前块摘要', 'Active Block Summary')}
+            title={l('当前块概览', 'Active Block Overview')}
             description={l(
               '来自当前激活块的上下文信息，可直接用于整理笔记。',
               'Context from the active block that you can reuse in your notes.',
@@ -1444,18 +1555,80 @@ function NotesDrawerContent({
         <SectionCard
           title={l('工作区笔记', 'Workspace Notes')}
           description={l(
-            '记录阅读过程中的想法和待办。',
-            'Capture ideas and follow-ups while reading.',
+            '支持 Markdown，输入时会实时渲染预览，并自动保存到当前文档的阅读记录。',
+            'Supports Markdown with live preview and auto-save into the current document history.',
           )}
           icon={<FileText className="h-4 w-4" strokeWidth={1.8} />}
           contentClassName="space-y-3"
+          actions={
+            <div className="inline-flex rounded-2xl border border-slate-200 bg-slate-50 p-1">
+              {viewModeOptions.map((option) => (
+                <button
+                  key={option.key}
+                  type="button"
+                  onClick={() => setViewMode(option.key)}
+                  className={cn(
+                    'rounded-xl px-3 py-1.5 text-xs font-semibold transition',
+                    viewMode === option.key
+                      ? 'bg-white text-slate-900 shadow-sm'
+                      : 'text-slate-500 hover:text-slate-800',
+                  )}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          }
         >
-          <textarea
-            value={workspaceNoteMarkdown}
-            onChange={(event) => onWorkspaceNoteChange(event.target.value)}
-            placeholder={l('在这里输入 Markdown 笔记...', 'Write Markdown notes here...')}
-            className="min-h-[180px] w-full resize-y rounded-2xl border border-slate-200 bg-slate-50/80 px-4 py-3 text-sm leading-7 text-slate-700 outline-none transition focus:border-indigo-200 focus:bg-white"
-          />
+          {viewMode !== 'preview' ? (
+            <div>
+              <textarea
+                value={workspaceNoteMarkdown}
+                onChange={(event) => onWorkspaceNoteChange(event.target.value)}
+                placeholder={l(
+                  '在这里输入 Markdown 笔记，例如：\n\n## 核心观点\n- 方法\n- 实验\n\n$$E = mc^2$$',
+                  'Write Markdown notes here, for example:\n\n## Key Ideas\n- Method\n- Experiments\n\n$$E = mc^2$$',
+                )}
+                className={cn(
+                  'w-full resize-y rounded-2xl border border-slate-200 bg-slate-50/80 px-4 py-3 font-mono text-sm leading-7 text-slate-700 outline-none transition focus:border-indigo-200 focus:bg-white',
+                  viewMode === 'split' ? 'min-h-[180px]' : 'min-h-[360px]',
+                )}
+              />
+              <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-400">
+                <span>
+                  {l(
+                    `${noteStats.characters} 字符 · ${noteStats.lines} 行`,
+                    `${noteStats.characters} chars · ${noteStats.lines} lines`,
+                  )}
+                </span>
+                <span>{l('实时保存', 'Auto-saved')}</span>
+              </div>
+            </div>
+          ) : null}
+
+          {viewMode !== 'edit' ? (
+            <div className="rounded-[22px] border border-slate-200/80 bg-white px-4 py-4">
+              <div className="mb-3 flex items-center justify-between gap-2">
+                <div className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">
+                  {l('实时预览', 'Live Preview')}
+                </div>
+                <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-medium text-emerald-600">
+                  Markdown
+                </span>
+              </div>
+              {noteText ? (
+                <MarkdownPreview content={workspaceNoteMarkdown} normalizeMath={false} />
+              ) : (
+                <HintPanel icon={<FileText className="h-4 w-4" strokeWidth={1.8} />}>
+                  {l(
+                    '开始输入后，这里会同步渲染标题、列表、表格、公式和代码块。',
+                    'Start typing to render headings, lists, tables, math, and code blocks here.',
+                  )}
+                </HintPanel>
+              )}
+            </div>
+          ) : null}
+
           <div className="flex flex-wrap gap-2">
             <button
               type="button"

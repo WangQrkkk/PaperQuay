@@ -71,6 +71,7 @@ export interface LiteraturePaper {
   aiSummary: string | null;
   citation: string | null;
   source: 'local' | 'zotero' | string;
+  sortOrder: number;
   authors: LiteratureAuthor[];
   tags: LiteratureTag[];
   categoryIds: string[];
@@ -87,7 +88,7 @@ export interface ListPapersRequest {
   categoryId?: string | null;
   tagId?: string | null;
   search?: string | null;
-  sortBy?: 'title' | 'year' | 'author' | 'importedAt' | 'updatedAt' | 'lastReadAt';
+  sortBy?: 'manual' | 'title' | 'year' | 'author' | 'importedAt' | 'updatedAt' | 'lastReadAt';
   sortDirection?: 'asc' | 'desc';
   limit?: number;
 }
@@ -166,4 +167,8 @@ export interface UpdatePaperRequest {
 
 export interface DeletePaperRequest {
   paperId: string;
+}
+
+export interface ReorderPapersRequest {
+  paperIds: string[];
 }

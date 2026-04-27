@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -100,6 +100,7 @@ pub struct LiteraturePaper {
     ai_summary: Option<String>,
     citation: Option<String>,
     source: String,
+    sort_order: i64,
     authors: Vec<LiteratureAuthor>,
     tags: Vec<LiteratureTag>,
     category_ids: Vec<String>,
@@ -215,6 +216,12 @@ pub struct DeletePaperRequest {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ReorderPapersRequest {
+    paper_ids: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct MoveCategoryRequest {
     category_id: String,
     parent_id: Option<String>,
@@ -288,7 +295,67 @@ fn open_library_connection(app: &AppHandle) -> Result<Connection, String> {
     Ok(connection)
 }
 
+fn table_exists(connection: &Connection, table_name: &str) -> Result<bool, String> {
+    connection
+        .query_row(
+            "select exists(select 1 from sqlite_master where type = 'table' and name = ?1)",
+            params![table_name],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|value| value != 0)
+        .map_err(|error| format!("检查数据库表 {} 失败: {}", table_name, error))
+}
+
+fn table_has_column(
+    connection: &Connection,
+    table_name: &str,
+    column_name: &str,
+) -> Result<bool, String> {
+    let query = format!("pragma table_info({})", table_name);
+    let mut statement = connection
+        .prepare(&query)
+        .map_err(|error| format!("检查数据表 {} 字段失败: {}", table_name, error))?;
+    let rows = statement
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|error| format!("读取数据表 {} 字段失败: {}", table_name, error))?;
+    let columns = rows
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("解析数据表 {} 字段失败: {}", table_name, error))?;
+
+    Ok(columns.iter().any(|column| column == column_name))
+}
+
+fn backfill_paper_sort_order(connection: &Connection) -> Result<(), String> {
+    let mut statement = connection
+        .prepare("select id from papers order by imported_at desc, lower(title) asc")
+        .map_err(|error| format!("准备文献排序迁移失败: {}", error))?;
+    let rows = statement
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(|error| format!("查询文献排序迁移数据失败: {}", error))?;
+    let paper_ids = rows
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("读取文献排序迁移数据失败: {}", error))?;
+
+    for (index, paper_id) in paper_ids.iter().enumerate() {
+        connection
+            .execute(
+                "update papers set sort_order = ?1 where id = ?2",
+                params![index as i64, paper_id],
+            )
+            .map_err(|error| format!("迁移文献排序失败: {}", error))?;
+    }
+
+    Ok(())
+}
+
 fn migrate_library_schema(connection: &Connection) -> Result<(), String> {
+    let papers_table_exists = table_exists(connection, "papers")?;
+    let had_paper_sort_order = if papers_table_exists {
+        table_has_column(connection, "papers", "sort_order")?
+    } else {
+        false
+    };
+
     connection
         .execute_batch(
             "
@@ -311,7 +378,8 @@ fn migrate_library_schema(connection: &Connection) -> Result<(), String> {
         user_note text,
         ai_summary text,
         citation text,
-        source text not null default 'local'
+        source text not null default 'local',
+        sort_order integer not null default 0
       );
 
       create table if not exists authors (
@@ -435,7 +503,19 @@ fn migrate_library_schema(connection: &Connection) -> Result<(), String> {
       );
       ",
         )
-        .map_err(|error| format!("初始化文献库数据库失败: {}", error))
+        .map_err(|error| format!("初始化文献库数据库失败: {}", error))?;
+
+    if papers_table_exists && !had_paper_sort_order {
+        connection
+            .execute(
+                "alter table papers add column sort_order integer not null default 0",
+                [],
+            )
+            .map_err(|error| format!("迁移文献排序字段失败: {}", error))?;
+        backfill_paper_sort_order(connection)?;
+    }
+
+    Ok(())
 }
 
 fn seed_system_categories(connection: &Connection) -> Result<(), String> {
@@ -1096,7 +1176,7 @@ fn load_paper_by_id(
         .query_row(
             "select id, title, year, publication, doi, url, abstract_text, keywords,
               imported_at, updated_at, last_read_at, reading_progress, is_favorite,
-              user_note, ai_summary, citation, source
+              user_note, ai_summary, citation, source, sort_order
        from papers
        where id = ?1
        limit 1",
@@ -1120,6 +1200,7 @@ fn load_paper_by_id(
                     row.get::<_, Option<String>>(14)?,
                     row.get::<_, Option<String>>(15)?,
                     row.get::<_, String>(16)?,
+                    row.get::<_, i64>(17)?,
                 ))
             },
         )
@@ -1144,6 +1225,7 @@ fn load_paper_by_id(
         ai_summary,
         citation,
         source,
+        sort_order,
     )) = base
     else {
         return Ok(None);
@@ -1171,6 +1253,7 @@ fn load_paper_by_id(
         ai_summary,
         citation,
         source,
+        sort_order,
     }))
 }
 
@@ -1280,11 +1363,28 @@ fn next_category_sort_order(
     }
 }
 
+fn next_paper_sort_order(connection: &Connection) -> Result<i64, String> {
+    connection
+        .query_row(
+            "select coalesce(min(sort_order), 0) - 1 from papers",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|error| format!("计算文献排序失败: {}", error))
+}
+
 fn sort_clause(sort_by: Option<&str>, direction: Option<&str>) -> String {
-    let column = match sort_by.unwrap_or("importedAt") {
+    let sort_key = sort_by.unwrap_or("manual");
+
+    if sort_key == "manual" {
+        return "p.sort_order asc, p.imported_at desc, lower(p.title) asc".to_string();
+    }
+
+    let column = match sort_key {
         "title" => "lower(p.title)",
         "year" => "coalesce(p.year, '')",
         "author" => "lower(coalesce(first_author.name, ''))",
+        "importedAt" => "p.imported_at",
         "updatedAt" => "p.updated_at",
         "lastReadAt" => "coalesce(p.last_read_at, 0)",
         _ => "p.imported_at",
@@ -1413,6 +1513,85 @@ fn list_papers_inner(
     Ok(papers)
 }
 
+fn list_paper_ids_by_manual_order(connection: &Connection) -> Result<Vec<String>, String> {
+    let mut statement = connection
+        .prepare(
+            "select id from papers order by sort_order asc, imported_at desc, lower(title) asc",
+        )
+        .map_err(|error| format!("准备文献排序查询失败: {}", error))?;
+    let rows = statement
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(|error| format!("查询文献排序失败: {}", error))?;
+
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("读取文献排序失败: {}", error))
+}
+
+fn reorder_papers_by_subset(
+    connection: &Connection,
+    requested_paper_ids: Vec<String>,
+) -> Result<(), String> {
+    let mut seen = HashSet::new();
+    let requested_paper_ids = requested_paper_ids
+        .into_iter()
+        .map(|paper_id| paper_id.trim().to_string())
+        .filter(|paper_id| !paper_id.is_empty())
+        .filter(|paper_id| seen.insert(paper_id.clone()))
+        .collect::<Vec<_>>();
+
+    if requested_paper_ids.len() < 2 {
+        return Ok(());
+    }
+
+    let current_paper_ids = list_paper_ids_by_manual_order(connection)?;
+    let existing_paper_ids = current_paper_ids
+        .iter()
+        .cloned()
+        .collect::<HashSet<String>>();
+    let requested_paper_ids = requested_paper_ids
+        .into_iter()
+        .filter(|paper_id| existing_paper_ids.contains(paper_id))
+        .collect::<Vec<_>>();
+
+    if requested_paper_ids.len() < 2 {
+        return Ok(());
+    }
+
+    let requested_set = requested_paper_ids
+        .iter()
+        .cloned()
+        .collect::<HashSet<String>>();
+    let mut next_paper_ids = Vec::with_capacity(current_paper_ids.len());
+    let mut inserted_requested_block = false;
+
+    for paper_id in current_paper_ids {
+        if requested_set.contains(&paper_id) {
+            if !inserted_requested_block {
+                next_paper_ids.extend(requested_paper_ids.iter().cloned());
+                inserted_requested_block = true;
+            }
+            continue;
+        }
+
+        next_paper_ids.push(paper_id);
+    }
+
+    if !inserted_requested_block {
+        next_paper_ids.extend(requested_paper_ids);
+    }
+
+    for (index, paper_id) in next_paper_ids.iter().enumerate() {
+        connection
+            .execute(
+                "update papers set sort_order = ?1 where id = ?2",
+                params![index as i64, paper_id],
+            )
+            .map_err(|error| format!("保存文献排序失败: {}", error))?;
+    }
+
+    Ok(())
+}
+
 fn import_single_pdf(
     connection: &Connection,
     settings: &LibrarySettings,
@@ -1459,6 +1638,7 @@ fn import_single_pdf(
     let paper_id = new_id("paper");
     let attachment_id = new_id("att");
     let now = now_millis();
+    let sort_order = next_paper_sort_order(connection)?;
     let storage_dir = PathBuf::from(&settings.storage_dir);
     let normalized_import_mode = normalize_import_mode(import_mode)?;
     let target_path = if normalized_import_mode == "keep" {
@@ -1519,8 +1699,8 @@ fn import_single_pdf(
             "insert into papers
        (id, title, year, publication, doi, url, abstract_text, keywords,
         imported_at, updated_at, last_read_at, reading_progress, is_favorite,
-        user_note, ai_summary, citation, source)
-       values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9, null, 0, 0, null, null, null, 'local')",
+        user_note, ai_summary, citation, source, sort_order)
+       values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9, null, 0, 0, null, null, null, 'local', ?10)",
             params![
                 paper_id,
                 title,
@@ -1530,7 +1710,8 @@ fn import_single_pdf(
                 metadata.and_then(|value| value.url.as_deref()),
                 metadata.and_then(|value| value.abstract_text.as_deref()),
                 keywords_to_json(&keywords)?,
-                now
+                now,
+                sort_order
             ],
         )
         .map_err(|error| format!("写入文献失败: {}", error))?;
@@ -1601,11 +1782,11 @@ pub fn library_init(app: AppHandle) -> Result<LibrarySnapshot, String> {
     let papers = list_papers_inner(
         &connection,
         ListPapersRequest {
-            category_id: category_id_for_system_key(&connection, SYSTEM_CATEGORY_RECENT)?,
+            category_id: category_id_for_system_key(&connection, SYSTEM_CATEGORY_ALL)?,
             tag_id: None,
             search: None,
-            sort_by: Some("importedAt".to_string()),
-            sort_direction: Some("desc".to_string()),
+            sort_by: Some("manual".to_string()),
+            sort_direction: Some("asc".to_string()),
             limit: Some(50),
         },
     )?;
@@ -1930,6 +2111,20 @@ pub fn library_list_papers(
 ) -> Result<Vec<LiteraturePaper>, String> {
     let connection = open_library_connection(&app)?;
     list_papers_inner(&connection, request)
+}
+
+#[tauri::command]
+pub fn library_reorder_papers(app: AppHandle, request: ReorderPapersRequest) -> Result<(), String> {
+    let mut connection = open_library_connection(&app)?;
+    let transaction = connection
+        .transaction()
+        .map_err(|error| format!("开启文献排序事务失败: {}", error))?;
+
+    reorder_papers_by_subset(&transaction, request.paper_ids)?;
+
+    transaction
+        .commit()
+        .map_err(|error| format!("提交文献排序失败: {}", error))
 }
 
 #[tauri::command]

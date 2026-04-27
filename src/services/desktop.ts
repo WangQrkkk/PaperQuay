@@ -154,6 +154,14 @@ export async function selectSavePdfPath(options?: {
   }
 }
 
+export async function localPathExists(path: string): Promise<boolean> {
+  try {
+    return await invoke<boolean>('path_exists', { path });
+  } catch {
+    return false;
+  }
+}
+
 export async function getAppDefaultPaths(): Promise<AppDefaultPaths> {
   try {
     return await invoke<AppDefaultPaths>('get_app_default_paths');

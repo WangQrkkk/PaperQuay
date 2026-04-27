@@ -17,7 +17,8 @@ tauri-build = { version = "2.0.0", features = [] }
 arboard = "3.6.1"
 base64 = "0.22.1"
 image = { version = "0.25.5", default-features = false, features = ["png"] }
-reqwest = { version = "0.12.9", default-features = false, features = ["json", "rustls-tls"] }
+futures-util = "0.3"
+reqwest = { version = "0.12.9", default-features = false, features = ["json", "rustls-tls", "stream"] }
 rfd = "0.15.1"
 rusqlite = { version = "0.32.1", features = ["bundled"] }
 serde = { version = "1.0", features = ["derive"] }

@@ -9,11 +9,13 @@ interface LibrarySettingsDialogProps {
   open: boolean;
   settings: LibrarySettings | null;
   saving: boolean;
+  metadataWorking: boolean;
   onClose: () => void;
   onSelectStorageDir: () => void;
   onDetectZoteroDir: () => void;
   onSelectZoteroDir: () => void;
   onImportZotero: () => void;
+  onEnrichAllMetadata: () => void;
   onChange: (settings: LibrarySettings) => void;
   onSave: () => void;
 }
@@ -65,11 +67,13 @@ export default function LibrarySettingsDialog({
   open,
   settings,
   saving,
+  metadataWorking,
   onClose,
   onSelectStorageDir,
   onDetectZoteroDir,
   onSelectZoteroDir,
   onImportZotero,
+  onEnrichAllMetadata,
   onChange,
   onSave,
 }: LibrarySettingsDialogProps) {
@@ -177,6 +181,30 @@ export default function LibrarySettingsDialog({
             >
               <Database className="mr-2 h-4 w-4" strokeWidth={1.9} />
               {l('导入 Zotero 分类和 PDF', 'Import Zotero Collections and PDFs')}
+            </button>
+          </section>
+
+          <section className="rounded-3xl border border-slate-200 bg-slate-50/80 p-4 dark:border-white/10 dark:bg-[#1e1e1e]">
+            <SettingLabel
+              title={l('全部文献元数据解析', 'Parse Metadata for All Papers')}
+              description={l(
+                '按 DOI、标题和 PDF 文件名批量查询 Crossref，自动补全或纠正文献标题、作者、年份、期刊、DOI、URL 和摘要。已有内容不会被清空。',
+                'Batch query Crossref by DOI, title, and PDF filename to enrich title, authors, year, venue, DOI, URL, and abstract. Existing content is never cleared.',
+              )}
+            />
+            <button
+              type="button"
+              onClick={onEnrichAllMetadata}
+              disabled={saving || metadataWorking}
+              className="mt-3 inline-flex h-11 items-center rounded-2xl border border-teal-200 bg-teal-50 px-4 text-sm font-semibold text-teal-700 transition hover:bg-teal-100 disabled:opacity-60 dark:border-teal-300/20 dark:bg-teal-300/10 dark:text-teal-100 dark:hover:bg-teal-300/15"
+            >
+              <RefreshCw
+                className={metadataWorking ? 'mr-2 h-4 w-4 animate-spin' : 'mr-2 h-4 w-4'}
+                strokeWidth={1.9}
+              />
+              {metadataWorking
+                ? l('正在解析全部文献...', 'Parsing all papers...')
+                : l('解析全部文献元数据', 'Parse All Metadata')}
             </button>
           </section>
 

@@ -85,8 +85,8 @@ function LibraryPreviewPane({
             </div>
             <p className="mt-3 text-sm leading-7 text-slate-500 dark:text-chrome-300">
               {l(
-                '从左侧文库选择论文后，这里会显示 PDF、MinerU JSON、解析状态和摘要预览。',
-                'After choosing a paper from the library, this panel shows the PDF, MinerU JSON, parse status, and summary preview.',
+                '从左侧文库选择论文后，这里会显示 PDF、MinerU JSON、解析状态和概览预览。',
+                'After choosing a paper from the library, this panel shows the PDF, MinerU JSON, parse status, and overview preview.',
               )}
             </p>
           </div>
@@ -105,8 +105,8 @@ function LibraryPreviewPane({
               description={
                 demoMode
                   ? l(
-                      '新手引导会让你依次点击解析、翻译和摘要；这些结果都是内置演示数据，不会调用 API。',
-                      'The onboarding guide asks you to click parse, translate, and summarize in order. These results are bundled demo data and do not call any API.',
+                      '新手引导会让你依次点击解析、翻译和概览；这些结果都是内置演示数据，不会调用 API。',
+                      'The onboarding guide asks you to click parse, translate, and overview generation in order. These results are bundled demo data and do not call any API.',
                     )
                   : l(
                       '进入阅读器之前，先确认当前论文的文件来源、解析状态和可用操作。',

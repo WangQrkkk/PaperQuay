@@ -56,6 +56,7 @@ struct CrossrefWork {
     published_print: Option<CrossrefDate>,
     #[serde(rename = "published-online")]
     published_online: Option<CrossrefDate>,
+    #[serde(rename = "abstract")]
     abstract_text: Option<String>,
 }
 
@@ -155,11 +156,138 @@ fn extract_doi_candidate(input: &str) -> Option<String> {
     clean_doi(&candidate)
 }
 
+fn is_springer_article_id(value: &str) -> bool {
+    let parts = value.split('-').collect::<Vec<_>>();
+
+    if parts.len() != 4 {
+        return false;
+    }
+
+    parts[0].len() == 6
+        && parts[0].starts_with('s')
+        && parts[0][1..]
+            .chars()
+            .all(|character| character.is_ascii_digit())
+        && parts[1].len() == 3
+        && parts[1].chars().all(|character| character.is_ascii_digit())
+        && parts[2].len() == 5
+        && parts[2].chars().all(|character| character.is_ascii_digit())
+        && parts[3].len() == 1
+        && parts[3].chars().all(|character| character.is_ascii_digit())
+}
+
+fn infer_doi_from_identifier(input: &str) -> Option<String> {
+    let normalized = input
+        .replace('\\', "/")
+        .split('/')
+        .next_back()
+        .unwrap_or(input)
+        .trim()
+        .trim_end_matches(".pdf")
+        .trim_end_matches(".PDF")
+        .to_ascii_lowercase();
+
+    let candidate = normalized
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || character == '-' {
+                character
+            } else {
+                ' '
+            }
+        })
+        .collect::<String>();
+
+    candidate
+        .split_whitespace()
+        .find(|part| is_springer_article_id(part))
+        .map(|part| format!("10.1007/{}", part))
+}
+
+fn looks_like_identifier_title(value: &str) -> bool {
+    let trimmed = value.trim();
+
+    if trimmed.is_empty() {
+        return true;
+    }
+
+    if extract_doi_candidate(trimmed).is_some() || infer_doi_from_identifier(trimmed).is_some() {
+        return true;
+    }
+
+    let without_extension = trimmed
+        .trim_end_matches(".pdf")
+        .trim_end_matches(".PDF")
+        .trim();
+
+    let has_separator = without_extension.contains('-') || without_extension.contains('_');
+    let has_digit = without_extension
+        .chars()
+        .any(|character| character.is_ascii_digit());
+    let has_space = without_extension.chars().any(char::is_whitespace);
+    let ascii_identifier_only = without_extension.chars().all(|character| {
+        character.is_ascii_alphanumeric()
+            || character == '-'
+            || character == '_'
+            || character == '.'
+            || character == '('
+            || character == ')'
+            || character == '['
+            || character == ']'
+    });
+
+    ascii_identifier_only && !has_space && (has_digit || has_separator)
+}
+
+fn searchable_title(value: &str) -> Option<String> {
+    let title = value.trim();
+
+    if title.len() < 6 || looks_like_identifier_title(title) {
+        return None;
+    }
+
+    Some(title.to_string())
+}
+
+fn title_tokens(value: &str) -> Vec<String> {
+    value
+        .to_ascii_lowercase()
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() {
+                character
+            } else {
+                ' '
+            }
+        })
+        .collect::<String>()
+        .split_whitespace()
+        .filter(|token| token.len() >= 3)
+        .map(ToString::to_string)
+        .collect()
+}
+
+fn title_matches_query(query: &str, candidate: &str) -> bool {
+    let query_tokens = title_tokens(query);
+    let candidate_tokens = title_tokens(candidate);
+
+    if query_tokens.is_empty() || candidate_tokens.is_empty() {
+        return true;
+    }
+
+    let matched = query_tokens
+        .iter()
+        .filter(|token| candidate_tokens.contains(token))
+        .count();
+
+    (matched as f32 / query_tokens.len() as f32) >= 0.55
+}
+
 fn first_text(values: Option<Vec<String>>) -> Option<String> {
     values
         .unwrap_or_default()
         .into_iter()
-        .map(|value| value.trim().to_string())
+        .map(|value| strip_html_tags(&value))
         .find(|value| !value.is_empty())
 }
 
@@ -276,7 +404,7 @@ async fn lookup_crossref_by_title(
     let response = client
         .get(CROSSREF_WORKS_ENDPOINT)
         .headers(metadata_headers())
-        .query(&[("query.title", title), ("rows", "1")])
+        .query(&[("query.bibliographic", title), ("rows", "1")])
         .send()
         .await
         .map_err(|error| format!("按标题查询 Crossref 失败: {}", error))?;
@@ -297,12 +425,20 @@ async fn lookup_crossref_by_title(
         )
     })?;
 
-    Ok(envelope
+    let result = envelope
         .message
         .items
         .into_iter()
         .next()
-        .map(result_from_crossref_work))
+        .map(result_from_crossref_work);
+
+    Ok(result.filter(|metadata| {
+        metadata
+            .title
+            .as_deref()
+            .map(|candidate| title_matches_query(title, candidate))
+            .unwrap_or(false)
+    }))
 }
 
 #[tauri::command]
@@ -314,13 +450,10 @@ pub async fn lookup_literature_metadata(
         .doi
         .as_deref()
         .and_then(clean_doi)
-        .or_else(|| {
-            request
-                .title
-                .as_deref()
-                .and_then(extract_doi_candidate)
-        })
-        .or_else(|| request.path.as_deref().and_then(extract_doi_candidate));
+        .or_else(|| request.title.as_deref().and_then(extract_doi_candidate))
+        .or_else(|| request.path.as_deref().and_then(extract_doi_candidate))
+        .or_else(|| request.title.as_deref().and_then(infer_doi_from_identifier))
+        .or_else(|| request.path.as_deref().and_then(infer_doi_from_identifier));
 
     if let Some(doi) = doi {
         if let Some(result) = lookup_crossref_by_doi(&client, &doi).await? {
@@ -328,13 +461,9 @@ pub async fn lookup_literature_metadata(
         }
     }
 
-    let title = request
-        .title
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
+    let title = request.title.as_deref().and_then(searchable_title);
 
-    if let Some(title) = title {
+    if let Some(title) = title.as_deref() {
         return lookup_crossref_by_title(&client, title).await;
     }
 

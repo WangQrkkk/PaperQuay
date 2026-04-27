@@ -1,3 +1,4 @@
+pub mod agent;
 pub mod file;
 pub mod library;
 pub mod llm;
@@ -5,4 +6,5 @@ pub mod metadata;
 pub mod mineru;
 pub mod qa;
 pub mod summary;
-pub mod translation
+pub mod translation;
+pub mod zotero;

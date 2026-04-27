@@ -2,11 +2,15 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type DragEvent,
+  type MouseEvent,
+  type PointerEvent as ReactPointerEvent,
 } from 'react';
 import { useLocaleText } from '../../i18n/uiLanguage';
-import { selectDirectory } from '../../services/desktop';
+import { localPathExists, selectDirectory } from '../../services/desktop';
+import { lookupLiteratureMetadata } from '../../services/metadata';
 import {
   assignPaperToLibraryCategory,
   createLibraryCategory,
@@ -17,6 +21,7 @@ import {
   listLibraryCategories,
   listLibraryPapers,
   moveLibraryCategory,
+  reorderLibraryPapers,
   selectLibraryPdfFiles,
   updateLibraryPaper,
   updateLibraryCategory,
@@ -35,10 +40,18 @@ import type {
   LiteraturePaper,
   UpdatePaperRequest,
 } from '../../types/library';
+import type { MetadataLookupResult } from '../../types/metadata';
 import type {
   ZoteroCollection,
   ZoteroLibraryItem,
+  WorkspaceItem,
 } from '../../types/reader';
+import {
+  buildLegacyMineruCachePaths,
+  buildMineruCachePaths,
+  guessSiblingJsonPath,
+  guessSiblingMarkdownPath,
+} from '../../utils/mineruCache';
 import { getFileNameFromPath } from '../../utils/text';
 import ImportConfirmationDialog, {
   type ImportDraftItem,
@@ -48,13 +61,57 @@ import LibrarySettingsDialog from './components/LibrarySettingsDialog';
 import LibraryTextInputDialog from './components/LibraryTextInputDialog';
 import LiteratureCategorySidebar from './components/LiteratureCategorySidebar';
 import LiteraturePaperDetails from './components/LiteraturePaperDetails';
-import LiteraturePaperList from './components/LiteraturePaperList';
-import { flattenCategories } from './literatureUi';
+import LiteraturePaperList, {
+  type LiteraturePaperListStatus,
+} from './components/LiteraturePaperList';
+import { flattenCategories, paperPdfPath } from './literatureUi';
 import { useTauriPdfDrop } from './useTauriPdfDrop';
 
 interface LiteratureLibraryViewProps {
   onOpenPaper: (paper: LiteraturePaper) => void;
   onOpenSettings: () => void;
+  mineruCacheDir?: string;
+  autoLoadSiblingJson?: boolean;
+  onRunMineruParse?: (paper: LiteraturePaper) => void;
+  onTranslatePaper?: (paper: LiteraturePaper) => void;
+  onGenerateSummary?: (paper: LiteraturePaper) => void;
+}
+
+interface NativeSummaryUpdatedEventDetail {
+  paperId: string;
+  aiSummary: string | null;
+}
+
+interface NativeMineruStatusUpdatedEventDetail {
+  paperId: string;
+  mineruParsed: boolean;
+}
+
+interface PaperContextMenuState {
+  paper: LiteraturePaper;
+  x: number;
+  y: number;
+}
+
+const DETAILS_PANEL_WIDTH_STORAGE_KEY = 'paperquay-literature-details-width-v1';
+const DETAILS_PANEL_DEFAULT_WIDTH = 420;
+const DETAILS_PANEL_MIN_WIDTH = 320;
+const DETAILS_PANEL_MAX_WIDTH = 760;
+
+function clampDetailsPanelWidth(width: number): number {
+  return Math.max(DETAILS_PANEL_MIN_WIDTH, Math.min(DETAILS_PANEL_MAX_WIDTH, Math.round(width)));
+}
+
+function loadDetailsPanelWidth(): number {
+  try {
+    const rawValue = Number(localStorage.getItem(DETAILS_PANEL_WIDTH_STORAGE_KEY));
+
+    return Number.isFinite(rawValue)
+      ? clampDetailsPanelWidth(rawValue)
+      : DETAILS_PANEL_DEFAULT_WIDTH;
+  } catch {
+    return DETAILS_PANEL_DEFAULT_WIDTH;
+  }
 }
 
 type CategoryNameDialogState =
@@ -102,19 +159,174 @@ function categorySignature(name: string, parentId: string | null): string {
   return `${parentId ?? 'root'}::${name.trim().toLocaleLowerCase()}`;
 }
 
+function draftPatchFromMetadata(metadata: MetadataLookupResult): Partial<ImportDraftItem> {
+  return {
+    title: metadata.title?.trim() || undefined,
+    authors: metadata.authors.length > 0 ? metadata.authors.join(', ') : undefined,
+    year: metadata.year?.trim() || undefined,
+    publication: metadata.publication?.trim() || undefined,
+    doi: metadata.doi?.trim() || undefined,
+  };
+}
+
+function reorderPaperList(
+  papers: LiteraturePaper[],
+  draggedPaperId: string,
+  targetPaperId: string,
+  placement: 'before' | 'after',
+): LiteraturePaper[] {
+  if (draggedPaperId === targetPaperId) {
+    return papers;
+  }
+
+  const draggedPaper = papers.find((paper) => paper.id === draggedPaperId);
+
+  if (!draggedPaper) {
+    return papers;
+  }
+
+  const withoutDragged = papers.filter((paper) => paper.id !== draggedPaperId);
+  const targetIndex = withoutDragged.findIndex((paper) => paper.id === targetPaperId);
+
+  if (targetIndex < 0) {
+    return papers;
+  }
+
+  const insertIndex = placement === 'after' ? targetIndex + 1 : targetIndex;
+  const nextPapers = [...withoutDragged];
+  nextPapers.splice(insertIndex, 0, draggedPaper);
+
+  return nextPapers;
+}
+
+function metadataUpdateForPaper(
+  paper: LiteraturePaper,
+  metadata: MetadataLookupResult,
+): UpdatePaperRequest | null {
+  const request: UpdatePaperRequest = {
+    paperId: paper.id,
+  };
+  let changed = false;
+  const assignString = <Key extends keyof UpdatePaperRequest>(
+    key: Key,
+    currentValue: string | null,
+    nextValue: string | null | undefined,
+  ) => {
+    const normalized = nextValue?.trim();
+
+    if (!normalized || normalized === currentValue?.trim()) {
+      return;
+    }
+
+    (request[key] as string | null | undefined) = normalized;
+    changed = true;
+  };
+
+  assignString('title', paper.title, metadata.title);
+  assignString('year', paper.year, metadata.year);
+  assignString('publication', paper.publication, metadata.publication);
+  assignString('doi', paper.doi, metadata.doi);
+  assignString('url', paper.url, metadata.url);
+  assignString('abstractText', paper.abstractText, metadata.abstractText);
+
+  if (metadata.authors.length > 0) {
+    const currentAuthors = paper.authors.map((author) => author.name.trim()).filter(Boolean);
+    const nextAuthors = metadata.authors.map((author) => author.trim()).filter(Boolean);
+
+    if (
+      nextAuthors.length > 0 &&
+      nextAuthors.join('\n').toLocaleLowerCase() !== currentAuthors.join('\n').toLocaleLowerCase()
+    ) {
+      request.authors = nextAuthors;
+      changed = true;
+    }
+  }
+
+  return changed ? request : null;
+}
+
+function createNativeWorkspaceItemForPaper(paper: LiteraturePaper): WorkspaceItem | null {
+  const attachment = paper.attachments.find((item) => item.kind === 'pdf' && item.storedPath.trim());
+
+  if (!attachment) {
+    return null;
+  }
+
+  const workspaceId = `native-library:${paper.id}`;
+
+  return {
+    itemKey: paper.id,
+    title: paper.title,
+    creators: paper.authors.length > 0
+      ? paper.authors.map((author) => author.name).join(', ')
+      : 'Unknown Authors',
+    year: paper.year ?? '',
+    itemType: 'pdf',
+    attachmentFilename: attachment.fileName,
+    localPdfPath: attachment.storedPath,
+    source: 'native-library',
+    workspaceId,
+    groupKey: workspaceId,
+  };
+}
+
+async function hasMineruOutputForPaper(
+  paper: LiteraturePaper,
+  mineruCacheDir: string,
+  autoLoadSiblingJson: boolean,
+): Promise<boolean> {
+  const candidates = new Set<string>();
+  const workspaceItem = createNativeWorkspaceItemForPaper(paper);
+  const cacheRoot = mineruCacheDir.trim();
+
+  if (workspaceItem && cacheRoot) {
+    for (const cachePaths of [
+      buildMineruCachePaths(cacheRoot, workspaceItem),
+      buildLegacyMineruCachePaths(cacheRoot, workspaceItem),
+    ]) {
+      candidates.add(cachePaths.contentJsonPath);
+      candidates.add(cachePaths.middleJsonPath);
+      candidates.add(cachePaths.markdownPath);
+    }
+  }
+
+  const pdfPath = paperPdfPath(paper);
+
+  if (pdfPath && autoLoadSiblingJson) {
+    candidates.add(guessSiblingJsonPath(pdfPath));
+    candidates.add(guessSiblingMarkdownPath(pdfPath));
+  }
+
+  for (const candidate of candidates) {
+    if (await localPathExists(candidate)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 export default function LiteratureLibraryView({
   onOpenPaper,
   onOpenSettings,
+  mineruCacheDir = '',
+  autoLoadSiblingJson = true,
+  onRunMineruParse,
+  onTranslatePaper,
+  onGenerateSummary,
 }: LiteratureLibraryViewProps) {
   const l = useLocaleText();
   const [settings, setSettings] = useState<LibrarySettings | null>(null);
   const [categories, setCategories] = useState<LiteratureCategory[]>([]);
   const [papers, setPapers] = useState<LiteraturePaper[]>([]);
+  const [paperStatuses, setPaperStatuses] = useState<Record<string, LiteraturePaperListStatus>>({});
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
   const [selectedPaperId, setSelectedPaperId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
   const [working, setWorking] = useState(false);
+  const [metadataWorking, setMetadataWorking] = useState(false);
+  const [bulkMetadataWorking, setBulkMetadataWorking] = useState(false);
   const [statusMessage, setStatusMessage] = useState('');
   const [error, setError] = useState('');
   const [importDrafts, setImportDrafts] = useState<ImportDraftItem[]>([]);
@@ -125,10 +337,22 @@ export default function LiteratureLibraryView({
   const [settingsSaving, setSettingsSaving] = useState(false);
   const [paperSaving, setPaperSaving] = useState(false);
   const [dialogBusy, setDialogBusy] = useState(false);
+  const [metadataAttemptedPaths, setMetadataAttemptedPaths] = useState<Set<string>>(
+    () => new Set(),
+  );
   const [categoryNameDialog, setCategoryNameDialog] =
     useState<CategoryNameDialogState | null>(null);
   const [confirmDialog, setConfirmDialog] =
     useState<LibraryConfirmDialogState | null>(null);
+  const [paperContextMenu, setPaperContextMenu] =
+    useState<PaperContextMenuState | null>(null);
+  const [tagDialogPaper, setTagDialogPaper] = useState<LiteraturePaper | null>(null);
+  const [detailsPanelWidth, setDetailsPanelWidth] = useState(loadDetailsPanelWidth);
+  const [detailsPanelResizing, setDetailsPanelResizing] = useState(false);
+  const detailsPanelResizeStartRef = useRef({
+    clientX: 0,
+    width: DETAILS_PANEL_DEFAULT_WIDTH,
+  });
 
   const flatCategories = useMemo(() => flattenCategories(categories), [categories]);
   const selectedPaper = useMemo(
@@ -141,8 +365,8 @@ export default function LiteratureLibraryView({
       const nextPapers = await listLibraryPapers({
         categoryId: nextCategoryId,
         search: searchQuery,
-        sortBy: 'importedAt',
-        sortDirection: 'desc',
+        sortBy: 'manual',
+        sortDirection: 'asc',
         limit: 500,
       });
 
@@ -212,6 +436,53 @@ export default function LiteratureLibraryView({
   });
 
   useEffect(() => {
+    try {
+      localStorage.setItem(DETAILS_PANEL_WIDTH_STORAGE_KEY, String(detailsPanelWidth));
+    } catch {
+    }
+  }, [detailsPanelWidth]);
+
+  useEffect(() => {
+    if (!detailsPanelResizing) {
+      return undefined;
+    }
+
+    const handlePointerMove = (event: PointerEvent) => {
+      const start = detailsPanelResizeStartRef.current;
+
+      setDetailsPanelWidth(clampDetailsPanelWidth(start.width + start.clientX - event.clientX));
+    };
+
+    const handlePointerUp = () => {
+      setDetailsPanelResizing(false);
+    };
+
+    const previousUserSelect = document.body.style.userSelect;
+    const previousCursor = document.body.style.cursor;
+
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'col-resize';
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp);
+
+    return () => {
+      document.body.style.userSelect = previousUserSelect;
+      document.body.style.cursor = previousCursor;
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+    };
+  }, [detailsPanelResizing]);
+
+  const handleStartDetailsPanelResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    detailsPanelResizeStartRef.current = {
+      clientX: event.clientX,
+      width: detailsPanelWidth,
+    };
+    setDetailsPanelResizing(true);
+  };
+
+  useEffect(() => {
     let cancelled = false;
 
     void (async () => {
@@ -253,6 +524,108 @@ export default function LiteratureLibraryView({
       cancelled = true;
     };
   }, [l]);
+
+  useEffect(() => {
+    const handleNativeSummaryUpdated = (event: Event) => {
+      const detail = (event as CustomEvent<NativeSummaryUpdatedEventDetail>).detail;
+
+      if (!detail?.paperId) {
+        return;
+      }
+
+      setPapers((current) =>
+        current.map((paper) =>
+          paper.id === detail.paperId ? { ...paper, aiSummary: detail.aiSummary } : paper,
+        ),
+      );
+      setPaperStatuses((current) => ({
+        ...current,
+        [detail.paperId]: {
+          ...(current[detail.paperId] ?? {
+            mineruParsed: false,
+            overviewGenerated: false,
+          }),
+          overviewGenerated: Boolean(detail.aiSummary?.trim()),
+        },
+      }));
+    };
+
+    const handleNativeMineruStatusUpdated = (event: Event) => {
+      const detail = (event as CustomEvent<NativeMineruStatusUpdatedEventDetail>).detail;
+
+      if (!detail?.paperId) {
+        return;
+      }
+
+      setPaperStatuses((current) => ({
+        ...current,
+        [detail.paperId]: {
+          ...(current[detail.paperId] ?? {
+            mineruParsed: false,
+            overviewGenerated: false,
+          }),
+          mineruParsed: detail.mineruParsed,
+          checkingMineru: false,
+        },
+      }));
+    };
+
+    window.addEventListener('paperquay:native-summary-updated', handleNativeSummaryUpdated);
+    window.addEventListener('paperquay:native-mineru-status-updated', handleNativeMineruStatusUpdated);
+
+    return () => {
+      window.removeEventListener('paperquay:native-summary-updated', handleNativeSummaryUpdated);
+      window.removeEventListener('paperquay:native-mineru-status-updated', handleNativeMineruStatusUpdated);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (papers.length === 0) {
+      setPaperStatuses({});
+      return;
+    }
+
+    let cancelled = false;
+
+    setPaperStatuses((current) => {
+      const nextStatuses: Record<string, LiteraturePaperListStatus> = {};
+
+      for (const paper of papers) {
+        nextStatuses[paper.id] = {
+          mineruParsed: current[paper.id]?.mineruParsed ?? false,
+          overviewGenerated: Boolean(paper.aiSummary?.trim()),
+          checkingMineru: true,
+        };
+      }
+
+      return nextStatuses;
+    });
+
+    void (async () => {
+      const entries = await Promise.all(
+        papers.map(async (paper): Promise<[string, LiteraturePaperListStatus]> => [
+          paper.id,
+          {
+            mineruParsed: await hasMineruOutputForPaper(
+              paper,
+              mineruCacheDir,
+              autoLoadSiblingJson,
+            ),
+            overviewGenerated: Boolean(paper.aiSummary?.trim()),
+            checkingMineru: false,
+          },
+        ]),
+      );
+
+      if (!cancelled) {
+        setPaperStatuses(Object.fromEntries(entries));
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [autoLoadSiblingJson, mineruCacheDir, papers]);
 
   useEffect(() => {
     if (loading) {
@@ -610,6 +983,91 @@ export default function LiteratureLibraryView({
     setImportDrafts((current) => current.filter((draft) => draft.path !== path));
   };
 
+  const handleAutoFillImportMetadata = useCallback(
+    async (targetDrafts = importDrafts, silent = false) => {
+      const draftsToLookup = targetDrafts.filter((draft) => draft.path.trim());
+
+      if (draftsToLookup.length === 0) {
+        return;
+      }
+
+      setMetadataWorking(true);
+      setError('');
+
+      let filledCount = 0;
+      let missedCount = 0;
+
+      try {
+        for (const draft of draftsToLookup) {
+          const metadata = await lookupLiteratureMetadata({
+            doi: draft.doi || null,
+            title: draft.title || titleFromPdfPath(draft.path),
+            path: draft.path,
+          });
+
+          if (!metadata) {
+            missedCount += 1;
+            continue;
+          }
+
+          const patch = draftPatchFromMetadata(metadata);
+
+          if (Object.values(patch).some(Boolean)) {
+            setImportDrafts((current) =>
+              current.map((item) => (item.path === draft.path ? { ...item, ...patch } : item)),
+            );
+            filledCount += 1;
+          } else {
+            missedCount += 1;
+          }
+        }
+
+        if (!silent) {
+          setStatusMessage(
+            l(
+              `元数据补全完成：成功 ${filledCount} 个，未匹配 ${missedCount} 个。`,
+              `Metadata enrichment finished: ${filledCount} matched, ${missedCount} not matched.`,
+            ),
+          );
+        }
+      } catch (nextError) {
+        const message =
+          nextError instanceof Error ? nextError.message : l('自动补全元数据失败', 'Failed to auto-fill metadata');
+        setError(message);
+        setStatusMessage(message);
+      } finally {
+        setMetadataWorking(false);
+      }
+    },
+    [importDrafts, l],
+  );
+
+  useEffect(() => {
+    if (!importDialogOpen || importDrafts.length === 0 || metadataWorking) {
+      return;
+    }
+
+    const nextDrafts = importDrafts.filter((draft) => !metadataAttemptedPaths.has(draft.path));
+
+    if (nextDrafts.length === 0) {
+      return;
+    }
+
+    setMetadataAttemptedPaths((current) => {
+      const next = new Set(current);
+
+      nextDrafts.forEach((draft) => next.add(draft.path));
+      return next;
+    });
+    void handleAutoFillImportMetadata(nextDrafts, true);
+  }, [
+    handleAutoFillImportMetadata,
+    importDialogOpen,
+    importDrafts,
+    metadataAttemptedPaths,
+    metadataWorking,
+  ]);
+
   const handleCloseImportDialog = () => {
     if (working) {
       return;
@@ -617,6 +1075,7 @@ export default function LiteratureLibraryView({
 
     setImportDialogOpen(false);
     setImportDrafts([]);
+    setMetadataAttemptedPaths(new Set());
   };
 
   const handleConfirmImportDrafts = async () => {
@@ -670,6 +1129,89 @@ export default function LiteratureLibraryView({
       setStatusMessage(message);
     } finally {
       setWorking(false);
+    }
+  };
+
+  const handleEnrichAllMetadata = async () => {
+    if (bulkMetadataWorking) {
+      return;
+    }
+
+    setBulkMetadataWorking(true);
+    setError('');
+
+    try {
+      const allPapers = await listLibraryPapers({
+        sortBy: 'manual',
+        sortDirection: 'asc',
+        limit: 1000,
+      });
+
+      if (allPapers.length === 0) {
+        setStatusMessage(l('当前文库没有可解析的文献', 'There are no papers to parse.'));
+        return;
+      }
+
+      let updatedCount = 0;
+      let unchangedCount = 0;
+      let missedCount = 0;
+      let failedCount = 0;
+
+      for (const [index, paper] of allPapers.entries()) {
+        setStatusMessage(
+          l(
+            `正在解析元数据：${index + 1}/${allPapers.length} - ${paper.title}`,
+            `Parsing metadata: ${index + 1}/${allPapers.length} - ${paper.title}`,
+          ),
+        );
+
+        try {
+          const metadata = await lookupLiteratureMetadata({
+            doi: paper.doi,
+            title: paper.title,
+            path: paperPdfPath(paper),
+          });
+
+          if (!metadata) {
+            missedCount += 1;
+            continue;
+          }
+
+          const updateRequest = metadataUpdateForPaper(paper, metadata);
+
+          if (!updateRequest) {
+            unchangedCount += 1;
+            continue;
+          }
+
+          await updateLibraryPaper(updateRequest);
+          updatedCount += 1;
+        } catch {
+          failedCount += 1;
+        }
+      }
+
+      await refreshAll();
+
+      const message = l(
+        `全部文献元数据解析完成：更新 ${updatedCount} 篇，已是最新 ${unchangedCount} 篇，未匹配 ${missedCount} 篇，失败 ${failedCount} 篇。`,
+        `Metadata parsing finished: ${updatedCount} updated, ${unchangedCount} unchanged, ${missedCount} not matched, ${failedCount} failed.`,
+      );
+
+      setStatusMessage(message);
+
+      if (failedCount > 0) {
+        setError(message);
+      }
+    } catch (nextError) {
+      const message =
+        nextError instanceof Error
+          ? nextError.message
+          : l('解析全部文献元数据失败', 'Failed to parse metadata for all papers');
+      setError(message);
+      setStatusMessage(message);
+    } finally {
+      setBulkMetadataWorking(false);
     }
   };
 
@@ -812,8 +1354,8 @@ export default function LiteratureLibraryView({
         listLibraryPapers({
           categoryId: selectedCategoryId,
           search: searchQuery,
-          sortBy: 'importedAt',
-          sortDirection: 'desc',
+          sortBy: 'manual',
+          sortDirection: 'asc',
           limit: 500,
         }),
       ]);
@@ -865,11 +1407,123 @@ export default function LiteratureLibraryView({
   };
 
   const handlePaperDragStart = (
-    event: DragEvent<HTMLButtonElement>,
+    event: DragEvent<HTMLDivElement>,
     paper: LiteraturePaper,
   ) => {
     event.dataTransfer.setData('application/x-paperquay-paper-id', paper.id);
     event.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handlePaperReorder = async (
+    draggedPaperId: string,
+    targetPaperId: string,
+    placement: 'before' | 'after',
+  ) => {
+    const nextPapers = reorderPaperList(papers, draggedPaperId, targetPaperId, placement);
+
+    if (nextPapers === papers) {
+      return;
+    }
+
+    setPapers(nextPapers);
+    setError('');
+
+    try {
+      await reorderLibraryPapers({
+        paperIds: nextPapers.map((paper) => paper.id),
+      });
+      setStatusMessage(l('文献排序已保存', 'Paper order saved'));
+    } catch (nextError) {
+      const message =
+        nextError instanceof Error ? nextError.message : l('保存文献排序失败', 'Failed to save paper order');
+      setError(message);
+      setStatusMessage(message);
+      await refreshPapers();
+    }
+  };
+
+  const handlePaperContextMenu = (
+    event: MouseEvent<HTMLDivElement>,
+    paper: LiteraturePaper,
+  ) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setSelectedPaperId(paper.id);
+    setPaperContextMenu({
+      paper,
+      x: event.clientX,
+      y: event.clientY,
+    });
+  };
+
+  const handleOpenTagDialogFromContextMenu = () => {
+    const paper = paperContextMenu?.paper;
+
+    setPaperContextMenu(null);
+
+    if (paper) {
+      setTagDialogPaper(paper);
+    }
+  };
+
+  const handleSubmitPaperTag = async (tagName: string) => {
+    if (!tagDialogPaper) {
+      return;
+    }
+
+    const normalizedTag = tagName.trim();
+
+    if (!normalizedTag) {
+      return;
+    }
+
+    const existingTags = tagDialogPaper.tags.map((tag) => tag.name.trim()).filter(Boolean);
+    const hasTag = existingTags.some(
+      (tag) => tag.toLocaleLowerCase() === normalizedTag.toLocaleLowerCase(),
+    );
+
+    if (hasTag) {
+      setTagDialogPaper(null);
+      setStatusMessage(l(`标签已存在：${normalizedTag}`, `Tag already exists: ${normalizedTag}`));
+      return;
+    }
+
+    setDialogBusy(true);
+    setError('');
+
+    try {
+      const updatedPaper = await updateLibraryPaper({
+        paperId: tagDialogPaper.id,
+        tags: [...existingTags, normalizedTag],
+      });
+      const [nextCategories, nextPapers] = await Promise.all([
+        listLibraryCategories(),
+        listLibraryPapers({
+          categoryId: selectedCategoryId,
+          search: searchQuery,
+          sortBy: 'manual',
+          sortDirection: 'asc',
+          limit: 500,
+        }),
+      ]);
+
+      setCategories(nextCategories);
+      setPapers(nextPapers);
+      setSelectedPaperId(
+        nextPapers.some((paper) => paper.id === updatedPaper.id)
+          ? updatedPaper.id
+          : nextPapers[0]?.id ?? null,
+      );
+      setTagDialogPaper(null);
+      setStatusMessage(l(`已添加标签：${normalizedTag}`, `Added tag: ${normalizedTag}`));
+    } catch (nextError) {
+      const message =
+        nextError instanceof Error ? nextError.message : l('添加标签失败', 'Failed to add tag');
+      setError(message);
+      setStatusMessage(message);
+    } finally {
+      setDialogBusy(false);
+    }
   };
 
   const handleCategoryDrop = async (
@@ -904,7 +1558,12 @@ export default function LiteratureLibraryView({
   };
 
   return (
-    <div className="relative grid h-full min-h-0 grid-cols-[280px_minmax(420px,1fr)_360px] bg-slate-100 text-slate-900 dark:bg-[#121212] dark:text-[#e0e0e0]">
+    <div
+      className="relative grid h-full min-h-0 bg-slate-100 text-slate-900 dark:bg-[#121212] dark:text-[#e0e0e0]"
+      style={{
+        gridTemplateColumns: `280px minmax(360px,1fr) ${detailsPanelWidth}px`,
+      }}
+    >
       <LiteratureCategorySidebar
         settings={settings}
         categories={flatCategories}
@@ -922,6 +1581,7 @@ export default function LiteratureLibraryView({
         loading={loading}
         working={working}
         papers={papers}
+        paperStatuses={paperStatuses}
         selectedPaper={selectedPaper}
         searchQuery={searchQuery}
         statusMessage={statusMessage}
@@ -932,6 +1592,10 @@ export default function LiteratureLibraryView({
         onSelectPaper={setSelectedPaperId}
         onOpenPaper={onOpenPaper}
         onPaperDragStart={handlePaperDragStart}
+        onPaperReorder={(draggedPaperId, targetPaperId, placement) =>
+          void handlePaperReorder(draggedPaperId, targetPaperId, placement)
+        }
+        onPaperContextMenu={handlePaperContextMenu}
       />
 
       <LiteraturePaperDetails
@@ -940,8 +1604,35 @@ export default function LiteratureLibraryView({
         onOpenPaper={onOpenPaper}
         onOpenSettings={handleOpenLibrarySettings}
         onSavePaper={(request) => void handleSavePaper(request)}
-        onDeletePaper={(paper) => void handleDeletePaper(paper)}
+        onRunMineruParse={onRunMineruParse}
+        onTranslatePaper={onTranslatePaper}
+        onGenerateSummary={onGenerateSummary}
       />
+
+      <div
+        role="separator"
+        aria-orientation="vertical"
+        aria-label={l('拖动调整详情栏宽度', 'Drag to resize the details panel')}
+        title={l('拖动调整详情栏宽度', 'Drag to resize the details panel')}
+        onPointerDown={handleStartDetailsPanelResize}
+        onDoubleClick={() => setDetailsPanelWidth(DETAILS_PANEL_DEFAULT_WIDTH)}
+        className={[
+          'absolute bottom-0 top-0 z-30 w-3 -translate-x-1/2 cursor-col-resize touch-none',
+          detailsPanelResizing ? 'bg-teal-400/8' : 'bg-transparent',
+        ].join(' ')}
+        style={{
+          right: detailsPanelWidth - 1,
+        }}
+      >
+        <div
+          className={[
+            'mx-auto h-full w-px transition',
+            detailsPanelResizing
+              ? 'bg-teal-400 shadow-[0_0_0_3px_rgba(45,212,191,0.16)]'
+              : 'bg-slate-200 hover:bg-teal-300 dark:bg-white/10 dark:hover:bg-teal-300/60',
+          ].join(' ')}
+        />
+      </div>
 
       {dropActive ? (
         <div className="pointer-events-none absolute inset-4 z-40 flex items-center justify-center rounded-[32px] border-2 border-dashed border-teal-400 bg-teal-500/12 text-center backdrop-blur-[2px] dark:bg-teal-300/10">
@@ -956,13 +1647,46 @@ export default function LiteratureLibraryView({
         </div>
       ) : null}
 
+      {paperContextMenu ? (
+        <div
+          className="fixed inset-0 z-50"
+          onClick={() => setPaperContextMenu(null)}
+          onContextMenu={(event) => {
+            event.preventDefault();
+            setPaperContextMenu(null);
+          }}
+        >
+          <div
+            className="fixed w-56 rounded-2xl border border-slate-200 bg-white p-1.5 shadow-[0_18px_50px_rgba(15,23,42,0.22)] dark:border-white/10 dark:bg-[#1e1e1e]"
+            style={{
+              left: paperContextMenu.x,
+              top: paperContextMenu.y,
+            }}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="border-b border-slate-100 px-3 py-2 text-xs text-slate-500 dark:border-white/10 dark:text-[#a0a0a0]">
+              {paperContextMenu.paper.title}
+            </div>
+            <button
+              type="button"
+              onClick={handleOpenTagDialogFromContextMenu}
+              className="mt-1 flex w-full items-center rounded-xl px-3 py-2 text-left text-sm font-medium text-slate-700 transition hover:bg-slate-100 dark:text-[#e0e0e0] dark:hover:bg-white/[0.06]"
+            >
+              {l('添加自定义标签', 'Add Custom Tag')}
+            </button>
+          </div>
+        </div>
+      ) : null}
+
       <ImportConfirmationDialog
         open={importDialogOpen}
         drafts={importDrafts}
         categories={categories}
         working={working}
+        metadataWorking={metadataWorking}
         onDraftChange={handleImportDraftChange}
         onRemoveDraft={handleRemoveImportDraft}
+        onAutoFillMetadata={() => void handleAutoFillImportMetadata(importDrafts)}
         onClose={handleCloseImportDialog}
         onConfirm={() => void handleConfirmImportDrafts()}
       />
@@ -971,11 +1695,13 @@ export default function LiteratureLibraryView({
         open={librarySettingsOpen}
         settings={editingSettings}
         saving={settingsSaving}
+        metadataWorking={bulkMetadataWorking}
         onClose={() => setLibrarySettingsOpen(false)}
         onSelectStorageDir={() => void handleSelectEditingStorageDir()}
         onDetectZoteroDir={() => void handleDetectZoteroDir()}
         onSelectZoteroDir={() => void handleSelectZoteroDir()}
         onImportZotero={() => void handleImportZoteroLibrary()}
+        onEnrichAllMetadata={() => void handleEnrichAllMetadata()}
         onChange={setEditingSettings}
         onSave={() => void handleSaveLibrarySettings()}
       />
@@ -1011,6 +1737,31 @@ export default function LiteratureLibraryView({
           }
         }}
         onSubmit={(value) => void handleSubmitCategoryName(value)}
+      />
+
+      <LibraryTextInputDialog
+        open={tagDialogPaper !== null}
+        title={l('添加自定义标签', 'Add Custom Tag')}
+        description={
+          tagDialogPaper
+            ? l(
+                `给“${tagDialogPaper.title}”添加一个自定义标签。状态标签不会写入文献标签。`,
+                `Add a custom tag to "${tagDialogPaper.title}". Status badges are not saved as paper tags.`,
+              )
+            : ''
+        }
+        label={l('标签名称', 'Tag Name')}
+        initialValue=""
+        placeholder={l('例如：待读 / 方法 / 综述', 'e.g. To Read / Method / Review')}
+        confirmLabel={l('添加', 'Add')}
+        cancelLabel={l('取消', 'Cancel')}
+        busy={dialogBusy}
+        onClose={() => {
+          if (!dialogBusy) {
+            setTagDialogPaper(null);
+          }
+        }}
+        onSubmit={(value) => void handleSubmitPaperTag(value)}
       />
 
       <LibraryConfirmDialog
