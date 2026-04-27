@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "documentKey": "standalone:D:\\开发\\taruri\\public\\onboarding\\welcome.pdf",
+  "title": "welcome",
+  "pdfPath": "D:\\开发\\taruri\\public\\onboarding\\welcome.pdf",
+  "savedAt": "2026-04-25T13:04:27.748Z",
+  "sourceKind": "cloud",
+  "batchId": "e50de412-fc2e-471b-8362-c0d5199b41c8",
+  "dataId": "paper_reader_1777122251065",
+  "fileName": "welcome.pdf",
+  "zipEntries": [
+    "2c2aaf48-5c5a-4657-90a8-53aae881fd8c_model.json",
+    "full.md",
+    "content_list_v2.json",
+    "2c2aaf48-5c5a-4657-90a8-53aae881fd8c_origin.pdf",
+    "2c2aaf48-5c5a-4657-90a8-53aae881fd8c_content_list.json",
+    "layout.json",
+    "images/d68d338d69eae789f331e328fd62f58c1687e4c89945a9aabd9bc638a37413d0.jpg",
+    "images/70f3742fc498590d30c20d66f941cdc40356b779984f47a0afdfa5a7f5307f33.jpg",
+    "images/14fc56768cf9c5c84dde89c6317ec83f59b3bc7663944b6f60061158c1d63949.jpg",
+    "images/62397b6a92221c0b1aa6f7ffeace8e5c5b234571c123399d6f8499dee9206ef5.jpg",
+    "images/7ceb28e5a7168e4d19ae50386526cbfd4443391d0b4fe35261da283f5394352c.jpg",
+    "images/8d1aad0b2d87ae2ca68b9730e172049bfc2680eab940fbd523518b889e7315a0.jpg",
+    "images/b661977917b9c4486af30a42c48ff3808666ee6a910534be4de3a0bda895c165.jpg",
+    "images/39a4c4f366d0cc201cbdd735001436cd902d72a8a4a01dc2dbed5f5649232254.jpg",
+    "images/52a81b3163de017f37277c53df2f3fe8318bd134679b60cf899c2b72eaa42747.jpg",
+    "images/6555ba4e2c3bf19721fa88a572ee88e9b1807ef077db60d7282598e23ad0ddb2.jpg"
+  ]
+}

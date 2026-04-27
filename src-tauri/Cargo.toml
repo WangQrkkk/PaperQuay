@@ -1,0 +1,27 @@
+[package]
+name = "paperquay"
+version = "0.1.0"
+description = "Desktop-first AI workspace for reading research papers"
+authors = ["OpenAI Codex"]
+edition = "2021"
+license = "AGPL-3.0-only"
+
+[lib]
+name = "paperquay_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.0.0", features = [] }
+
+[dependencies]
+arboard = "3.6.1"
+base64 = "0.22.1"
+image = { version = "0.25.5", default-features = false, features = ["png"] }
+reqwest = { version = "0.12.9", default-features = false, features = ["json", "rustls-tls"] }
+rfd = "0.15.1"
+rusqlite = { version = "0.32.1", features = ["bundled"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tauri = { version = "2.0.0", features = [] }
+tokio = { version = "1.41.1", features = ["time", "rt", "macros"] }
+zip = "2.2.2"

@@ -1,0 +1,41 @@
+# Dependencies
+node_modules/
+.npm-cache/
+
+# Build outputs
+dist/
+coverage/
+*.tsbuildinfo
+
+# Tauri / Rust build outputs
+src-tauri/target/
+
+# Local runtime data
+.appdata/
+.localappdata/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Editor / OS files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Secrets
+apikey.txt
+.env
+.env.*
+!.env.example
+
+# Local test assets / sample papers
+content_list_v2.json
+mineru-cloud-test.zip
+s10846-023-02011-0.pdf

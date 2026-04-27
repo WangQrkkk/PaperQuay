@@ -1,0 +1,4369 @@
+{
+    "pdf_info": [
+        {
+            "para_blocks": [
+                {
+                    "bbox": [
+                        100,
+                        110,
+                        495,
+                        153
+                    ],
+                    "type": "title",
+                    "angle": 0,
+                    "index": 0,
+                    "lines": [
+                        {
+                            "bbox": [
+                                98,
+                                111,
+                                496,
+                                131
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        98,
+                                        111,
+                                        496,
+                                        131
+                                    ],
+                                    "type": "text",
+                                    "content": "PaperQuay: A Desktop-First Environment for",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                166,
+                                131,
+                                427,
+                                155
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        166,
+                                        131,
+                                        427,
+                                        155
+                                    ],
+                                    "type": "text",
+                                    "content": "Structured Academic Reading",
+                                    "score": 1.0
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "bbox": [
+                        205,
+                        174,
+                        387,
+                        188
+                    ],
+                    "type": "text",
+                    "angle": 0,
+                    "index": 1,
+                    "lines": [
+                        {
+                            "bbox": [
+                                206,
+                                174,
+                                387,
+                                190
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        206,
+                                        174,
+                                        387,
+                                        190
+                                    ],
+                                    "type": "text",
+                                    "content": "PaperQuay Onboarding Document",
+                                    "score": 1.0
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "bbox": [
+                        273,
+                        215,
+                        321,
+                        227
+                    ],
+                    "type": "title",
+                    "angle": 0,
+                    "index": 2,
+                    "lines": [
+                        {
+                            "bbox": [
+                                273,
+                                214,
+                                321,
+                                228
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        273,
+                                        214,
+                                        321,
+                                        228
+                                    ],
+                                    "type": "text",
+                                    "content": "Abstract",
+                                    "score": 1.0
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "bbox": [
+                        95,
+                        232,
+                        497,
+                        303
+                    ],
+                    "type": "text",
+                    "angle": 0,
+                    "index": 3,
+                    "lines": [
+                        {
+                            "bbox": [
+                                111,
+                                232,
+                                497,
+                                246
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        111,
+                                        232,
+                                        497,
+                                        246
+                                    ],
+                                    "type": "text",
+                                    "content": "PaperQuay is a lightweight desktop paper reader designed for researchers, students, and",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                96,
+                                243,
+                                497,
+                                259
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        96,
+                                        243,
+                                        497,
+                                        259
+                                    ],
+                                    "type": "text",
+                                    "content": "knowledge workers who spend significant time reading academic PDFs. Instead of treating",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                95,
+                                257,
+                                497,
+                                269
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        95,
+                                        257,
+                                        497,
+                                        269
+                                    ],
+                                    "type": "text",
+                                    "content": "a paper as a flat document, PaperQuay treats it as a structured reading workspace. A",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                96,
+                                269,
+                                498,
+                                282
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        96,
+                                        269,
+                                        498,
+                                        282
+                                    ],
+                                    "type": "text",
+                                    "content": "paper can be connected to a local library, opened as a PDF, parsed into document blocks,",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                96,
+                                280,
+                                498,
+                                294
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        96,
+                                        280,
+                                        498,
+                                        294
+                                    ],
+                                    "type": "text",
+                                    "content": "translated at the block level, summarized by AI, and revisited later with its reading state",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                96,
+                                293,
+                                143,
+                                304
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        96,
+                                        293,
+                                        143,
+                                        304
+                                    ],
+                                    "type": "text",
+                                    "content": "preserved.",
+                                    "score": 1.0
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "bbox": [
+                        95,
+                        305,
+                        498,
+                        365
+                    ],
+                    "type": "text",
+                    "angle": 0,
+                    "index": 4,
+                    "lines": [
+                        {
+                            "bbox": [
+                                111,
+                                304,
+                                497,
+                                318
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        111,
+                                        304,
+                                        497,
+                                        318
+                                    ],
+                                    "type": "text",
+                                    "content": "The main idea behind PaperQuay is simple: academic reading is not only about displaying",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                95,
+                                317,
+                                498,
+                                329
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        95,
+                                        317,
+                                        498,
+                                        329
+                                    ],
+                                    "type": "text",
+                                    "content": "pages. A good reading environment should help the reader move between the original",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                96,
+                                328,
+                                498,
+                                342
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        96,
+                                        328,
+                                        498,
+                                        342
+                                    ],
+                                    "type": "text",
+                                    "content": "PDF layout, extracted semantic content, translation, notes, and AI-assisted understanding.",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                96,
+                                340,
+                                498,
+                                353
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        96,
+                                        340,
+                                        498,
+                                        353
+                                    ],
+                                    "type": "text",
+                                    "content": "PaperQuay therefore combines a traditional PDF viewer with structured block extraction,",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                97,
+                                353,
+                                422,
+                                364
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        97,
+                                        353,
+                                        422,
+                                        364
+                                    ],
+                                    "type": "text",
+                                    "content": "linked navigation, local workspace management, and optional AI features.",
+                                    "score": 1.0
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "bbox": [
+                        69,
+                        383,
+                        182,
+                        396
+                    ],
+                    "type": "title",
+                    "angle": 0,
+                    "index": 5,
+                    "lines": [
+                        {
+                            "bbox": [
+                                69,
+                                381,
+                                182,
+                                399
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        69,
+                                        381,
+                                        182,
+                                        399
+                                    ],
+                                    "type": "text",
+                                    "content": "1 Introduction",
+                                    "score": 1.0
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "bbox": [
+                        68,
+                        409,
+                        524,
+                        491
+                    ],
+                    "type": "text",
+                    "angle": 0,
+                    "index": 6,
+                    "lines": [
+                        {
+                            "bbox": [
+                                70,
+                                410,
+                                524,
+                                423
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        70,
+                                        410,
+                                        524,
+                                        423
+                                    ],
+                                    "type": "text",
+                                    "content": "Academic papers are usually distributed as PDF files. The PDF format preserves visual layout",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                69,
+                                423,
+                                525,
+                                438
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        69,
+                                        423,
+                                        525,
+                                        438
+                                    ],
+                                    "type": "text",
+                                    "content": "very well, but it is not always ideal for deep reading. When a reader wants to understand a",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                70,
+                                437,
+                                524,
+                                450
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        70,
+                                        437,
+                                        524,
+                                        450
+                                    ],
+                                    "type": "text",
+                                    "content": "complex section, compare a figure with its explanation, translate a paragraph, or ask questions",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                70,
+                                451,
+                                524,
+                                464
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        70,
+                                        451,
+                                        524,
+                                        464
+                                    ],
+                                    "type": "text",
+                                    "content": "about the paper, a plain PDF viewer provides limited support. The reader often has to switch",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                69,
+                                464,
+                                524,
+                                478
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        69,
+                                        464,
+                                        524,
+                                        478
+                                    ],
+                                    "type": "text",
+                                    "content": "between several tools: a PDF viewer, a translation service, a note-taking application, a reference",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                70,
+                                478,
+                                264,
+                                491
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        70,
+                                        478,
+                                        264,
+                                        491
+                                    ],
+                                    "type": "text",
+                                    "content": "manager, and a chat-based AI assistant.",
+                                    "score": 1.0
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "bbox": [
+                        68,
+                        497,
+                        524,
+                        579
+                    ],
+                    "type": "text",
+                    "angle": 0,
+                    "index": 7,
+                    "lines": [
+                        {
+                            "bbox": [
+                                69,
+                                497,
+                                525,
+                                513
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        69,
+                                        497,
+                                        525,
+                                        513
+                                    ],
+                                    "type": "text",
+                                    "content": "PaperQuay is designed to reduce this fragmentation. It provides a single desktop workspace",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                69,
+                                511,
+                                524,
+                                524
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        69,
+                                        511,
+                                        524,
+                                        524
+                                    ],
+                                    "type": "text",
+                                    "content": "where the original PDF remains visible while additional structured information is placed around",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                68,
+                                523,
+                                524,
+                                539
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        68,
+                                        523,
+                                        524,
+                                        539
+                                    ],
+                                    "type": "text",
+                                    "content": "it. The reader can start from a local Zotero library, open a paper, run MinerU parsing, inspect",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                69,
+                                538,
+                                524,
+                                553
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        69,
+                                        538,
+                                        524,
+                                        553
+                                    ],
+                                    "type": "text",
+                                    "content": "extracted blocks, translate content, generate summaries, and ask questions about the current",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                68,
+                                551,
+                                525,
+                                567
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        68,
+                                        551,
+                                        525,
+                                        567
+                                    ],
+                                    "type": "text",
+                                    "content": "paper. The application is desktop-first, which means local file paths, local cache, and local paper",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                69,
+                                565,
+                                451,
+                                579
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        69,
+                                        565,
+                                        451,
+                                        579
+                                    ],
+                                    "type": "text",
+                                    "content": "workspaces are treated as core parts of the design rather than as afterthoughts.",
+                                    "score": 1.0
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "bbox": [
+                        68,
+                        586,
+                        524,
+                        627
+                    ],
+                    "type": "text",
+                    "angle": 0,
+                    "index": 8,
+                    "lines": [
+                        {
+                            "bbox": [
+                                69,
+                                585,
+                                524,
+                                598
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        69,
+                                        585,
+                                        524,
+                                        598
+                                    ],
+                                    "type": "text",
+                                    "content": "The goal is not to replace Zotero, nor to replace a professional annotation system. Instead,",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                68,
+                                597,
+                                525,
+                                613
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        68,
+                                        597,
+                                        525,
+                                        613
+                                    ],
+                                    "type": "text",
+                                    "content": "PaperQuay focuses on the reading moment: the period when a user has selected a paper and",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                68,
+                                613,
+                                363,
+                                627
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        68,
+                                        613,
+                                        363,
+                                        627
+                                    ],
+                                    "type": "text",
+                                    "content": "wants to understand it efficiently, accurately, and repeatedly.",
+                                    "score": 1.0
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "bbox": [
+                        69,
+                        644,
+                        224,
+                        661
+                    ],
+                    "type": "title",
+                    "angle": 0,
+                    "index": 9,
+                    "lines": [
+                        {
+                            "bbox": [
+                                67,
+                                641,
+                                224,
+                                662
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        67,
+                                        641,
+                                        224,
+                                        662
+                                    ],
+                                    "type": "text",
+                                    "content": "2 Design Philosophy",
+                                    "score": 1.0
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "bbox": [
+                        68,
+                        671,
+                        524,
+                        737
+                    ],
+                    "type": "text",
+                    "angle": 0,
+                    "index": 10,
+                    "lines": [
+                        {
+                            "bbox": [
+                                69,
+                                669,
+                                525,
+                                686
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        69,
+                                        669,
+                                        525,
+                                        686
+                                    ],
+                                    "type": "text",
+                                    "content": "PaperQuay follows a structured reading philosophy. A paper is not only a sequence of pages,",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                69,
+                                683,
+                                525,
+                                699
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        69,
+                                        683,
+                                        525,
+                                        699
+                                    ],
+                                    "type": "text",
+                                    "content": "and it is not only a plain text document. It is a combination of layout, content, figures, tables,",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                69,
+                                698,
+                                525,
+                                713
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        69,
+                                        698,
+                                        525,
+                                        713
+                                    ],
+                                    "type": "text",
+                                    "content": "equations, references, and visual relationships. When reading a paper, users often depend on",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                69,
+                                710,
+                                525,
+                                725
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        69,
+                                        710,
+                                        525,
+                                        725
+                                    ],
+                                    "type": "text",
+                                    "content": "both the original layout and the extracted text. Removing either side makes the experience",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                69,
+                                725,
+                                108,
+                                739
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        69,
+                                        725,
+                                        108,
+                                        739
+                                    ],
+                                    "type": "text",
+                                    "content": "weaker.",
+                                    "score": 1.0
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "bbox": [
+                        68,
+                        745,
+                        524,
+                        772
+                    ],
+                    "type": "text",
+                    "angle": 0,
+                    "index": 11,
+                    "lines": [
+                        {
+                            "bbox": [
+                                69,
+                                745,
+                                524,
+                                758
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        69,
+                                        745,
+                                        524,
+                                        758
+                                    ],
+                                    "type": "text",
+                                    "content": "For this reason, PaperQuay keeps the original PDF as the visual source of truth. At the",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                69,
+                                759,
+                                524,
+                                773
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        69,
+                                        759,
+                                        524,
+                                        773
+                                    ],
+                                    "type": "text",
+                                    "content": "same time, it builds a structured representation of the paper through parsing. The structured",
+                                    "score": 1.0
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ],
+            "discarded_blocks": [
+                {
+                    "bbox": [
+                        293,
+                        789,
+                        301,
+                        799
+                    ],
+                    "type": "page_number",
+                    "angle": 0,
+                    "index": 12,
+                    "lines": [
+                        {
+                            "bbox": [
+                                293,
+                                790,
+                                301,
+                                802
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        293,
+                                        790,
+                                        301,
+                                        802
+                                    ],
+                                    "type": "text",
+                                    "content": "1",
+                                    "score": 1.0
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ],
+            "page_size": [
+                595,
+                841
+            ],
+            "page_idx": 0
+        },
+        {
+            "para_blocks": [
+                {
+                    "bbox": [
+                        68,
+                        72,
+                        524,
+                        100
+                    ],
+                    "type": "text",
+                    "angle": 0,
+                    "index": 0,
+                    "lines": [
+                        {
+                            "bbox": [
+                                69,
+                                72,
+                                524,
+                                85
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        69,
+                                        72,
+                                        524,
+                                        85
+                                    ],
+                                    "type": "text",
+                                    "content": "representation can contain paragraphs, titles, lists, tables, captions, equations, and other block",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                69,
+                                85,
+                                525,
+                                100
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        69,
+                                        85,
+                                        525,
+                                        100
+                                    ],
+                                    "type": "text",
+                                    "content": "types. These blocks are connected back to the PDF through page indices and bounding boxes.",
+                                    "score": 1.0
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "bbox": [
+                        69,
+                        106,
+                        389,
+                        120
+                    ],
+                    "type": "text",
+                    "angle": 0,
+                    "index": 1,
+                    "lines": [
+                        {
+                            "bbox": [
+                                70,
+                                106,
+                                388,
+                                121
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        70,
+                                        106,
+                                        388,
+                                        121
+                                    ],
+                                    "type": "text",
+                                    "content": "A simplified representation of a document block can be written as",
+                                    "score": 1.0
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "bbox": [
+                        245,
+                        130,
+                        524,
+                        143
+                    ],
+                    "type": "interline_equation",
+                    "angle": 0,
+                    "lines": [
+                        {
+                            "bbox": [
+                                245,
+                                130,
+                                524,
+                                143
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        245,
+                                        130,
+                                        524,
+                                        143
+                                    ],
+                                    "type": "interline_equation",
+                                    "content": "B _ {i} = \\left(i d _ {i}, p _ {i}, t _ {i}, c _ {i}, r _ {i}\\right), \\tag {1}",
+                                    "image_path": "39a4c4f366d0cc201cbdd735001436cd902d72a8a4a01dc2dbed5f5649232254.jpg"
+                                }
+                            ]
+                        }
+                    ],
+                    "index": 2
+                },
+                {
+                    "bbox": [
+                        68,
+                        152,
+                        524,
+                        179
+                    ],
+                    "type": "text",
+                    "angle": 0,
+                    "index": 3,
+                    "lines": [
+                        {
+                            "bbox": [
+                                69,
+                                152,
+                                525,
+                                166
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        69,
+                                        152,
+                                        101,
+                                        166
+                                    ],
+                                    "type": "text",
+                                    "content": "where",
+                                    "score": 1.0
+                                },
+                                {
+                                    "bbox": [
+                                        102,
+                                        155,
+                                        114,
+                                        164
+                                    ],
+                                    "type": "inline_equation",
+                                    "content": "i d _ { i }",
+                                    "score": 0.92
+                                },
+                                {
+                                    "bbox": [
+                                        115,
+                                        152,
+                                        223,
+                                        166
+                                    ],
+                                    "type": "text",
+                                    "content": "is the block identifier,",
+                                    "score": 1.0
+                                },
+                                {
+                                    "bbox": [
+                                        223,
+                                        158,
+                                        232,
+                                        165
+                                    ],
+                                    "type": "inline_equation",
+                                    "content": "p _ { i }",
+                                    "score": 0.9
+                                },
+                                {
+                                    "bbox": [
+                                        233,
+                                        152,
+                                        321,
+                                        166
+                                    ],
+                                    "type": "text",
+                                    "content": "is the page index,",
+                                    "score": 1.0
+                                },
+                                {
+                                    "bbox": [
+                                        322,
+                                        156,
+                                        329,
+                                        164
+                                    ],
+                                    "type": "inline_equation",
+                                    "content": "t _ { i }",
+                                    "score": 0.9
+                                },
+                                {
+                                    "bbox": [
+                                        329,
+                                        152,
+                                        417,
+                                        166
+                                    ],
+                                    "type": "text",
+                                    "content": "is the block type,",
+                                    "score": 1.0
+                                },
+                                {
+                                    "bbox": [
+                                        417,
+                                        158,
+                                        426,
+                                        164
+                                    ],
+                                    "type": "inline_equation",
+                                    "content": "c _ { i }",
+                                    "score": 0.9
+                                },
+                                {
+                                    "bbox": [
+                                        426,
+                                        152,
+                                        525,
+                                        166
+                                    ],
+                                    "type": "text",
+                                    "content": "is the block content,",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                69,
+                                165,
+                                523,
+                                180
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        69,
+                                        165,
+                                        92,
+                                        180
+                                    ],
+                                    "type": "text",
+                                    "content": "and",
+                                    "score": 1.0
+                                },
+                                {
+                                    "bbox": [
+                                        92,
+                                        171,
+                                        101,
+                                        178
+                                    ],
+                                    "type": "inline_equation",
+                                    "content": "r _ { i }",
+                                    "score": 0.9
+                                },
+                                {
+                                    "bbox": [
+                                        101,
+                                        165,
+                                        523,
+                                        180
+                                    ],
+                                    "type": "text",
+                                    "content": "is the bounding box region on the PDF page. The bounding box can be represented as",
+                                    "score": 1.0
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "bbox": [
+                        251,
+                        190,
+                        524,
+                        202
+                    ],
+                    "type": "interline_equation",
+                    "angle": 0,
+                    "lines": [
+                        {
+                            "bbox": [
+                                251,
+                                190,
+                                524,
+                                202
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        251,
+                                        190,
+                                        524,
+                                        202
+                                    ],
+                                    "type": "interline_equation",
+                                    "content": "r _ {i} = \\left(x _ {1}, y _ {1}, x _ {2}, y _ {2}\\right). \\tag {2}",
+                                    "image_path": "6555ba4e2c3bf19721fa88a572ee88e9b1807ef077db60d7282598e23ad0ddb2.jpg"
+                                }
+                            ]
+                        }
+                    ],
+                    "index": 4
+                },
+                {
+                    "bbox": [
+                        67,
+                        211,
+                        523,
+                        252
+                    ],
+                    "type": "text",
+                    "angle": 0,
+                    "index": 5,
+                    "lines": [
+                        {
+                            "bbox": [
+                                69,
+                                211,
+                                524,
+                                226
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        69,
+                                        211,
+                                        524,
+                                        226
+                                    ],
+                                    "type": "text",
+                                    "content": "This small piece of geometry is important. It allows PaperQuay to link a block of extracted",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                70,
+                                225,
+                                524,
+                                238
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        70,
+                                        225,
+                                        524,
+                                        238
+                                    ],
+                                    "type": "text",
+                                    "content": "content to the exact region of the original PDF page. As a result, linked reading can be based",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                69,
+                                238,
+                                339,
+                                253
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        69,
+                                        238,
+                                        339,
+                                        253
+                                    ],
+                                    "type": "text",
+                                    "content": "on document geometry instead of fragile text matching.",
+                                    "score": 1.0
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "bbox": [
+                        69,
+                        270,
+                        308,
+                        286
+                    ],
+                    "type": "title",
+                    "angle": 0,
+                    "index": 6,
+                    "lines": [
+                        {
+                            "bbox": [
+                                69,
+                                268,
+                                309,
+                                288
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        69,
+                                        268,
+                                        309,
+                                        288
+                                    ],
+                                    "type": "text",
+                                    "content": "3 Library and Workspace Model",
+                                    "score": 1.0
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "bbox": [
+                        68,
+                        296,
+                        524,
+                        351
+                    ],
+                    "type": "text",
+                    "angle": 0,
+                    "index": 7,
+                    "lines": [
+                        {
+                            "bbox": [
+                                69,
+                                296,
+                                525,
+                                312
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        69,
+                                        296,
+                                        525,
+                                        312
+                                    ],
+                                    "type": "text",
+                                    "content": "PaperQuay begins with the library. A first-time user is encouraged to open Settings and connect",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                68,
+                                310,
+                                524,
+                                324
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        68,
+                                        310,
+                                        524,
+                                        324
+                                    ],
+                                    "type": "text",
+                                    "content": "a local Zotero data folder. After the folder is connected, PaperQuay can display local library",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                69,
+                                324,
+                                524,
+                                338
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        69,
+                                        324,
+                                        524,
+                                        338
+                                    ],
+                                    "type": "text",
+                                    "content": "items, recent papers, collections, and available PDF attachments. Users can also add standalone",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                69,
+                                337,
+                                298,
+                                351
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        69,
+                                        337,
+                                        298,
+                                        351
+                                    ],
+                                    "type": "text",
+                                    "content": "PDFs when a paper is not managed by Zotero.",
+                                    "score": 1.0
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "bbox": [
+                        68,
+                        358,
+                        524,
+                        426
+                    ],
+                    "type": "text",
+                    "angle": 0,
+                    "index": 8,
+                    "lines": [
+                        {
+                            "bbox": [
+                                70,
+                                358,
+                                524,
+                                371
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        70,
+                                        358,
+                                        524,
+                                        371
+                                    ],
+                                    "type": "text",
+                                    "content": "Each paper is treated as a workspace. A workspace may contain the original PDF path, parsed",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                69,
+                                370,
+                                524,
+                                385
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        69,
+                                        370,
+                                        524,
+                                        385
+                                    ],
+                                    "type": "text",
+                                    "content": "MinerU output, translation cache, AI summary, reading history, and other local state. This",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                69,
+                                384,
+                                524,
+                                399
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        69,
+                                        384,
+                                        524,
+                                        399
+                                    ],
+                                    "type": "text",
+                                    "content": "model is useful because academic reading is rarely completed in one session. A user may open",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                68,
+                                398,
+                                525,
+                                412
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        68,
+                                        398,
+                                        525,
+                                        412
+                                    ],
+                                    "type": "text",
+                                    "content": "a paper today, parse it, translate several sections, ask questions, and return to it a week later.",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                68,
+                                412,
+                                321,
+                                426
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        68,
+                                        412,
+                                        321,
+                                        426
+                                    ],
+                                    "type": "text",
+                                    "content": "PaperQuay is designed to make that return natural.",
+                                    "score": 1.0
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "type": "table",
+                    "bbox": [
+                        79,
+                        434,
+                        516,
+                        571
+                    ],
+                    "blocks": [
+                        {
+                            "bbox": [
+                                79,
+                                434,
+                                516,
+                                571
+                            ],
+                            "lines": [
+                                {
+                                    "bbox": [
+                                        79,
+                                        434,
+                                        516,
+                                        571
+                                    ],
+                                    "spans": [
+                                        {
+                                            "bbox": [
+                                                79,
+                                                434,
+                                                516,
+                                                571
+                                            ],
+                                            "type": "table",
+                                            "html": "<table><tr><td>Layer</td><td>Purpose</td><td>Example</td></tr><tr><td>Library</td><td>Find and select papers</td><td>Zotero collection, recent papers, stan-dalone PDFs</td></tr><tr><td>Workspace</td><td>Store paper-specific state</td><td>PDF path, parsed blocks, summary, translations</td></tr><tr><td>Reader</td><td>Perform active reading</td><td>PDF view, block view, assistant, translation</td></tr><tr><td>Cache</td><td>Reuse generated results</td><td>MinerU JSON, translated blocks, AI summaries</td></tr></table>",
+                                            "image_path": "14fc56768cf9c5c84dde89c6317ec83f59b3bc7663944b6f60061158c1d63949.jpg"
+                                        }
+                                    ]
+                                }
+                            ],
+                            "index": 9,
+                            "angle": 0,
+                            "type": "table_body"
+                        },
+                        {
+                            "bbox": [
+                                157,
+                                577,
+                                434,
+                                592
+                            ],
+                            "lines": [
+                                {
+                                    "bbox": [
+                                        158,
+                                        575,
+                                        436,
+                                        595
+                                    ],
+                                    "spans": [
+                                        {
+                                            "bbox": [
+                                                158,
+                                                575,
+                                                436,
+                                                595
+                                            ],
+                                            "type": "text",
+                                            "content": "Table 1: The basic workspace model used by PaperQuay.",
+                                            "score": 1.0
+                                        }
+                                    ]
+                                }
+                            ],
+                            "index": 10,
+                            "angle": 0,
+                            "type": "table_caption"
+                        }
+                    ],
+                    "index": 9
+                },
+                {
+                    "bbox": [
+                        68,
+                        602,
+                        524,
+                        630
+                    ],
+                    "type": "text",
+                    "angle": 0,
+                    "index": 11,
+                    "lines": [
+                        {
+                            "bbox": [
+                                68,
+                                601,
+                                525,
+                                618
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        68,
+                                        601,
+                                        525,
+                                        618
+                                    ],
+                                    "type": "text",
+                                    "content": "This structure allows PaperQuay to behave like a desktop research tool rather than a temporary",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                69,
+                                616,
+                                139,
+                                631
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        69,
+                                        616,
+                                        139,
+                                        631
+                                    ],
+                                    "type": "text",
+                                    "content": "browser page.",
+                                    "score": 1.0
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "bbox": [
+                        69,
+                        648,
+                        329,
+                        665
+                    ],
+                    "type": "title",
+                    "angle": 0,
+                    "index": 12,
+                    "lines": [
+                        {
+                            "bbox": [
+                                68,
+                                647,
+                                330,
+                                664
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        68,
+                                        647,
+                                        330,
+                                        664
+                                    ],
+                                    "type": "text",
+                                    "content": "4 Structured Reading with MinerU",
+                                    "score": 1.0
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "bbox": [
+                        67,
+                        675,
+                        524,
+                        729
+                    ],
+                    "type": "text",
+                    "angle": 0,
+                    "index": 13,
+                    "lines": [
+                        {
+                            "bbox": [
+                                69,
+                                671,
+                                525,
+                                691
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        69,
+                                        671,
+                                        525,
+                                        691
+                                    ],
+                                    "type": "text",
+                                    "content": "MinerU parsing is one of the core workflows in PaperQuay. When a PDF is parsed, the paper is",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                70,
+                                689,
+                                524,
+                                703
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        70,
+                                        689,
+                                        524,
+                                        703
+                                    ],
+                                    "type": "text",
+                                    "content": "converted into a collection of structured blocks. These blocks preserve their position on the PDF",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                68,
+                                702,
+                                524,
+                                716
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        68,
+                                        702,
+                                        524,
+                                        716
+                                    ],
+                                    "type": "text",
+                                    "content": "page, which makes them useful for linked navigation, block-level translation, and structured",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                69,
+                                717,
+                                146,
+                                729
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        69,
+                                        717,
+                                        146,
+                                        729
+                                    ],
+                                    "type": "text",
+                                    "content": "summarization.",
+                                    "score": 1.0
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "bbox": [
+                        69,
+                        735,
+                        327,
+                        749
+                    ],
+                    "type": "text",
+                    "angle": 0,
+                    "index": 14,
+                    "lines": [
+                        {
+                            "bbox": [
+                                69,
+                                733,
+                                327,
+                                751
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        69,
+                                        733,
+                                        327,
+                                        751
+                                    ],
+                                    "type": "text",
+                                    "content": "A document can be described as a sequence of pages:",
+                                    "score": 1.0
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "bbox": [
+                        245,
+                        759,
+                        524,
+                        772
+                    ],
+                    "type": "interline_equation",
+                    "angle": 0,
+                    "lines": [
+                        {
+                            "bbox": [
+                                245,
+                                759,
+                                524,
+                                772
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        245,
+                                        759,
+                                        524,
+                                        772
+                                    ],
+                                    "type": "interline_equation",
+                                    "content": "D = \\left\\{P _ {1}, P _ {2}, \\dots , P _ {n} \\right\\}. \\tag {3}",
+                                    "image_path": "62397b6a92221c0b1aa6f7ffeace8e5c5b234571c123399d6f8499dee9206ef5.jpg"
+                                }
+                            ]
+                        }
+                    ],
+                    "index": 15
+                }
+            ],
+            "discarded_blocks": [
+                {
+                    "bbox": [
+                        293,
+                        789,
+                        301,
+                        799
+                    ],
+                    "type": "page_number",
+                    "angle": 0,
+                    "index": 16,
+                    "lines": [
+                        {
+                            "bbox": [
+                                292,
+                                789,
+                                301,
+                                801
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        292,
+                                        789,
+                                        301,
+                                        801
+                                    ],
+                                    "type": "text",
+                                    "content": "2",
+                                    "score": 1.0
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ],
+            "page_size": [
+                595,
+                841
+            ],
+            "page_idx": 1
+        },
+        {
+            "para_blocks": [
+                {
+                    "bbox": [
+                        69,
+                        72,
+                        268,
+                        86
+                    ],
+                    "type": "text",
+                    "angle": 0,
+                    "index": 0,
+                    "lines": [
+                        {
+                            "bbox": [
+                                70,
+                                72,
+                                267,
+                                86
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        70,
+                                        72,
+                                        267,
+                                        86
+                                    ],
+                                    "type": "text",
+                                    "content": "Each page contains a sequence of blocks:",
+                                    "score": 1.0
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "bbox": [
+                        232,
+                        97,
+                        525,
+                        111
+                    ],
+                    "type": "interline_equation",
+                    "angle": 0,
+                    "lines": [
+                        {
+                            "bbox": [
+                                232,
+                                97,
+                                525,
+                                111
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        232,
+                                        97,
+                                        525,
+                                        111
+                                    ],
+                                    "type": "interline_equation",
+                                    "content": "P _ {j} = \\left\\{B _ {j, 1}, B _ {j, 2}, \\dots , B _ {j, m} \\right\\}. \\tag {4}",
+                                    "image_path": "b661977917b9c4486af30a42c48ff3808666ee6a910534be4de3a0bda895c165.jpg"
+                                }
+                            ]
+                        }
+                    ],
+                    "index": 1
+                },
+                {
+                    "bbox": [
+                        68,
+                        127,
+                        524,
+                        183
+                    ],
+                    "type": "text",
+                    "angle": 0,
+                    "index": 2,
+                    "lines": [
+                        {
+                            "bbox": [
+                                69,
+                                127,
+                                524,
+                                142
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        69,
+                                        127,
+                                        524,
+                                        142
+                                    ],
+                                    "type": "text",
+                                    "content": "The reader does not need to understand these formulas to use the application. However, this",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                69,
+                                142,
+                                524,
+                                155
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        69,
+                                        142,
+                                        524,
+                                        155
+                                    ],
+                                    "type": "text",
+                                    "content": "model explains why PaperQuay can connect the PDF and the extracted text reliably. The",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                69,
+                                155,
+                                524,
+                                170
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        69,
+                                        155,
+                                        524,
+                                        170
+                                    ],
+                                    "type": "text",
+                                    "content": "connection is not based primarily on searching for matching strings. It is based on the page",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                70,
+                                169,
+                                257,
+                                182
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        70,
+                                        169,
+                                        257,
+                                        182
+                                    ],
+                                    "type": "text",
+                                    "content": "index and bounding box of each block.",
+                                    "score": 1.0
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "bbox": [
+                        69,
+                        200,
+                        320,
+                        217
+                    ],
+                    "type": "title",
+                    "angle": 0,
+                    "index": 3,
+                    "lines": [
+                        {
+                            "bbox": [
+                                67,
+                                197,
+                                321,
+                                219
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        67,
+                                        197,
+                                        321,
+                                        219
+                                    ],
+                                    "type": "text",
+                                    "content": "5 Linked PDF and Block Reading",
+                                    "score": 1.0
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "bbox": [
+                        68,
+                        227,
+                        524,
+                        268
+                    ],
+                    "type": "text",
+                    "angle": 0,
+                    "index": 4,
+                    "lines": [
+                        {
+                            "bbox": [
+                                68,
+                                227,
+                                524,
+                                243
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        68,
+                                        227,
+                                        524,
+                                        243
+                                    ],
+                                    "type": "text",
+                                    "content": "The linked reading view is the central reading experience in PaperQuay. The left side displays",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                70,
+                                241,
+                                524,
+                                254
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        70,
+                                        241,
+                                        524,
+                                        254
+                                    ],
+                                    "type": "text",
+                                    "content": "the original PDF. The right side displays structured blocks extracted from the same paper. The",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                69,
+                                255,
+                                398,
+                                269
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        69,
+                                        255,
+                                        398,
+                                        269
+                                    ],
+                                    "type": "text",
+                                    "content": "two sides are connected by block identifiers and geometric positions.",
+                                    "score": 1.0
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "bbox": [
+                        68,
+                        275,
+                        525,
+                        315
+                    ],
+                    "type": "text",
+                    "angle": 0,
+                    "index": 5,
+                    "lines": [
+                        {
+                            "bbox": [
+                                68,
+                                274,
+                                525,
+                                289
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        68,
+                                        274,
+                                        525,
+                                        289
+                                    ],
+                                    "type": "text",
+                                    "content": "A simple coordinate conversion is used when drawing PDF highlights. If a bounding box is",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                69,
+                                288,
+                                525,
+                                302
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        69,
+                                        288,
+                                        525,
+                                        302
+                                    ],
+                                    "type": "text",
+                                    "content": "defined in the original PDF coordinate system, and the page is rendered at a different size,",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                69,
+                                302,
+                                311,
+                                316
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        69,
+                                        302,
+                                        311,
+                                        316
+                                    ],
+                                    "type": "text",
+                                    "content": "PaperQuay maps the box into screen coordinates:",
+                                    "score": 1.0
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "bbox": [
+                        243,
+                        327,
+                        524,
+                        340
+                    ],
+                    "type": "interline_equation",
+                    "angle": 0,
+                    "lines": [
+                        {
+                            "bbox": [
+                                243,
+                                327,
+                                524,
+                                340
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        243,
+                                        327,
+                                        524,
+                                        340
+                                    ],
+                                    "type": "interline_equation",
+                                    "content": "l e f t = x _ {1} \\cdot s c a l e _ {x}, \\tag {5}",
+                                    "image_path": "70f3742fc498590d30c20d66f941cdc40356b779984f47a0afdfa5a7f5307f33.jpg"
+                                }
+                            ]
+                        }
+                    ],
+                    "index": 6
+                },
+                {
+                    "bbox": [
+                        248,
+                        343,
+                        524,
+                        357
+                    ],
+                    "type": "interline_equation",
+                    "angle": 0,
+                    "lines": [
+                        {
+                            "bbox": [
+                                248,
+                                343,
+                                524,
+                                357
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        248,
+                                        343,
+                                        524,
+                                        357
+                                    ],
+                                    "type": "interline_equation",
+                                    "content": "t o p = y _ {1} \\cdot s c a l e _ {y}, \\tag {6}",
+                                    "image_path": "7ceb28e5a7168e4d19ae50386526cbfd4443391d0b4fe35261da283f5394352c.jpg"
+                                }
+                            ]
+                        }
+                    ],
+                    "index": 7
+                },
+                {
+                    "bbox": [
+                        235,
+                        360,
+                        524,
+                        373
+                    ],
+                    "type": "interline_equation",
+                    "angle": 0,
+                    "lines": [
+                        {
+                            "bbox": [
+                                235,
+                                360,
+                                524,
+                                373
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        235,
+                                        360,
+                                        524,
+                                        373
+                                    ],
+                                    "type": "interline_equation",
+                                    "content": "w i d t h = \\left(x _ {2} - x _ {1}\\right) \\cdot s c a l e _ {x}, \\tag {7}",
+                                    "image_path": "52a81b3163de017f37277c53df2f3fe8318bd134679b60cf899c2b72eaa42747.jpg"
+                                }
+                            ]
+                        }
+                    ],
+                    "index": 8
+                },
+                {
+                    "bbox": [
+                        231,
+                        376,
+                        524,
+                        390
+                    ],
+                    "type": "interline_equation",
+                    "angle": 0,
+                    "lines": [
+                        {
+                            "bbox": [
+                                231,
+                                376,
+                                524,
+                                390
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        231,
+                                        376,
+                                        524,
+                                        390
+                                    ],
+                                    "type": "interline_equation",
+                                    "content": "h e i g h t = \\left(y _ {2} - y _ {1}\\right) \\cdot s c a l e _ {y}. \\tag {8}",
+                                    "image_path": "8d1aad0b2d87ae2ca68b9730e172049bfc2680eab940fbd523518b889e7315a0.jpg"
+                                }
+                            ]
+                        }
+                    ],
+                    "index": 9
+                },
+                {
+                    "bbox": [
+                        68,
+                        401,
+                        524,
+                        427
+                    ],
+                    "type": "text",
+                    "angle": 0,
+                    "index": 10,
+                    "lines": [
+                        {
+                            "bbox": [
+                                69,
+                                400,
+                                525,
+                                415
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        69,
+                                        400,
+                                        525,
+                                        415
+                                    ],
+                                    "type": "text",
+                                    "content": "This conversion allows highlights to stay aligned with the rendered PDF page even when the",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                69,
+                                414,
+                                189,
+                                427
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        69,
+                                        414,
+                                        189,
+                                        427
+                                    ],
+                                    "type": "text",
+                                    "content": "page is scaled on screen.",
+                                    "score": 1.0
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "bbox": [
+                        69,
+                        446,
+                        251,
+                        461
+                    ],
+                    "type": "title",
+                    "angle": 0,
+                    "index": 11,
+                    "lines": [
+                        {
+                            "bbox": [
+                                71,
+                                444,
+                                252,
+                                462
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        71,
+                                        448,
+                                        80,
+                                        459
+                                    ],
+                                    "type": "text",
+                                    "content": "6",
+                                    "score": 1.0
+                                },
+                                {
+                                    "bbox": [
+                                        88,
+                                        444,
+                                        252,
+                                        462
+                                    ],
+                                    "type": "text",
+                                    "content": "Translation Workflows",
+                                    "score": 1.0
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "bbox": [
+                        68,
+                        472,
+                        524,
+                        527
+                    ],
+                    "type": "text",
+                    "angle": 0,
+                    "index": 12,
+                    "lines": [
+                        {
+                            "bbox": [
+                                69,
+                                472,
+                                524,
+                                486
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        69,
+                                        472,
+                                        524,
+                                        486
+                                    ],
+                                    "type": "text",
+                                    "content": "PaperQuay supports two common translation workflows. The first is selection translation. When",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                68,
+                                486,
+                                525,
+                                501
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        68,
+                                        486,
+                                        525,
+                                        501
+                                    ],
+                                    "type": "text",
+                                    "content": "a user selects a small piece of text, the assistant can translate that selection without changing",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                69,
+                                499,
+                                525,
+                                514
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        69,
+                                        499,
+                                        525,
+                                        514
+                                    ],
+                                    "type": "text",
+                                    "content": "the rest of the reading context. This is useful when the reader only needs help with one sentence,",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                69,
+                                513,
+                                268,
+                                527
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        69,
+                                        513,
+                                        268,
+                                        527
+                                    ],
+                                    "type": "text",
+                                    "content": "one definition, or one difficult paragraph.",
+                                    "score": 1.0
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "bbox": [
+                        67,
+                        533,
+                        523,
+                        588
+                    ],
+                    "type": "text",
+                    "angle": 0,
+                    "index": 13,
+                    "lines": [
+                        {
+                            "bbox": [
+                                69,
+                                532,
+                                524,
+                                548
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        69,
+                                        532,
+                                        524,
+                                        548
+                                    ],
+                                    "type": "text",
+                                    "content": "The second workflow is full-paper translation. After MinerU parsing is available, PaperQuay",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                70,
+                                548,
+                                524,
+                                560
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        70,
+                                        548,
+                                        524,
+                                        560
+                                    ],
+                                    "type": "text",
+                                    "content": "can translate the paper block by block. This approach is more structured than sending the",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                69,
+                                560,
+                                524,
+                                575
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        69,
+                                        560,
+                                        524,
+                                        575
+                                    ],
+                                    "type": "text",
+                                    "content": "whole paper as one long text. Each block keeps its relationship to the original document, and",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                70,
+                                574,
+                                433,
+                                587
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        70,
+                                        574,
+                                        433,
+                                        587
+                                    ],
+                                    "type": "text",
+                                    "content": "translated content can be displayed next to the corresponding source block.",
+                                    "score": 1.0
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "bbox": [
+                        69,
+                        594,
+                        327,
+                        608
+                    ],
+                    "type": "text",
+                    "angle": 0,
+                    "index": 14,
+                    "lines": [
+                        {
+                            "bbox": [
+                                69,
+                                593,
+                                327,
+                                609
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        69,
+                                        593,
+                                        327,
+                                        609
+                                    ],
+                                    "type": "text",
+                                    "content": "A simplified translation mapping can be described as",
+                                    "score": 1.0
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "bbox": [
+                        268,
+                        618,
+                        524,
+                        633
+                    ],
+                    "type": "interline_equation",
+                    "angle": 0,
+                    "lines": [
+                        {
+                            "bbox": [
+                                268,
+                                618,
+                                524,
+                                633
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        268,
+                                        618,
+                                        524,
+                                        633
+                                    ],
+                                    "type": "interline_equation",
+                                    "content": "T \\left(B _ {i}\\right) = B _ {i} ^ {\\prime}. \\tag {9}",
+                                    "image_path": "d68d338d69eae789f331e328fd62f58c1687e4c89945a9aabd9bc638a37413d0.jpg"
+                                }
+                            ]
+                        }
+                    ],
+                    "index": 15
+                },
+                {
+                    "bbox": [
+                        68,
+                        643,
+                        524,
+                        671
+                    ],
+                    "type": "text",
+                    "angle": 0,
+                    "index": 16,
+                    "lines": [
+                        {
+                            "bbox": [
+                                70,
+                                643,
+                                525,
+                                657
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        70,
+                                        643,
+                                        98,
+                                        657
+                                    ],
+                                    "type": "text",
+                                    "content": "Here,",
+                                    "score": 1.0
+                                },
+                                {
+                                    "bbox": [
+                                        99,
+                                        646,
+                                        111,
+                                        655
+                                    ],
+                                    "type": "inline_equation",
+                                    "content": "B _ { i }",
+                                    "score": 0.92
+                                },
+                                {
+                                    "bbox": [
+                                        111,
+                                        643,
+                                        229,
+                                        657
+                                    ],
+                                    "type": "text",
+                                    "content": "is the original block and",
+                                    "score": 1.0
+                                },
+                                {
+                                    "bbox": [
+                                        229,
+                                        645,
+                                        241,
+                                        657
+                                    ],
+                                    "type": "inline_equation",
+                                    "content": "B _ { i } ^ { \\prime }",
+                                    "score": 0.93
+                                },
+                                {
+                                    "bbox": [
+                                        242,
+                                        643,
+                                        525,
+                                        657
+                                    ],
+                                    "type": "text",
+                                    "content": "is the translated block. Because both blocks share the same",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                70,
+                                657,
+                                522,
+                                671
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        70,
+                                        657,
+                                        522,
+                                        671
+                                    ],
+                                    "type": "text",
+                                    "content": "logical identity, PaperQuay can keep the translation aligned with the original paper structure.",
+                                    "score": 1.0
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "bbox": [
+                        69,
+                        689,
+                        363,
+                        706
+                    ],
+                    "type": "title",
+                    "angle": 0,
+                    "index": 17,
+                    "lines": [
+                        {
+                            "bbox": [
+                                68,
+                                685,
+                                365,
+                                708
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        68,
+                                        685,
+                                        365,
+                                        708
+                                    ],
+                                    "type": "text",
+                                    "content": "7 AI Summary and Question Answering",
+                                    "score": 1.0
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "bbox": [
+                        67,
+                        715,
+                        524,
+                        769
+                    ],
+                    "type": "text",
+                    "angle": 0,
+                    "index": 18,
+                    "lines": [
+                        {
+                            "bbox": [
+                                70,
+                                716,
+                                524,
+                                729
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        70,
+                                        716,
+                                        524,
+                                        729
+                                    ],
+                                    "type": "text",
+                                    "content": "AI assistance in PaperQuay is designed to support reading rather than replace reading. A",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                69,
+                                729,
+                                525,
+                                744
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        69,
+                                        729,
+                                        525,
+                                        744
+                                    ],
+                                    "type": "text",
+                                    "content": "summary can help the user form an initial mental model of the paper. A question assistant can",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                69,
+                                741,
+                                525,
+                                757
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        69,
+                                        741,
+                                        525,
+                                        757
+                                    ],
+                                    "type": "text",
+                                    "content": "help clarify a concept, explain a paragraph, compare sections, or identify the role of a method or",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                69,
+                                756,
+                                103,
+                                771
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        69,
+                                        756,
+                                        103,
+                                        771
+                                    ],
+                                    "type": "text",
+                                    "content": "result.",
+                                    "score": 1.0
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ],
+            "discarded_blocks": [
+                {
+                    "bbox": [
+                        293,
+                        789,
+                        300,
+                        799
+                    ],
+                    "type": "page_number",
+                    "angle": 0,
+                    "index": 19,
+                    "lines": [
+                        {
+                            "bbox": [
+                                293,
+                                789,
+                                302,
+                                801
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        293,
+                                        789,
+                                        302,
+                                        801
+                                    ],
+                                    "type": "text",
+                                    "content": "3",
+                                    "score": 1.0
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ],
+            "page_size": [
+                595,
+                841
+            ],
+            "page_idx": 2
+        },
+        {
+            "para_blocks": [
+                {
+                    "bbox": [
+                        68,
+                        72,
+                        525,
+                        127
+                    ],
+                    "type": "text",
+                    "angle": 0,
+                    "index": 0,
+                    "lines": [
+                        {
+                            "bbox": [
+                                69,
+                                73,
+                                524,
+                                86
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        69,
+                                        73,
+                                        524,
+                                        86
+                                    ],
+                                    "type": "text",
+                                    "content": "For example, a user might ask: “What problem is this paper trying to solve, and how is its",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                69,
+                                84,
+                                524,
+                                100
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        69,
+                                        84,
+                                        524,
+                                        100
+                                    ],
+                                    "type": "text",
+                                    "content": "method different from previous work?” After selecting a difficult paragraph, the user might ask",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                69,
+                                99,
+                                524,
+                                114
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        69,
+                                        99,
+                                        524,
+                                        114
+                                    ],
+                                    "type": "text",
+                                    "content": "the assistant to explain it in simpler language and list the key assumptions. These questions are",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                69,
+                                112,
+                                362,
+                                127
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        69,
+                                        112,
+                                        362,
+                                        127
+                                    ],
+                                    "type": "text",
+                                    "content": "most useful when connected to the current paper workspace.",
+                                    "score": 1.0
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "bbox": [
+                        69,
+                        145,
+                        375,
+                        161
+                    ],
+                    "type": "title",
+                    "angle": 0,
+                    "index": 1,
+                    "lines": [
+                        {
+                            "bbox": [
+                                68,
+                                142,
+                                376,
+                                162
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        68,
+                                        142,
+                                        376,
+                                        162
+                                    ],
+                                    "type": "text",
+                                    "content": "8 Recommended Workflow for New Users",
+                                    "score": 1.0
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "bbox": [
+                        67,
+                        172,
+                        524,
+                        225
+                    ],
+                    "type": "text",
+                    "angle": 0,
+                    "index": 2,
+                    "lines": [
+                        {
+                            "bbox": [
+                                70,
+                                172,
+                                524,
+                                186
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        70,
+                                        172,
+                                        524,
+                                        186
+                                    ],
+                                    "type": "text",
+                                    "content": "A new user should begin with the library rather than the reader. First, open Settings and",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                70,
+                                185,
+                                524,
+                                199
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        70,
+                                        185,
+                                        524,
+                                        199
+                                    ],
+                                    "type": "text",
+                                    "content": "connect the local Zotero folder. If Zotero is not available, add a standalone PDF. Then return to",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                70,
+                                198,
+                                524,
+                                213
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        70,
+                                        198,
+                                        524,
+                                        213
+                                    ],
+                                    "type": "text",
+                                    "content": "the Library and select one paper. It is better to start with one paper because the main features",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                69,
+                                212,
+                                404,
+                                226
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        69,
+                                        212,
+                                        404,
+                                        226
+                                    ],
+                                    "type": "text",
+                                    "content": "of PaperQuay are easiest to understand in a concrete reading session.",
+                                    "score": 1.0
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "bbox": [
+                        67,
+                        232,
+                        526,
+                        300
+                    ],
+                    "type": "text",
+                    "angle": 0,
+                    "index": 3,
+                    "lines": [
+                        {
+                            "bbox": [
+                                70,
+                                232,
+                                523,
+                                246
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        70,
+                                        232,
+                                        523,
+                                        246
+                                    ],
+                                    "type": "text",
+                                    "content": "After opening a paper, check whether structured blocks are already available. If not, run MinerU",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                69,
+                                246,
+                                524,
+                                259
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        69,
+                                        246,
+                                        524,
+                                        259
+                                    ],
+                                    "type": "text",
+                                    "content": "Parse. Once blocks are available, switch to linked reading mode. Click a block on the right side",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                69,
+                                259,
+                                524,
+                                273
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        69,
+                                        259,
+                                        524,
+                                        273
+                                    ],
+                                    "type": "text",
+                                    "content": "and observe how the PDF moves to the corresponding location. Then click a PDF region and",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                68,
+                                270,
+                                525,
+                                290
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        68,
+                                        270,
+                                        525,
+                                        290
+                                    ],
+                                    "type": "text",
+                                    "content": "observe how the block view reacts. This interaction is the foundation of PaperQuay’s reading",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                69,
+                                286,
+                                105,
+                                301
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        69,
+                                        286,
+                                        105,
+                                        301
+                                    ],
+                                    "type": "text",
+                                    "content": "model.",
+                                    "score": 1.0
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "bbox": [
+                        76,
+                        307,
+                        344,
+                        483
+                    ],
+                    "type": "list",
+                    "angle": 0,
+                    "index": 13,
+                    "blocks": [
+                        {
+                            "bbox": [
+                                77,
+                                307,
+                                180,
+                                320
+                            ],
+                            "type": "text",
+                            "angle": 0,
+                            "index": 4,
+                            "lines": [
+                                {
+                                    "bbox": [
+                                        77,
+                                        305,
+                                        181,
+                                        322
+                                    ],
+                                    "spans": [
+                                        {
+                                            "bbox": [
+                                                77,
+                                                305,
+                                                181,
+                                                322
+                                            ],
+                                            "type": "text",
+                                            "content": "1. Connect a library.",
+                                            "score": 1.0
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                77,
+                                327,
+                                175,
+                                341
+                            ],
+                            "type": "text",
+                            "angle": 0,
+                            "index": 5,
+                            "lines": [
+                                {
+                                    "bbox": [
+                                        77,
+                                        326,
+                                        176,
+                                        342
+                                    ],
+                                    "spans": [
+                                        {
+                                            "bbox": [
+                                                77,
+                                                326,
+                                                176,
+                                                342
+                                            ],
+                                            "type": "text",
+                                            "content": "2. Select one paper.",
+                                            "score": 1.0
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                77,
+                                348,
+                                174,
+                                361
+                            ],
+                            "type": "text",
+                            "angle": 0,
+                            "index": 6,
+                            "lines": [
+                                {
+                                    "bbox": [
+                                        76,
+                                        346,
+                                        176,
+                                        363
+                                    ],
+                                    "spans": [
+                                        {
+                                            "bbox": [
+                                                76,
+                                                346,
+                                                176,
+                                                363
+                                            ],
+                                            "type": "text",
+                                            "content": "3. Open the reader.",
+                                            "score": 1.0
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                77,
+                                368,
+                                186,
+                                380
+                            ],
+                            "type": "text",
+                            "angle": 0,
+                            "index": 7,
+                            "lines": [
+                                {
+                                    "bbox": [
+                                        77,
+                                        367,
+                                        188,
+                                        382
+                                    ],
+                                    "spans": [
+                                        {
+                                            "bbox": [
+                                                77,
+                                                367,
+                                                188,
+                                                382
+                                            ],
+                                            "type": "text",
+                                            "content": "4. Run MinerU Parse.",
+                                            "score": 1.0
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                77,
+                                388,
+                                258,
+                                401
+                            ],
+                            "type": "text",
+                            "angle": 0,
+                            "index": 8,
+                            "lines": [
+                                {
+                                    "bbox": [
+                                        77,
+                                        387,
+                                        260,
+                                        402
+                                    ],
+                                    "spans": [
+                                        {
+                                            "bbox": [
+                                                77,
+                                                387,
+                                                260,
+                                                402
+                                            ],
+                                            "type": "text",
+                                            "content": "5. Read with linked PDF and blocks.",
+                                            "score": 1.0
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                77,
+                                408,
+                                268,
+                                421
+                            ],
+                            "type": "text",
+                            "angle": 0,
+                            "index": 9,
+                            "lines": [
+                                {
+                                    "bbox": [
+                                        77,
+                                        407,
+                                        270,
+                                        423
+                                    ],
+                                    "spans": [
+                                        {
+                                            "bbox": [
+                                                77,
+                                                407,
+                                                270,
+                                                423
+                                            ],
+                                            "type": "text",
+                                            "content": "6. Translate selected text when needed.",
+                                            "score": 1.0
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                77,
+                                428,
+                                218,
+                                442
+                            ],
+                            "type": "text",
+                            "angle": 0,
+                            "index": 10,
+                            "lines": [
+                                {
+                                    "bbox": [
+                                        77,
+                                        427,
+                                        219,
+                                        444
+                                    ],
+                                    "spans": [
+                                        {
+                                            "bbox": [
+                                                77,
+                                                427,
+                                                219,
+                                                444
+                                            ],
+                                            "type": "text",
+                                            "content": "7. Generate an AI summary.",
+                                            "score": 1.0
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                77,
+                                449,
+                                239,
+                                462
+                            ],
+                            "type": "text",
+                            "angle": 0,
+                            "index": 11,
+                            "lines": [
+                                {
+                                    "bbox": [
+                                        77,
+                                        448,
+                                        242,
+                                        464
+                                    ],
+                                    "spans": [
+                                        {
+                                            "bbox": [
+                                                77,
+                                                448,
+                                                242,
+                                                464
+                                            ],
+                                            "type": "text",
+                                            "content": "8. Use Q&A for difficult sections.",
+                                            "score": 1.0
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                76,
+                                470,
+                                344,
+                                483
+                            ],
+                            "type": "text",
+                            "angle": 0,
+                            "index": 12,
+                            "lines": [
+                                {
+                                    "bbox": [
+                                        77,
+                                        469,
+                                        345,
+                                        484
+                                    ],
+                                    "spans": [
+                                        {
+                                            "bbox": [
+                                                77,
+                                                469,
+                                                345,
+                                                484
+                                            ],
+                                            "type": "text",
+                                            "content": "9. Return later and continue from the same workspace.",
+                                            "score": 1.0
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ],
+                    "sub_type": "text"
+                },
+                {
+                    "bbox": [
+                        69,
+                        502,
+                        301,
+                        518
+                    ],
+                    "type": "title",
+                    "angle": 0,
+                    "index": 14,
+                    "lines": [
+                        {
+                            "bbox": [
+                                67,
+                                498,
+                                303,
+                                518
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        67,
+                                        498,
+                                        303,
+                                        518
+                                    ],
+                                    "type": "text",
+                                    "content": "9 Limitations and Expectations",
+                                    "score": 1.0
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "bbox": [
+                        67,
+                        528,
+                        524,
+                        596
+                    ],
+                    "type": "text",
+                    "angle": 0,
+                    "index": 15,
+                    "lines": [
+                        {
+                            "bbox": [
+                                70,
+                                528,
+                                524,
+                                543
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        70,
+                                        528,
+                                        524,
+                                        543
+                                    ],
+                                    "type": "text",
+                                    "content": "PaperQuay is a reading tool, not a guarantee that every paper will be parsed perfectly. PDF",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                69,
+                                540,
+                                525,
+                                557
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        69,
+                                        540,
+                                        525,
+                                        557
+                                    ],
+                                    "type": "text",
+                                    "content": "files vary widely in layout quality, embedded fonts, scanned images, mathematical notation,",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                69,
+                                554,
+                                524,
+                                570
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        69,
+                                        554,
+                                        524,
+                                        570
+                                    ],
+                                    "type": "text",
+                                    "content": "and table structure. MinerU parsing may work very well for some papers and less perfectly for",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                70,
+                                569,
+                                524,
+                                582
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        70,
+                                        569,
+                                        524,
+                                        582
+                                    ],
+                                    "type": "text",
+                                    "content": "others. AI summaries and translations may also contain mistakes, especially for highly technical",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                70,
+                                582,
+                                179,
+                                596
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        70,
+                                        582,
+                                        179,
+                                        596
+                                    ],
+                                    "type": "text",
+                                    "content": "or ambiguous content.",
+                                    "score": 1.0
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "bbox": [
+                        67,
+                        602,
+                        524,
+                        644
+                    ],
+                    "type": "text",
+                    "angle": 0,
+                    "index": 16,
+                    "lines": [
+                        {
+                            "bbox": [
+                                69,
+                                602,
+                                525,
+                                616
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        69,
+                                        602,
+                                        525,
+                                        616
+                                    ],
+                                    "type": "text",
+                                    "content": "For serious academic work, the original PDF should remain the final reference. PaperQuay is",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                70,
+                                616,
+                                524,
+                                629
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        70,
+                                        616,
+                                        524,
+                                        629
+                                    ],
+                                    "type": "text",
+                                    "content": "designed to help the reader navigate, understand, translate, and organize the reading process. It",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                69,
+                                629,
+                                451,
+                                644
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        69,
+                                        629,
+                                        451,
+                                        644
+                                    ],
+                                    "type": "text",
+                                    "content": "should be used as an assistant to human judgment, not as a replacement for it.",
+                                    "score": 1.0
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "bbox": [
+                        69,
+                        661,
+                        178,
+                        677
+                    ],
+                    "type": "title",
+                    "angle": 0,
+                    "index": 17,
+                    "lines": [
+                        {
+                            "bbox": [
+                                69,
+                                660,
+                                180,
+                                678
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        69,
+                                        660,
+                                        180,
+                                        678
+                                    ],
+                                    "type": "text",
+                                    "content": "10 Conclusion",
+                                    "score": 1.0
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "bbox": [
+                        68,
+                        688,
+                        524,
+                        743
+                    ],
+                    "type": "text",
+                    "angle": 0,
+                    "index": 18,
+                    "lines": [
+                        {
+                            "bbox": [
+                                68,
+                                687,
+                                526,
+                                703
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        68,
+                                        687,
+                                        526,
+                                        703
+                                    ],
+                                    "type": "text",
+                                    "content": "PaperQuay combines a desktop paper library, a PDF reader, structured document parsing,",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                69,
+                                702,
+                                525,
+                                715
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        69,
+                                        702,
+                                        525,
+                                        715
+                                    ],
+                                    "type": "text",
+                                    "content": "linked navigation, translation, and AI-assisted reading into one environment. Its central idea is",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                69,
+                                715,
+                                524,
+                                729
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        69,
+                                        715,
+                                        524,
+                                        729
+                                    ],
+                                    "type": "text",
+                                    "content": "that academic reading benefits from structure. When a paper is represented as linked pages and",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                69,
+                                728,
+                                508,
+                                744
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        69,
+                                        728,
+                                        508,
+                                        744
+                                    ],
+                                    "type": "text",
+                                    "content": "blocks, the reader can move more easily between layout, text, translation, and explanation.",
+                                    "score": 1.0
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ],
+            "discarded_blocks": [
+                {
+                    "bbox": [
+                        293,
+                        789,
+                        301,
+                        799
+                    ],
+                    "type": "page_number",
+                    "angle": 0,
+                    "index": 19,
+                    "lines": [
+                        {
+                            "bbox": [
+                                293,
+                                789,
+                                302,
+                                801
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        293,
+                                        789,
+                                        302,
+                                        801
+                                    ],
+                                    "type": "text",
+                                    "content": "4",
+                                    "score": 1.0
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ],
+            "page_size": [
+                595,
+                841
+            ],
+            "page_idx": 3
+        },
+        {
+            "para_blocks": [
+                {
+                    "bbox": [
+                        69,
+                        72,
+                        524,
+                        112
+                    ],
+                    "type": "text",
+                    "angle": 0,
+                    "index": 0,
+                    "lines": [
+                        {
+                            "bbox": [
+                                68,
+                                71,
+                                526,
+                                88
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        68,
+                                        71,
+                                        526,
+                                        88
+                                    ],
+                                    "type": "text",
+                                    "content": "The best way to learn PaperQuay is to start with one paper. Connect a library, open the paper,",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                69,
+                                86,
+                                524,
+                                100
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        69,
+                                        86,
+                                        524,
+                                        100
+                                    ],
+                                    "type": "text",
+                                    "content": "parse it, and try the linked reading view. From there, translation, summaries, and Q&A become",
+                                    "score": 1.0
+                                }
+                            ]
+                        },
+                        {
+                            "bbox": [
+                                70,
+                                100,
+                                273,
+                                114
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        70,
+                                        100,
+                                        273,
+                                        114
+                                    ],
+                                    "type": "text",
+                                    "content": "natural extensions of the same workspace.",
+                                    "score": 1.0
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ],
+            "discarded_blocks": [
+                {
+                    "bbox": [
+                        293,
+                        789,
+                        301,
+                        800
+                    ],
+                    "type": "page_number",
+                    "angle": 0,
+                    "index": 1,
+                    "lines": [
+                        {
+                            "bbox": [
+                                293,
+                                789,
+                                301,
+                                801
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        293,
+                                        789,
+                                        301,
+                                        801
+                                    ],
+                                    "type": "text",
+                                    "content": "5",
+                                    "score": 1.0
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ],
+            "page_size": [
+                595,
+                841
+            ],
+            "page_idx": 4
+        }
+    ],
+    "_backend": "hybrid",
+    "_ocr_enable": false,
+    "_vlm_ocr_enable": false,
+    "_version_name": "2.7.6"
+}
