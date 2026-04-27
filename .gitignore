@@ -72,6 +72,7 @@ backup*.tar.gz
 
 # Local test papers and parser outputs
 *.pdf
+/icon.png
 /content_list*.json
 /middle.json
 /full.md
@@ -93,6 +94,7 @@ backup*.tar.gz
 !public/onboarding/**/summaries/**
 !public/onboarding/**/translations/
 !public/onboarding/**/translations/**
+/public/onboarding/welcome.md
 
 # LaTeX build artifacts
 *.aux
@@ -111,6 +113,9 @@ desktop.ini
 .vscode/
 *.swp
 *.swo
+
+# Local AI assistant instructions
+AGENTS.md
 
 # Local accidental folders
 新建文件夹/

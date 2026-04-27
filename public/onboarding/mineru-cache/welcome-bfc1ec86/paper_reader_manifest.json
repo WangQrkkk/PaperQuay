@@ -1,8 +1,8 @@
 {
   "version": 1,
-  "documentKey": "standalone:D:\\开发\\taruri\\public\\onboarding\\welcome.pdf",
+  "documentKey": "onboarding:welcome",
   "title": "welcome",
-  "pdfPath": "D:\\开发\\taruri\\public\\onboarding\\welcome.pdf",
+  "pdfPath": "/onboarding/welcome.pdf",
   "savedAt": "2026-04-25T13:04:27.748Z",
   "sourceKind": "cloud",
   "batchId": "e50de412-fc2e-471b-8362-c0d5199b41c8",
