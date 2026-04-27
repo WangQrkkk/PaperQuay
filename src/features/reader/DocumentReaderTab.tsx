@@ -34,11 +34,14 @@ import {
   lookupZoteroKey,
 } from '../../services/zotero';
 import { useAppLocale, useLocaleText } from '../../i18n/uiLanguage';
+import type { LiteraturePaperTaskState } from '../../types/library';
 import type {
   AssistantPanelKey,
   DocumentChatAttachment,
   DocumentChatMessage,
   DocumentChatSession,
+  ModelRuntimeConfig,
+  ModelRuntimeRole,
   MineruPage,
   PaperAnnotation,
   PaperSummary,
@@ -167,6 +170,7 @@ export interface LibraryPreviewSyncPayload {
   summary?: PaperSummary | null;
   loading?: boolean;
   error?: string;
+  operation?: LiteraturePaperTaskState | null;
 }
 
 interface DocumentReaderTabProps {
@@ -407,6 +411,33 @@ function resolveModelPreset(
   presetId: string | undefined,
 ): QaModelPreset | null {
   return presets.find((preset) => preset.id === presetId) ?? presets[0] ?? null;
+}
+
+function normalizeDocumentModelRuntimeConfig(value: unknown): ModelRuntimeConfig {
+  if (!value || typeof value !== 'object') {
+    return { reasoningEffort: 'auto' };
+  }
+
+  const config = value as Partial<ModelRuntimeConfig>;
+  const temperature =
+    typeof config.temperature === 'number' && Number.isFinite(config.temperature)
+      ? Math.min(2, Math.max(0, config.temperature))
+      : undefined;
+  const reasoningEffort =
+    config.reasoningEffort === 'low' ||
+    config.reasoningEffort === 'medium' ||
+    config.reasoningEffort === 'high'
+      ? config.reasoningEffort
+      : 'auto';
+
+  return { temperature, reasoningEffort };
+}
+
+function getDocumentModelRuntimeConfig(
+  settings: ReaderSettings,
+  role: ModelRuntimeRole,
+): ModelRuntimeConfig {
+  return normalizeDocumentModelRuntimeConfig(settings.modelRuntimeConfigs?.[role]);
 }
 
 function getPreviewPdfName(item: WorkspaceItem, pdfPath: string, source: PdfSource): string {
@@ -2027,10 +2058,12 @@ function DocumentReaderTab({
 
           const batch = batches[currentIndex];
           const translations = await translateBlocksOpenAICompatible({
-            baseUrl: translationModelPreset.baseUrl,
-            apiKey: translationModelPreset.apiKey.trim(),
-            model: translationModelPreset.model,
-            sourceLanguage: settings.translationSourceLanguage,
+          baseUrl: translationModelPreset.baseUrl,
+          apiKey: translationModelPreset.apiKey.trim(),
+          model: translationModelPreset.model,
+          temperature: getDocumentModelRuntimeConfig(settings, 'translation').temperature,
+          reasoningEffort: getDocumentModelRuntimeConfig(settings, 'translation').reasoningEffort,
+          sourceLanguage: settings.translationSourceLanguage,
             targetLanguage: settings.translationTargetLanguage,
             blocks: batch,
             batchSize: batch.length,
@@ -2375,6 +2408,8 @@ function DocumentReaderTab({
           baseUrl: summaryModelPreset.baseUrl,
           apiKey: summaryModelPreset.apiKey.trim(),
           model: summaryModelPreset.model,
+          temperature: getDocumentModelRuntimeConfig(settings, 'summary').temperature,
+          reasoningEffort: getDocumentModelRuntimeConfig(settings, 'summary').reasoningEffort,
           title: currentDocument.title,
           authors: currentDocument.creators || undefined,
           year: currentDocument.year || undefined,
@@ -2548,6 +2583,8 @@ function DocumentReaderTab({
           baseUrl: selectionTranslationModelPreset.baseUrl,
           apiKey: selectionTranslationModelPreset.apiKey.trim(),
           model: selectionTranslationModelPreset.model,
+          temperature: getDocumentModelRuntimeConfig(settings, 'selectionTranslation').temperature,
+          reasoningEffort: getDocumentModelRuntimeConfig(settings, 'selectionTranslation').reasoningEffort,
           sourceLanguage: settings.translationSourceLanguage,
           targetLanguage: settings.translationTargetLanguage,
           blocks: [
@@ -3331,6 +3368,8 @@ function DocumentReaderTab({
           baseUrl: activeQaPreset.baseUrl,
           apiKey: activeQaPreset.apiKey.trim(),
           model: activeQaPreset.model,
+          temperature: getDocumentModelRuntimeConfig(settings, 'qa').temperature,
+          reasoningEffort: getDocumentModelRuntimeConfig(settings, 'qa').reasoningEffort,
           title: currentDocument.title,
           authors: currentDocument.creators || undefined,
           year: currentDocument.year || undefined,

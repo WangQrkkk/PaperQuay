@@ -1,7 +1,17 @@
 import { FileSearch, FolderTree, Sparkles, Tags, WandSparkles } from 'lucide-react';
 import type { LibraryAgentPlan, LibraryAgentTool } from '../../services/libraryAgent';
 import type { LiteraturePaper } from '../../types/library';
-import type { AgentCapability, AgentStepStatus, AgentToolCallView, AgentTraceStep } from './AgentWorkspace.types';
+import type {
+  AgentCapability,
+  AgentChatMessage,
+  AgentHistorySession,
+  AgentStepStatus,
+  AgentToolCallView,
+  AgentTraceStep,
+} from './AgentWorkspace.types';
+
+const AGENT_HISTORY_STORAGE_KEY = 'paperquay-agent-history-v1';
+const MAX_AGENT_HISTORY_SESSIONS = 30;
 
 export const agentCapabilities: AgentCapability[] = [
   {
@@ -49,8 +59,101 @@ export const promptSuggestions = [
   '给这些论文生成 3 到 6 个简洁的学术标签',
 ];
 
+export function newAgentSessionId(): string {
+  return `agent-session:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`;
+}
+
 export function newMessageId(): string {
   return `agent-message:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function stripMarkdown(value: string): string {
+  return value
+    .replace(/[`*_#>]+/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function summarizeMessage(message: AgentChatMessage | undefined): string {
+  if (!message) {
+    return '等待新的 Agent 指令';
+  }
+
+  return stripMarkdown(message.content).slice(0, 88) || '空消息';
+}
+
+function sessionStatusFromMessages(messages: AgentChatMessage[]): AgentStepStatus {
+  const latestAssistant = [...messages].reverse().find((message) => message.role === 'assistant');
+
+  if (latestAssistant?.error) {
+    return 'error';
+  }
+
+  const trace = latestAssistant?.trace;
+  const latestTraceStatus = trace?.[trace.length - 1]?.status;
+
+  return latestTraceStatus ?? 'success';
+}
+
+export function buildAgentHistorySession({
+  id,
+  messages,
+  selectedPaperIds,
+  lastInstruction,
+}: {
+  id: string;
+  messages: AgentChatMessage[];
+  selectedPaperIds: string[];
+  lastInstruction: string;
+}): AgentHistorySession {
+  const latestUserMessage = [...messages].reverse().find((message) => message.role === 'user');
+  const latestAssistantMessage = [...messages].reverse().find((message) => message.role === 'assistant');
+  const title = latestUserMessage ? summarizeMessage(latestUserMessage) : '新的 Agent 对话';
+  const summary = latestAssistantMessage?.meta
+    ? `${latestAssistantMessage.meta} · ${summarizeMessage(latestAssistantMessage)}`
+    : summarizeMessage(latestAssistantMessage);
+
+  return {
+    id,
+    title,
+    summary,
+    updatedAt: Date.now(),
+    messages,
+    selectedPaperIds,
+    lastInstruction,
+    status: sessionStatusFromMessages(messages),
+  };
+}
+
+export function loadAgentHistorySessions(): AgentHistorySession[] {
+  try {
+    const rawValue = window.localStorage.getItem(AGENT_HISTORY_STORAGE_KEY);
+
+    if (!rawValue) {
+      return [];
+    }
+
+    const parsed = JSON.parse(rawValue);
+
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+
+    return parsed
+      .filter((item): item is AgentHistorySession => Boolean(item && typeof item === 'object' && item.id))
+      .slice(0, MAX_AGENT_HISTORY_SESSIONS);
+  } catch {
+    return [];
+  }
+}
+
+export function saveAgentHistorySessions(sessions: AgentHistorySession[]) {
+  const normalized = sessions
+    .slice()
+    .sort((left, right) => right.updatedAt - left.updatedAt)
+    .slice(0, MAX_AGENT_HISTORY_SESSIONS);
+
+  window.localStorage.setItem(AGENT_HISTORY_STORAGE_KEY, JSON.stringify(normalized));
 }
 
 export function paperAuthors(paper: LiteraturePaper): string {

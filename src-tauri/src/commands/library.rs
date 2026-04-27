@@ -212,6 +212,7 @@ pub struct UpdatePaperRequest {
 #[serde(rename_all = "camelCase")]
 pub struct DeletePaperRequest {
     paper_id: String,
+    delete_files: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1311,6 +1312,116 @@ fn category_is_system(connection: &Connection, category_id: &str) -> Result<bool
         .ok_or_else(|| "分类不存在".to_string())
 }
 
+fn descendant_category_ids(connection: &Connection, category_id: &str) -> Result<Vec<String>, String> {
+    let mut output = Vec::new();
+    let mut stack = vec![category_id.to_string()];
+
+    while let Some(current_id) = stack.pop() {
+        output.push(current_id.clone());
+
+        let mut statement = connection
+            .prepare("select id from categories where parent_id = ?1 and is_system = 0")
+            .map_err(|error| format!("准备子分类查询失败: {}", error))?;
+        let rows = statement
+            .query_map(params![current_id], |row| row.get::<_, String>(0))
+            .map_err(|error| format!("查询子分类失败: {}", error))?;
+        let child_ids = rows
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("读取子分类失败: {}", error))?;
+
+        for child_id in child_ids {
+            stack.push(child_id);
+        }
+    }
+
+    Ok(output)
+}
+
+fn collect_category_paper_ids(
+    category_id: &str,
+    children_map: &HashMap<String, Vec<String>>,
+    direct_papers: &HashMap<String, HashSet<String>>,
+    memo: &mut HashMap<String, HashSet<String>>,
+) -> HashSet<String> {
+    if let Some(cached) = memo.get(category_id) {
+        return cached.clone();
+    }
+
+    let mut paper_ids = direct_papers.get(category_id).cloned().unwrap_or_default();
+
+    for child_id in children_map.get(category_id).into_iter().flatten() {
+        paper_ids.extend(collect_category_paper_ids(
+            child_id,
+            children_map,
+            direct_papers,
+            memo,
+        ));
+    }
+
+    memo.insert(category_id.to_string(), paper_ids.clone());
+    paper_ids
+}
+
+fn apply_category_paper_counts(
+    connection: &Connection,
+    categories: &mut [LiteratureCategory],
+) -> Result<(), String> {
+    let all_papers = connection
+        .query_row("select count(*) from papers", [], |row| row.get::<_, i64>(0))
+        .map_err(|error| format!("统计全部文献失败: {}", error))?;
+    let uncategorized_papers = connection
+        .query_row(
+            "select count(*) from papers p
+             where not exists (select 1 from paper_categories pc where pc.paper_id = p.id)",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|error| format!("统计未分类文献失败: {}", error))?;
+    let favorite_papers = connection
+        .query_row("select count(*) from papers where is_favorite = 1", [], |row| {
+            row.get::<_, i64>(0)
+        })
+        .map_err(|error| format!("统计收藏文献失败: {}", error))?;
+    let mut children_map = HashMap::<String, Vec<String>>::new();
+
+    for category in categories.iter().filter(|category| !category.is_system) {
+        if let Some(parent_id) = category.parent_id.as_ref() {
+            children_map
+                .entry(parent_id.clone())
+                .or_default()
+                .push(category.id.clone());
+        }
+    }
+
+    let mut direct_papers = HashMap::<String, HashSet<String>>::new();
+    let mut statement = connection
+        .prepare("select paper_id, category_id from paper_categories")
+        .map_err(|error| format!("准备分类文献关系查询失败: {}", error))?;
+    let rows = statement
+        .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+        .map_err(|error| format!("查询分类文献关系失败: {}", error))?;
+
+    for row in rows {
+        let (paper_id, category_id) =
+            row.map_err(|error| format!("读取分类文献关系失败: {}", error))?;
+        direct_papers.entry(category_id).or_default().insert(paper_id);
+    }
+
+    let mut memo = HashMap::<String, HashSet<String>>::new();
+
+    for category in categories {
+        category.paper_count = match category.system_key.as_deref() {
+            Some(SYSTEM_CATEGORY_ALL) | Some(SYSTEM_CATEGORY_RECENT) => all_papers,
+            Some(SYSTEM_CATEGORY_UNCATEGORIZED) => uncategorized_papers,
+            Some(SYSTEM_CATEGORY_FAVORITES) => favorite_papers,
+            _ => collect_category_paper_ids(&category.id, &children_map, &direct_papers, &mut memo)
+                .len() as i64,
+        };
+    }
+
+    Ok(())
+}
+
 fn would_create_category_cycle(
     connection: &Connection,
     category_id: &str,
@@ -1432,11 +1543,19 @@ fn list_papers_inner(
                 filters.push("p.is_favorite = 1".to_string());
             }
             _ => {
-                filters.push(
-          "exists (select 1 from paper_categories pc where pc.paper_id = p.id and pc.category_id = ?)"
-            .to_string(),
-        );
-                values.push(Value::Text(category_id.to_string()));
+                let category_ids = descendant_category_ids(connection, category_id)?;
+                let placeholders = std::iter::repeat("?")
+                    .take(category_ids.len())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                filters.push(format!(
+                    "exists (
+                       select 1 from paper_categories pc
+                       where pc.paper_id = p.id and pc.category_id in ({})
+                     )",
+                    placeholders
+                ));
+                values.extend(category_ids.into_iter().map(Value::Text));
             }
         }
     }
@@ -1845,19 +1964,7 @@ pub fn library_list_categories(app: AppHandle) -> Result<Vec<LiteratureCategory>
     let mut statement = connection
     .prepare(
       "select c.id, c.name, c.parent_id, c.sort_order, c.is_system, c.system_key,
-              c.created_at, c.updated_at,
-              case
-                when c.system_key = 'all' then (select count(*) from papers)
-                when c.system_key = 'recent' then (select count(*) from papers)
-                when c.system_key = 'uncategorized' then (
-                  select count(*) from papers p
-                  where not exists (select 1 from paper_categories pc where pc.paper_id = p.id)
-                )
-                when c.system_key = 'favorites' then (select count(*) from papers where is_favorite = 1)
-                else (
-                  select count(*) from paper_categories pc where pc.category_id = c.id
-                )
-              end as paper_count
+              c.created_at, c.updated_at
        from categories c
        order by c.is_system desc, c.parent_id is not null asc, c.sort_order asc, lower(c.name) asc",
     )
@@ -1873,13 +1980,18 @@ pub fn library_list_categories(app: AppHandle) -> Result<Vec<LiteratureCategory>
                 system_key: row.get(5)?,
                 created_at: row.get(6)?,
                 updated_at: row.get(7)?,
-                paper_count: row.get(8)?,
+                paper_count: 0,
             })
         })
         .map_err(|error| format!("查询分类失败: {}", error))?;
 
-    rows.collect::<Result<Vec<_>, _>>()
-        .map_err(|error| format!("读取分类失败: {}", error))
+    let mut categories = rows
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("读取分类失败: {}", error))?;
+
+    apply_category_paper_counts(&connection, &mut categories)?;
+
+    Ok(categories)
 }
 
 #[tauri::command]
@@ -2082,7 +2194,13 @@ pub fn library_move_category(
 
 #[tauri::command]
 pub fn library_delete_category(app: AppHandle, category_id: String) -> Result<(), String> {
-    let connection = open_library_connection(&app)?;
+    let mut connection = open_library_connection(&app)?;
+    let category_id = category_id.trim().to_string();
+
+    if category_id.is_empty() {
+        return Err("分类 ID 不能为空".to_string());
+    }
+
     let is_system: i64 = connection
         .query_row(
             "select is_system from categories where id = ?1 limit 1",
@@ -2097,9 +2215,20 @@ pub fn library_delete_category(app: AppHandle, category_id: String) -> Result<()
         return Err("系统分类不能删除".to_string());
     }
 
-    connection
-        .execute("delete from categories where id = ?1", params![category_id])
-        .map_err(|error| format!("删除分类失败: {}", error))?;
+    let category_ids = descendant_category_ids(&connection, &category_id)?;
+    let transaction = connection
+        .transaction()
+        .map_err(|error| format!("开启删除分类事务失败: {}", error))?;
+
+    for category_id in category_ids.iter().rev() {
+        transaction
+            .execute("delete from categories where id = ?1", params![category_id])
+            .map_err(|error| format!("删除分类失败: {}", error))?;
+    }
+
+    transaction
+        .commit()
+        .map_err(|error| format!("提交删除分类事务失败: {}", error))?;
 
     Ok(())
 }
@@ -2275,10 +2404,25 @@ pub fn library_update_paper(
 pub fn library_delete_paper(app: AppHandle, request: DeletePaperRequest) -> Result<(), String> {
     let connection = open_library_connection(&app)?;
     let paper_id = request.paper_id.trim();
+    let delete_files = request.delete_files.unwrap_or(false);
 
     if paper_id.is_empty() {
         return Err("文献 ID 不能为空".to_string());
     }
+
+    let attachment_paths = if delete_files {
+        let mut statement = connection
+            .prepare("select stored_path from attachments where paper_id = ?1 and kind = 'pdf'")
+            .map_err(|error| format!("准备 PDF 附件路径查询失败: {}", error))?;
+        let rows = statement
+            .query_map(params![paper_id], |row| row.get::<_, String>(0))
+            .map_err(|error| format!("查询 PDF 附件路径失败: {}", error))?;
+
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("读取 PDF 附件路径失败: {}", error))?
+    } else {
+        Vec::new()
+    };
 
     let affected = connection
         .execute("delete from papers where id = ?1", params![paper_id])
@@ -2286,6 +2430,26 @@ pub fn library_delete_paper(app: AppHandle, request: DeletePaperRequest) -> Resu
 
     if affected == 0 {
         return Err("文献不存在，无法删除".to_string());
+    }
+
+    if delete_files {
+        let mut seen_paths = HashSet::new();
+
+        for stored_path in attachment_paths {
+            let stored_path = stored_path.trim();
+
+            if stored_path.is_empty() || !seen_paths.insert(stored_path.to_string()) {
+                continue;
+            }
+
+            match fs::remove_file(PathBuf::from(stored_path)) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    eprintln!("failed to remove PDF file '{}': {}", stored_path, error);
+                }
+            }
+        }
     }
 
     Ok(())

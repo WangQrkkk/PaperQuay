@@ -167,6 +167,21 @@ export interface UpdatePaperRequest {
 
 export interface DeletePaperRequest {
   paperId: string;
+  deleteFiles?: boolean;
+}
+
+export type LiteraturePaperTaskKind = 'mineru' | 'translation' | 'overview';
+
+export type LiteraturePaperTaskStatus = 'running' | 'success' | 'error';
+
+export interface LiteraturePaperTaskState {
+  kind: LiteraturePaperTaskKind;
+  status: LiteraturePaperTaskStatus;
+  label: string;
+  message: string;
+  completed?: number | null;
+  total?: number | null;
+  updatedAt: number;
 }
 
 export interface ReorderPapersRequest {

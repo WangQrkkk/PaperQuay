@@ -79,6 +79,12 @@ export default function LiteratureCategorySidebar({
       return true;
     });
   })();
+  const systemCategories = visibleCategories.filter(
+    (category) => category.isSystem || category.systemKey,
+  );
+  const userCategories = visibleCategories.filter(
+    (category) => !category.isSystem && !category.systemKey,
+  );
   const contextMenuCategoryHasChildren =
     contextMenu?.category ? categoryIdsWithChildren.has(contextMenu.category.id) : false;
 
@@ -165,6 +171,91 @@ export default function LiteratureCategorySidebar({
     }
   };
 
+  const renderCategoryRow = (category: FlatLiteratureCategory) => {
+    const hasChildren = categoryIdsWithChildren.has(category.id);
+    const collapsed = hasChildren && collapsedCategoryIds.has(category.id);
+
+    return (
+      <div key={category.id} className="group flex items-center gap-1">
+        <button
+          type="button"
+          draggable={!category.isSystem}
+          onDragStart={(event) => handleCategoryDragStart(event, category)}
+          onClick={() => onSelectCategory(category.id)}
+          onContextMenu={(event) => openContextMenu(event, category)}
+          onDoubleClick={() => {
+            if (hasChildren && !category.isSystem) {
+              toggleCategoryCollapse(category.id);
+            }
+          }}
+          onDragOver={(event) => {
+            if (
+              (!category.isSystem && event.dataTransfer.types.includes('application/x-paperquay-category-id')) ||
+              (!category.isSystem && event.dataTransfer.types.includes('application/x-paperquay-paper-id'))
+            ) {
+              event.preventDefault();
+            }
+          }}
+          onDrop={(event) => handleCategoryRowDrop(event, category)}
+          className={clsx(
+            'flex min-w-0 flex-1 items-center justify-between rounded-2xl px-3 py-2.5 text-left text-sm transition',
+            selectedCategoryId === category.id
+              ? 'bg-slate-900 text-white dark:bg-[#275b5f] dark:text-white'
+              : category.isSystem
+                ? 'text-slate-700 hover:bg-white dark:text-[#d7d7d7] dark:hover:bg-[#242424]'
+                : 'text-slate-600 hover:bg-slate-100 dark:text-[#a0a0a0] dark:hover:bg-[#242424]',
+          )}
+          style={{ paddingLeft: `${12 + category.depth * 18}px` }}
+          aria-expanded={hasChildren ? !collapsed : undefined}
+        >
+          <span className="flex min-w-0 items-center gap-2">
+            {hasChildren && !category.isSystem ? (
+              <span
+                role="button"
+                tabIndex={0}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  toggleCategoryCollapse(category.id);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    toggleCategoryCollapse(category.id);
+                  }
+                }}
+                title={collapsed ? l('灞曞紑鍒嗙被', 'Expand category') : l('鎶樺彔鍒嗙被', 'Collapse category')}
+                className={clsx(
+                  'inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-lg transition hover:bg-black/5 dark:hover:bg-white/10',
+                  selectedCategoryId === category.id ? 'text-white' : 'text-slate-400 dark:text-[#8d8d8d]',
+                )}
+              >
+                <ChevronRight
+                  className={clsx('h-3.5 w-3.5 transition-transform', !collapsed && 'rotate-90')}
+                  strokeWidth={2}
+                />
+              </span>
+            ) : (
+              <span className="h-5 w-5 shrink-0" />
+            )}
+            <span className="shrink-0">{categoryIcon(category)}</span>
+            <span className="truncate">{category.name}</span>
+          </span>
+          <span
+            className={clsx(
+              'ml-2 shrink-0 rounded-full px-2 py-0.5 text-[11px]',
+              selectedCategoryId === category.id
+                ? 'bg-white/16 text-white'
+                : 'bg-slate-100 text-slate-500 dark:bg-white/10 dark:text-[#a0a0a0]',
+            )}
+          >
+            {category.paperCount}
+          </span>
+        </button>
+      </div>
+    );
+  };
+
   return (
     <aside className="flex min-h-0 flex-col border-r border-slate-200 bg-white/86 dark:border-white/10 dark:bg-[#181818]">
       <div className="border-b border-slate-200 px-4 py-4 dark:border-white/10">
@@ -189,6 +280,10 @@ export default function LiteratureCategorySidebar({
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
+        <div className="mb-3 rounded-3xl border border-slate-200 bg-slate-50/80 p-1.5 shadow-sm dark:border-white/10 dark:bg-[#1e1e1e]">
+          {systemCategories.map(renderCategoryRow)}
+        </div>
+
         <div
           onDragOver={(event) => {
             if (event.dataTransfer.types.includes('application/x-paperquay-category-id')) {
@@ -202,81 +297,9 @@ export default function LiteratureCategorySidebar({
           {l('拖动分类到这里可移回顶层，右键新建顶层分类', 'Drop a category here to move it to the root level. Right-click to create a root category.')}
         </div>
 
-        {visibleCategories.map((category) => {
-          const hasChildren = categoryIdsWithChildren.has(category.id);
-          const collapsed = hasChildren && collapsedCategoryIds.has(category.id);
-
-          return (
-          <div key={category.id} className="group flex items-center gap-1">
-            <button
-              type="button"
-              draggable={!category.isSystem}
-              onDragStart={(event) => handleCategoryDragStart(event, category)}
-              onClick={() => onSelectCategory(category.id)}
-              onContextMenu={(event) => openContextMenu(event, category)}
-              onDoubleClick={() => {
-                if (hasChildren && !category.isSystem) {
-                  toggleCategoryCollapse(category.id);
-                }
-              }}
-              onDragOver={(event) => {
-                if (
-                  (!category.isSystem && event.dataTransfer.types.includes('application/x-paperquay-category-id')) ||
-                  (!category.isSystem && event.dataTransfer.types.includes('application/x-paperquay-paper-id'))
-                ) {
-                  event.preventDefault();
-                }
-              }}
-              onDrop={(event) => handleCategoryRowDrop(event, category)}
-              className={clsx(
-                'flex min-w-0 flex-1 items-center justify-between rounded-2xl px-3 py-2.5 text-left text-sm transition',
-                selectedCategoryId === category.id
-                  ? 'bg-slate-900 text-white dark:bg-[#275b5f] dark:text-white'
-                  : 'text-slate-600 hover:bg-slate-100 dark:text-[#a0a0a0] dark:hover:bg-[#242424]',
-              )}
-              style={{ paddingLeft: `${12 + category.depth * 18}px` }}
-              aria-expanded={hasChildren ? !collapsed : undefined}
-            >
-              <span className="flex min-w-0 items-center gap-2">
-                {hasChildren && !category.isSystem ? (
-                  <span
-                    role="button"
-                    tabIndex={0}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      toggleCategoryCollapse(category.id);
-                    }}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter' || event.key === ' ') {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        toggleCategoryCollapse(category.id);
-                      }
-                    }}
-                    title={collapsed ? l('展开分类', 'Expand category') : l('折叠分类', 'Collapse category')}
-                    className={clsx(
-                      'inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-lg transition hover:bg-black/5 dark:hover:bg-white/10',
-                      selectedCategoryId === category.id ? 'text-white' : 'text-slate-400 dark:text-[#8d8d8d]',
-                    )}
-                  >
-                    <ChevronRight
-                      className={clsx('h-3.5 w-3.5 transition-transform', !collapsed && 'rotate-90')}
-                      strokeWidth={2}
-                    />
-                  </span>
-                ) : (
-                  <span className="h-5 w-5 shrink-0" />
-                )}
-                <span className="shrink-0">{categoryIcon(category)}</span>
-                <span className="truncate">{category.name}</span>
-              </span>
-              <span className="ml-2 shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-500 dark:bg-white/10 dark:text-[#a0a0a0]">
-                {category.paperCount}
-              </span>
-            </button>
-          </div>
-          );
-        })}
+        <div className="space-y-1">
+          {userCategories.map(renderCategoryRow)}
+        </div>
       </div>
 
       <div className="border-t border-slate-200 p-3 dark:border-white/10">

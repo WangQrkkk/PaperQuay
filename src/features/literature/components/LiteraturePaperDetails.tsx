@@ -1,8 +1,12 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
+  AlertCircle,
   BookOpenText,
+  ChevronRight,
+  CheckCircle2,
   FileText,
   Languages,
+  Loader2,
   Pencil,
   Save,
   Settings2,
@@ -13,6 +17,8 @@ import {
 import { useLocaleText } from '../../../i18n/uiLanguage';
 import type {
   LiteraturePaper,
+  LiteraturePaperTaskKind,
+  LiteraturePaperTaskState,
   UpdatePaperRequest,
 } from '../../../types/library';
 import {
@@ -26,6 +32,7 @@ interface LiteraturePaperDetailsProps {
   onOpenPaper: (paper: LiteraturePaper) => void;
   onOpenSettings: () => void;
   onSavePaper: (request: UpdatePaperRequest) => void;
+  actionState?: LiteraturePaperTaskState | null;
   onRunMineruParse?: (paper: LiteraturePaper) => void;
   onTranslatePaper?: (paper: LiteraturePaper) => void;
   onGenerateSummary?: (paper: LiteraturePaper) => void;
@@ -317,12 +324,132 @@ function ActionButton({
   );
 }
 
+function ProcessingActionTile({
+  title,
+  description,
+  icon,
+  disabled,
+  active,
+  busy,
+  onClick,
+}: {
+  title: ReactNode;
+  description: ReactNode;
+  icon: ReactNode;
+  disabled?: boolean;
+  active?: boolean;
+  busy?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={[
+        'group flex w-full items-center gap-3 rounded-2xl border px-3.5 py-3 text-left shadow-[0_10px_24px_rgba(15,23,42,0.04)] transition hover:-translate-y-0.5 hover:border-teal-200 hover:bg-teal-50/70 hover:shadow-[0_16px_34px_rgba(15,118,110,0.10)] disabled:cursor-not-allowed disabled:opacity-55 disabled:hover:translate-y-0 dark:shadow-none dark:hover:border-teal-300/25 dark:hover:bg-teal-300/10',
+        active
+          ? 'border-teal-300 bg-teal-50/80 ring-4 ring-teal-400/10 dark:border-teal-300/35 dark:bg-teal-300/10'
+          : 'border-slate-200/80 bg-white dark:border-white/10 dark:bg-[#242424]',
+      ].join(' ')}
+    >
+      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-teal-100 bg-teal-50 text-teal-700 transition group-hover:border-teal-200 group-hover:bg-white dark:border-teal-300/15 dark:bg-teal-300/10 dark:text-teal-100 dark:group-hover:bg-teal-300/14">
+        {busy ? <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2} /> : icon}
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block text-sm font-semibold text-slate-800 dark:text-[#e8e8e8]">
+          {title}
+        </span>
+        <span className="mt-0.5 block truncate text-[11px] leading-4 text-slate-500 dark:text-[#a0a0a0]">
+          {description}
+        </span>
+      </span>
+      <ChevronRight className="h-4 w-4 shrink-0 text-slate-300 transition group-hover:translate-x-0.5 group-hover:text-teal-500 dark:text-[#666] dark:group-hover:text-teal-200" strokeWidth={2} />
+    </button>
+  );
+}
+
+function TaskStatusPanel({
+  state,
+}: {
+  state: LiteraturePaperTaskState;
+}) {
+  const total = typeof state.total === 'number' ? state.total : 0;
+  const completed = typeof state.completed === 'number' ? state.completed : 0;
+  const hasProgress = total > 0;
+  const ratio = hasProgress ? Math.min(100, Math.max(0, (completed / total) * 100)) : 45;
+  const tone =
+    state.status === 'error'
+      ? 'rose'
+      : state.status === 'success'
+        ? 'emerald'
+        : 'teal';
+  const StatusIcon =
+    state.status === 'error'
+      ? AlertCircle
+      : state.status === 'success'
+        ? CheckCircle2
+        : Loader2;
+
+  return (
+    <div
+      className={[
+        'rounded-2xl border px-3.5 py-3',
+        tone === 'rose'
+          ? 'border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-300/25 dark:bg-rose-300/10 dark:text-rose-200'
+          : '',
+        tone === 'emerald'
+          ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-300/25 dark:bg-emerald-300/10 dark:text-emerald-200'
+          : '',
+        tone === 'teal'
+          ? 'border-teal-200 bg-teal-50 text-teal-800 dark:border-teal-300/25 dark:bg-teal-300/10 dark:text-teal-100'
+          : '',
+      ].join(' ')}
+    >
+      <div className="flex items-start gap-3">
+        <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-white/80 dark:bg-white/10">
+          <StatusIcon
+            className={['h-4 w-4', state.status === 'running' ? 'animate-spin' : ''].join(' ')}
+            strokeWidth={2}
+          />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center justify-between gap-3">
+            <div className="truncate text-sm font-semibold">{state.label}</div>
+            {hasProgress ? (
+              <div className="shrink-0 text-xs font-semibold">
+                {completed}/{total}
+              </div>
+            ) : null}
+          </div>
+          <div className="mt-1 line-clamp-2 text-xs leading-5 opacity-80">
+            {state.message}
+          </div>
+          <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-black/8 dark:bg-white/10">
+            <div
+              className={[
+                'h-full rounded-full transition-all duration-300',
+                state.status === 'running' && !hasProgress ? 'animate-pulse' : '',
+                tone === 'rose' ? 'bg-rose-500' : '',
+                tone === 'emerald' ? 'bg-emerald-500' : '',
+                tone === 'teal' ? 'bg-teal-500' : '',
+              ].join(' ')}
+              style={{ width: state.status === 'error' ? '100%' : `${ratio}%` }}
+            />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function LiteraturePaperDetails({
   selectedPaper,
   saving,
   onOpenPaper,
   onOpenSettings,
   onSavePaper,
+  actionState,
   onRunMineruParse,
   onTranslatePaper,
   onGenerateSummary,
@@ -375,6 +502,8 @@ export default function LiteraturePaperDetails({
   };
 
   const hasPdf = selectedPaper ? Boolean(paperPdfPath(selectedPaper)) : false;
+  const activeTaskKind: LiteraturePaperTaskKind | null =
+    actionState?.status === 'running' ? actionState.kind : null;
   const aiSummary = selectedPaper?.aiSummary?.trim() ?? '';
   const overviewSections = useMemo(() => parseOverviewSections(aiSummary), [aiSummary]);
   const activeOverviewSection =
@@ -467,30 +596,54 @@ export default function LiteraturePaperDetails({
                 {l('打开阅读', 'Open Reader')}
               </ActionButton>
 
-              <div className="grid gap-2 sm:grid-cols-2">
-                <ActionButton
-                  disabled={!hasPdf || !onRunMineruParse}
-                  icon={<Sparkles className="h-4 w-4" strokeWidth={1.9} />}
-                  onClick={() => onRunMineruParse?.(selectedPaper)}
-                >
-                  {l('MinerU 解析', 'MinerU Parse')}
-                </ActionButton>
-                <ActionButton
-                  disabled={!hasPdf || !onTranslatePaper}
-                  icon={<Languages className="h-4 w-4" strokeWidth={1.9} />}
-                  onClick={() => onTranslatePaper?.(selectedPaper)}
-                >
-                  {l('全文翻译', 'Translate')}
-                </ActionButton>
-              </div>
+              <section className="rounded-3xl border border-slate-200 bg-slate-50/75 p-3 shadow-inner shadow-white/70 dark:border-white/10 dark:bg-[#1e1e1e] dark:shadow-none">
+                <div className="mb-2.5 flex items-center justify-between gap-3 px-1">
+                  <div>
+                    <div className="text-xs font-bold uppercase tracking-[0.16em] text-slate-400 dark:text-[#8d8d8d]">
+                      {l('文档处理', 'Document Pipeline')}
+                    </div>
+                    <div className="mt-0.5 text-[11px] text-slate-500 dark:text-[#a0a0a0]">
+                      {l('解析、翻译和生成概览', 'Parse, translate, and generate overview')}
+                    </div>
+                  </div>
+                </div>
 
-              <ActionButton
-                disabled={!hasPdf || !onGenerateSummary}
-                icon={<FileText className="h-4 w-4" strokeWidth={1.9} />}
-                onClick={() => onGenerateSummary?.(selectedPaper)}
-              >
-                {l('概览生成', 'Generate Overview')}
-              </ActionButton>
+                <div className="space-y-2">
+                  <ProcessingActionTile
+                    disabled={!hasPdf || !onRunMineruParse}
+                    active={activeTaskKind === 'mineru'}
+                    busy={activeTaskKind === 'mineru'}
+                    icon={<Sparkles className="h-4 w-4" strokeWidth={1.9} />}
+                    onClick={() => onRunMineruParse?.(selectedPaper)}
+                    title={l('MinerU 解析', 'MinerU Parse')}
+                    description={l('提取结构化正文和版面块', 'Extract structured text and layout blocks')}
+                  />
+                  <ProcessingActionTile
+                    disabled={!hasPdf || !onTranslatePaper}
+                    active={activeTaskKind === 'translation'}
+                    busy={activeTaskKind === 'translation'}
+                    icon={<Languages className="h-4 w-4" strokeWidth={1.9} />}
+                    onClick={() => onTranslatePaper?.(selectedPaper)}
+                    title={l('全文翻译', 'Full Translation')}
+                    description={l('基于结构块生成双语译文', 'Translate structured blocks into bilingual text')}
+                  />
+                  <ProcessingActionTile
+                    disabled={!hasPdf || !onGenerateSummary}
+                    active={activeTaskKind === 'overview'}
+                    busy={activeTaskKind === 'overview'}
+                    icon={<FileText className="h-4 w-4" strokeWidth={1.9} />}
+                    onClick={() => onGenerateSummary?.(selectedPaper)}
+                    title={l('概览生成', 'Generate Overview')}
+                    description={l('生成研究问题、方法和结论概览', 'Generate questions, methods, and findings')}
+                  />
+                </div>
+
+                {actionState ? (
+                  <div className="mt-3">
+                    <TaskStatusPanel state={actionState} />
+                  </div>
+                ) : null}
+              </section>
             </div>
 
             {editing ? (

@@ -8,6 +8,7 @@ import {
   type MouseEvent,
   type PointerEvent as ReactPointerEvent,
 } from 'react';
+import { Star, Tag, Trash2 } from 'lucide-react';
 import { useLocaleText } from '../../i18n/uiLanguage';
 import { localPathExists, selectDirectory } from '../../services/desktop';
 import { lookupLiteratureMetadata } from '../../services/metadata';
@@ -39,6 +40,7 @@ import type {
   LibrarySettings,
   LiteratureCategory,
   LiteraturePaper,
+  LiteraturePaperTaskState,
   UpdatePaperRequest,
 } from '../../types/library';
 import type { MetadataLookupResult } from '../../types/metadata';
@@ -80,6 +82,7 @@ interface LiteratureLibraryViewProps {
   onOpenSettings: () => void;
   mineruCacheDir?: string;
   autoLoadSiblingJson?: boolean;
+  paperActionStates?: Record<string, LiteraturePaperTaskState | null | undefined>;
   onRunMineruParse?: (paper: LiteraturePaper) => void;
   onTranslatePaper?: (paper: LiteraturePaper) => void;
   onGenerateSummary?: (paper: LiteraturePaper) => void;
@@ -128,7 +131,7 @@ type CategoryNameDialogState =
 
 type LibraryConfirmDialogState =
   | { kind: 'delete-category'; category: LiteratureCategory }
-  | { kind: 'delete-paper'; paper: LiteraturePaper };
+  | { kind: 'delete-paper'; paper: LiteraturePaper; deleteFiles: boolean };
 
 function titleFromPdfPath(path: string): string {
   return getFileNameFromPath(path).replace(/\.pdf$/i, '') || 'Untitled PDF';
@@ -319,6 +322,7 @@ export default function LiteratureLibraryView({
   onOpenSettings,
   mineruCacheDir = '',
   autoLoadSiblingJson = true,
+  paperActionStates = {},
   onRunMineruParse,
   onTranslatePaper,
   onGenerateSummary,
@@ -363,6 +367,10 @@ export default function LiteratureLibraryView({
   });
 
   const flatCategories = useMemo(() => flattenCategories(categories), [categories]);
+  const selectedCategory = useMemo(
+    () => categories.find((category) => category.id === selectedCategoryId) ?? null,
+    [categories, selectedCategoryId],
+  );
   const selectedPaper = useMemo(
     () => papers.find((paper) => paper.id === selectedPaperId) ?? papers[0] ?? null,
     [papers, selectedPaperId],
@@ -1404,30 +1412,34 @@ export default function LiteratureLibraryView({
     }
   };
 
+  const reloadAfterPaperUpdate = async (updatedPaper: LiteraturePaper) => {
+    const [nextCategories, nextPapers] = await Promise.all([
+      listLibraryCategories(),
+      listLibraryPapers({
+        categoryId: selectedCategoryId,
+        search: searchQuery,
+        sortBy: 'manual',
+        sortDirection: 'asc',
+        limit: 500,
+      }),
+    ]);
+
+    setCategories(nextCategories);
+    setPapers(nextPapers);
+    setSelectedPaperId(
+      nextPapers.some((paper) => paper.id === updatedPaper.id)
+        ? updatedPaper.id
+        : nextPapers[0]?.id ?? null,
+    );
+  };
+
   const handleSavePaper = async (request: UpdatePaperRequest) => {
     setPaperSaving(true);
     setError('');
 
     try {
       const updatedPaper = await updateLibraryPaper(request);
-      const [nextCategories, nextPapers] = await Promise.all([
-        listLibraryCategories(),
-        listLibraryPapers({
-          categoryId: selectedCategoryId,
-          search: searchQuery,
-          sortBy: 'manual',
-          sortDirection: 'asc',
-          limit: 500,
-        }),
-      ]);
-
-      setCategories(nextCategories);
-      setPapers(nextPapers);
-      setSelectedPaperId(
-        nextPapers.some((paper) => paper.id === updatedPaper.id)
-          ? updatedPaper.id
-          : nextPapers[0]?.id ?? null,
-      );
+      await reloadAfterPaperUpdate(updatedPaper);
       setStatusMessage(l('文献信息已保存', 'Paper metadata saved'));
     } catch (nextError) {
       const message =
@@ -1443,18 +1455,23 @@ export default function LiteratureLibraryView({
     setConfirmDialog({
       kind: 'delete-paper',
       paper,
+      deleteFiles: selectedCategory?.systemKey === 'all',
     });
   };
 
-  const deletePaperAfterConfirm = async (paper: LiteraturePaper) => {
+  const deletePaperAfterConfirm = async (paper: LiteraturePaper, deleteFiles: boolean) => {
     setPaperSaving(true);
     setDialogBusy(true);
     setError('');
 
     try {
-      await deleteLibraryPaper({ paperId: paper.id });
+      await deleteLibraryPaper({ paperId: paper.id, deleteFiles });
       await refreshAll();
-      setStatusMessage(l('文献记录已删除，PDF 文件未删除', 'Paper record deleted. PDF files were not deleted.'));
+      setStatusMessage(
+        deleteFiles
+          ? l('文献记录和 PDF 文件已删除', 'Paper record and PDF files deleted.')
+          : l('文献记录已删除，PDF 文件未删除', 'Paper record deleted. PDF files were not deleted.'),
+      );
       setConfirmDialog(null);
     } catch (nextError) {
       const message =
@@ -1524,6 +1541,51 @@ export default function LiteratureLibraryView({
 
     if (paper) {
       setTagDialogPaper(paper);
+    }
+  };
+
+  const handleToggleFavoriteFromContextMenu = async () => {
+    const paper = paperContextMenu?.paper;
+
+    setPaperContextMenu(null);
+
+    if (!paper) {
+      return;
+    }
+
+    const nextFavorite = !paper.isFavorite;
+    setPaperSaving(true);
+    setError('');
+
+    try {
+      const updatedPaper = await updateLibraryPaper({
+        paperId: paper.id,
+        isFavorite: nextFavorite,
+      });
+
+      await reloadAfterPaperUpdate(updatedPaper);
+      setStatusMessage(
+        nextFavorite
+          ? l('已加入收藏', 'Added to favorites')
+          : l('已取消收藏', 'Removed from favorites'),
+      );
+    } catch (nextError) {
+      const message =
+        nextError instanceof Error ? nextError.message : l('更新收藏状态失败', 'Failed to update favorite status');
+      setError(message);
+      setStatusMessage(message);
+    } finally {
+      setPaperSaving(false);
+    }
+  };
+
+  const handleDeletePaperFromContextMenu = () => {
+    const paper = paperContextMenu?.paper;
+
+    setPaperContextMenu(null);
+
+    if (paper) {
+      handleDeletePaper(paper);
     }
   };
 
@@ -1665,6 +1727,7 @@ export default function LiteratureLibraryView({
         onOpenPaper={onOpenPaper}
         onOpenSettings={handleOpenLibrarySettings}
         onSavePaper={(request) => void handleSavePaper(request)}
+        actionState={selectedPaper ? paperActionStates[selectedPaper.id] ?? null : null}
         onRunMineruParse={onRunMineruParse}
         onTranslatePaper={onTranslatePaper}
         onGenerateSummary={onGenerateSummary}
@@ -1730,10 +1793,35 @@ export default function LiteratureLibraryView({
             </div>
             <button
               type="button"
+              onClick={() => void handleToggleFavoriteFromContextMenu()}
+              disabled={paperSaving}
+              className="mt-1 flex w-full items-center rounded-xl px-3 py-2 text-left text-sm font-medium text-slate-700 transition hover:bg-slate-100 disabled:opacity-60 dark:text-[#e0e0e0] dark:hover:bg-white/[0.06]"
+            >
+              <Star
+                className="mr-2 h-4 w-4 text-amber-500"
+                fill={paperContextMenu.paper.isFavorite ? 'currentColor' : 'none'}
+                strokeWidth={1.9}
+              />
+              {paperContextMenu.paper.isFavorite
+                ? l('取消收藏', 'Remove from Favorites')
+                : l('加入收藏', 'Add to Favorites')}
+            </button>
+            <button
+              type="button"
               onClick={handleOpenTagDialogFromContextMenu}
               className="mt-1 flex w-full items-center rounded-xl px-3 py-2 text-left text-sm font-medium text-slate-700 transition hover:bg-slate-100 dark:text-[#e0e0e0] dark:hover:bg-white/[0.06]"
             >
+              <Tag className="mr-2 h-4 w-4 text-cyan-600 dark:text-cyan-200" strokeWidth={1.9} />
               {l('添加自定义标签', 'Add Custom Tag')}
+            </button>
+            <div className="my-1 border-t border-slate-100 dark:border-white/10" />
+            <button
+              type="button"
+              onClick={handleDeletePaperFromContextMenu}
+              className="flex w-full items-center rounded-xl px-3 py-2 text-left text-sm font-medium text-rose-600 transition hover:bg-rose-50 dark:text-rose-300 dark:hover:bg-rose-400/10"
+            >
+              <Trash2 className="mr-2 h-4 w-4" strokeWidth={1.9} />
+              {l('删除文献记录', 'Delete Paper Record')}
             </button>
           </div>
         </div>
@@ -1830,19 +1918,24 @@ export default function LiteratureLibraryView({
         title={
           confirmDialog?.kind === 'delete-category'
             ? l('删除分类', 'Delete Category')
-            : l('删除文献记录', 'Delete Paper Record')
+            : l('删除文献', 'Delete Paper')
         }
         description={
           confirmDialog?.kind === 'delete-category'
             ? l(
-                `确定删除分类“${confirmDialog.category.name}”？这只会解除分类关系，不会删除磁盘上的 PDF 文件。`,
-                `Delete category "${confirmDialog.category.name}"? This only removes the category relation and does not delete PDF files on disk.`,
+                `确定删除分类“${confirmDialog.category.name}”及其所有子分类？这只会解除分类关系，不会删除磁盘上的 PDF 文件。`,
+                `Delete category "${confirmDialog.category.name}" and all subcategories? This only removes category relations and does not delete PDF files on disk.`,
               )
             : confirmDialog?.kind === 'delete-paper'
-              ? l(
-                  `确定删除“${confirmDialog.paper.title}”的文献记录？磁盘上的 PDF 文件不会被删除。`,
-                  `Delete the paper record for "${confirmDialog.paper.title}"? PDF files on disk will not be deleted.`,
-                )
+              ? confirmDialog.deleteFiles
+                ? l(
+                    `确定从“全部文献”删除“${confirmDialog.paper.title}”？这会同时删除磁盘上的 PDF 文件。`,
+                    `Delete "${confirmDialog.paper.title}" from All Papers? This will also delete PDF files from disk.`,
+                  )
+                : l(
+                    `确定删除“${confirmDialog.paper.title}”的文献记录？磁盘上的 PDF 文件不会被删除。`,
+                    `Delete the paper record for "${confirmDialog.paper.title}"? PDF files on disk will not be deleted.`,
+                  )
               : ''
         }
         confirmLabel={l('删除', 'Delete')}
@@ -1864,7 +1957,7 @@ export default function LiteratureLibraryView({
             return;
           }
 
-          void deletePaperAfterConfirm(confirmDialog.paper);
+          void deletePaperAfterConfirm(confirmDialog.paper, confirmDialog.deleteFiles);
         }}
       />
     </div>

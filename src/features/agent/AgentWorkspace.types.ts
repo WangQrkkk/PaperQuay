@@ -51,3 +51,14 @@ export interface AgentChatMessage {
   plan?: LibraryAgentPlan;
   error?: string;
 }
+
+export interface AgentHistorySession {
+  id: string;
+  title: string;
+  summary: string;
+  updatedAt: number;
+  messages: AgentChatMessage[];
+  selectedPaperIds: string[];
+  lastInstruction: string;
+  status: AgentStepStatus;
+}

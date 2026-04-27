@@ -41,6 +41,8 @@ pub struct OpenAICompatibleQaOptions {
     base_url: String,
     api_key: String,
     model: String,
+    temperature: Option<f32>,
+    reasoning_effort: Option<String>,
     title: String,
     authors: Option<String>,
     year: Option<String>,
@@ -103,6 +105,24 @@ fn build_chat_completions_url(base_url: &str) -> String {
     }
 
     format!("{}/v1/chat/completions", trimmed)
+}
+
+fn model_temperature(value: Option<f32>, fallback: f32) -> f32 {
+    value.unwrap_or(fallback).clamp(0.0, 2.0)
+}
+
+fn apply_reasoning_effort(body: &mut Value, reasoning_effort: Option<&str>) {
+    let Some(reasoning_effort) = reasoning_effort.map(str::trim) else {
+        return;
+    };
+
+    if reasoning_effort.is_empty() || reasoning_effort == "auto" {
+        return;
+    }
+
+    if let Some(object) = body.as_object_mut() {
+        object.insert("reasoning_effort".to_string(), json!(reasoning_effort));
+    }
 }
 
 fn emit_qa_stream_event(
@@ -402,6 +422,8 @@ fn build_qa_payload(options: OpenAICompatibleQaOptions) -> Result<Value, String>
     let api_key = options.api_key.trim();
     let model = options.model.trim();
     let title = options.title.trim();
+    let temperature = options.temperature;
+    let reasoning_effort = options.reasoning_effort.clone();
     let blocks = options
         .blocks
         .into_iter()
@@ -493,11 +515,14 @@ fn build_qa_payload(options: OpenAICompatibleQaOptions) -> Result<Value, String>
         }
     }
 
-    Ok(json!({
+    let mut body = json!({
       "model": model,
-      "temperature": 0.2,
+      "temperature": model_temperature(temperature, 0.2),
       "messages": payload_messages
-    }))
+    });
+    apply_reasoning_effort(&mut body, reasoning_effort.as_deref());
+
+    Ok(body)
 }
 
 #[tauri::command]
@@ -508,6 +533,8 @@ pub async fn ask_document_openai_compatible(
     let api_key = options.api_key.trim();
     let model = options.model.trim();
     let title = options.title.trim();
+    let temperature = options.temperature;
+    let reasoning_effort = options.reasoning_effort.clone();
     let blocks = options
         .blocks
         .into_iter()
@@ -604,11 +631,12 @@ pub async fn ask_document_openai_compatible(
         }
     }
 
-    let body = json!({
+    let mut body = json!({
       "model": model,
-      "temperature": 0.2,
+      "temperature": model_temperature(temperature, 0.2),
       "messages": payload_messages
     });
+    apply_reasoning_effort(&mut body, reasoning_effort.as_deref());
 
     let response = client
         .post(endpoint)

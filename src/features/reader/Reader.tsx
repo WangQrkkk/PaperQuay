@@ -84,6 +84,9 @@ import { useThemeStore } from '../../stores/useThemeStore';
 import type {
   FlatCollection,
   LibrarySectionKey,
+  ModelReasoningEffort,
+  ModelRuntimeConfig,
+  ModelRuntimeRole,
   OpenAICompatibleTestResult,
   PaperSummary,
   QaModelPreset,
@@ -99,7 +102,12 @@ import type {
   ZoteroCollection,
   ZoteroLibraryItem,
 } from '../../types/reader';
-import type { LibrarySettings, LiteraturePaper } from '../../types/library';
+import type {
+  LibrarySettings,
+  LiteraturePaper,
+  LiteraturePaperTaskKind,
+  LiteraturePaperTaskState,
+} from '../../types/library';
 import {
   emitLibrarySettingsUpdated,
   emitZoteroImportRequest,
@@ -275,6 +283,8 @@ const DEFAULT_SETTINGS: ReaderSettings = {
   translationModelPresetId: 'default',
   selectionTranslationModelPresetId: 'default',
   summaryModelPresetId: 'default',
+  agentModelPresetId: 'default',
+  modelRuntimeConfigs: {},
   summarySourceMode: 'mineru-markdown',
   summaryOutputLanguage: 'follow-ui',
   qaSourceMode: 'mineru-markdown',
@@ -301,6 +311,96 @@ const DEFAULT_SECRETS: ReaderSecrets = {
   zoteroUserId: '',
   qaModelPresets: [DEFAULT_QA_PRESET],
 };
+
+const MODEL_REASONING_OPTIONS: Array<{
+  value: ModelReasoningEffort;
+  labelZh: string;
+  labelEn: string;
+  descriptionZh: string;
+  descriptionEn: string;
+}> = [
+  {
+    value: 'auto',
+    labelZh: '自动',
+    labelEn: 'Auto',
+    descriptionZh: '不额外发送 reasoning_effort，保持模型或服务商默认行为。',
+    descriptionEn: 'Do not send reasoning_effort; keep the model or provider default.',
+  },
+  {
+    value: 'low',
+    labelZh: '低',
+    labelEn: 'Low',
+    descriptionZh: '更快、更省 token，适合翻译、整理和简单批处理。',
+    descriptionEn: 'Faster and cheaper, suitable for translation, cleanup, and simple batch jobs.',
+  },
+  {
+    value: 'medium',
+    labelZh: '中',
+    labelEn: 'Medium',
+    descriptionZh: '平衡速度和复杂任务稳定性。',
+    descriptionEn: 'Balances speed with stability for moderately complex tasks.',
+  },
+  {
+    value: 'high',
+    labelZh: '高',
+    labelEn: 'High',
+    descriptionZh: '更适合复杂推理、Agent 工具选择和长上下文分析。',
+    descriptionEn: 'Better for complex reasoning, Agent tool choice, and long-context analysis.',
+  },
+];
+
+function normalizeModelTemperature(value: unknown): number | undefined {
+  if (value === '' || value === null || value === undefined) {
+    return undefined;
+  }
+
+  const parsed = typeof value === 'number' ? value : Number(value);
+
+  if (!Number.isFinite(parsed)) {
+    return undefined;
+  }
+
+  return Math.min(2, Math.max(0, Number(parsed.toFixed(2))));
+}
+
+function normalizeModelReasoningEffort(value: unknown): ModelReasoningEffort {
+  return MODEL_REASONING_OPTIONS.some((option) => option.value === value)
+    ? (value as ModelReasoningEffort)
+    : 'auto';
+}
+
+function normalizeModelRuntimeConfig(value: unknown): ModelRuntimeConfig {
+  if (!value || typeof value !== 'object') {
+    return { reasoningEffort: 'auto' };
+  }
+
+  const config = value as Partial<ModelRuntimeConfig>;
+
+  return {
+    temperature: normalizeModelTemperature(config.temperature),
+    reasoningEffort: normalizeModelReasoningEffort(config.reasoningEffort),
+  };
+}
+
+function normalizeModelRuntimeConfigs(
+  value: unknown,
+): Partial<Record<ModelRuntimeRole, ModelRuntimeConfig>> {
+  const rawConfigs = value && typeof value === 'object'
+    ? (value as Partial<Record<ModelRuntimeRole, unknown>>)
+    : {};
+
+  return {
+    translation: normalizeModelRuntimeConfig(rawConfigs.translation),
+    selectionTranslation: normalizeModelRuntimeConfig(rawConfigs.selectionTranslation),
+    summary: normalizeModelRuntimeConfig(rawConfigs.summary),
+    agent: normalizeModelRuntimeConfig(rawConfigs.agent),
+    qa: normalizeModelRuntimeConfig(rawConfigs.qa),
+  };
+}
+
+function getModelRuntimeConfig(settings: ReaderSettings, role: ModelRuntimeRole): ModelRuntimeConfig {
+  return normalizeModelRuntimeConfig(settings.modelRuntimeConfigs?.[role]);
+}
 
 function createQaPreset(partial?: Partial<QaModelPreset>): QaModelPreset {
   const nextModel = partial?.model ?? DEFAULT_QA_PRESET.model;
@@ -479,6 +579,7 @@ interface LibraryPreviewState {
   summary: PaperSummary | null;
   loading: boolean;
   error: string;
+  operation: LiteraturePaperTaskState | null;
   hasBlocks: boolean;
   blockCount: number;
   currentPdfName: string;
@@ -542,6 +643,7 @@ const EMPTY_LIBRARY_PREVIEW_STATE: LibraryPreviewState = {
   summary: null,
   loading: false,
   error: '',
+  operation: null,
   hasBlocks: false,
   blockCount: 0,
   currentPdfName: '',
@@ -549,6 +651,38 @@ const EMPTY_LIBRARY_PREVIEW_STATE: LibraryPreviewState = {
   statusMessage: '',
   sourceKey: '',
 };
+
+function buildPaperTaskState({
+  kind,
+  status,
+  label,
+  message,
+  completed,
+  total,
+}: Omit<LiteraturePaperTaskState, 'updatedAt'>): LiteraturePaperTaskState {
+  return {
+    kind,
+    status,
+    label,
+    message,
+    completed,
+    total,
+    updatedAt: Date.now(),
+  };
+}
+
+function taskLabel(kind: LiteraturePaperTaskKind, locale: UiLanguage): string {
+  switch (kind) {
+    case 'mineru':
+      return pickLocaleText(locale, 'MinerU 解析', 'MinerU Parse');
+    case 'translation':
+      return pickLocaleText(locale, '全文翻译', 'Full Translation');
+    case 'overview':
+      return pickLocaleText(locale, '概览生成', 'Overview Generation');
+    default:
+      return pickLocaleText(locale, '文档处理', 'Document Processing');
+  }
+}
 
 const EMPTY_BATCH_PROGRESS: BatchProgressState = {
   running: false,
@@ -632,6 +766,7 @@ function normalizeReaderSettings(value?: Partial<ReaderSettings> | null): Reader
     libraryBatchConcurrency: clampBatchConcurrency(merged.libraryBatchConcurrency),
     translationBatchSize: clampTranslationBatchSize(merged.translationBatchSize),
     translationConcurrency: clampTranslationConcurrency(merged.translationConcurrency),
+    modelRuntimeConfigs: normalizeModelRuntimeConfigs(merged.modelRuntimeConfigs),
     summaryOutputLanguage: merged.summaryOutputLanguage?.trim() || 'follow-ui',
     translationDisplayMode: 'translated',
   };
@@ -1145,6 +1280,7 @@ function PreferencesWindow({
   const [presetTestResultMap, setPresetTestResultMap] = useState<
     Record<string, OpenAICompatibleTestResult | null>
   >({});
+  const [expandedModelConfigKey, setExpandedModelConfigKey] = useState<string | null>(null);
   const activeTranslationPreset = resolveModelPreset(
     qaModelPresets,
     settings.translationModelPresetId,
@@ -1157,7 +1293,6 @@ function PreferencesWindow({
     qaModelPresets,
     settings.summaryModelPresetId,
   );
-
   useEffect(() => {
     if (!open) {
       return undefined;
@@ -1287,6 +1422,83 @@ function PreferencesWindow({
       icon: <Database className="h-4 w-4" strokeWidth={1.8} />,
     },
   ];
+
+  const modelRoleBindings: Array<{
+    key: string;
+    runtimeRole: ModelRuntimeRole;
+    settingKey:
+      | 'translationModelPresetId'
+      | 'selectionTranslationModelPresetId'
+      | 'summaryModelPresetId'
+      | 'agentModelPresetId'
+      | 'qaActivePresetId';
+    title: string;
+    description: string;
+  }> = [
+    {
+      key: 'translation',
+      runtimeRole: 'translation',
+      settingKey: 'translationModelPresetId',
+      title: l('文档翻译', 'Document Translation'),
+      description: l('全文翻译、批量翻译和 MinerU 块翻译。', 'Full translation, batch translation, and MinerU block translation.'),
+    },
+    {
+      key: 'selection-translation',
+      runtimeRole: 'selectionTranslation',
+      settingKey: 'selectionTranslationModelPresetId',
+      title: l('划词翻译', 'Selection Translation'),
+      description: l('阅读器中选中文本后的快速翻译。', 'Quick translation for selected text in the reader.'),
+    },
+    {
+      key: 'summary',
+      runtimeRole: 'summary',
+      settingKey: 'summaryModelPresetId',
+      title: l('论文概览', 'Paper Overview'),
+      description: l('论文概览、文库预览概览和批量概览生成。', 'Paper overview, library preview overview, and batch overview generation.'),
+    },
+    {
+      key: 'agent',
+      runtimeRole: 'agent',
+      settingKey: 'agentModelPresetId',
+      title: 'Agent 工具调用模型',
+      description: l('用于选择工具、生成参数、批量整理文献。', 'Used for tool selection, parameter generation, and batch library operations.'),
+    },
+    {
+      key: 'qa',
+      runtimeRole: 'qa',
+      settingKey: 'qaActivePresetId',
+      title: l('问答默认模型', 'Default QA Model'),
+      description: l('论文问答助手的默认模型。', 'Default model for the paper QA assistant.'),
+    },
+  ];
+
+  const formatRuntimeConfig = (runtimeConfig: ModelRuntimeConfig) => {
+    const temperatureLabel =
+      typeof runtimeConfig.temperature === 'number'
+        ? `Temp ${runtimeConfig.temperature}`
+        : l('Temp 默认', 'Temp default');
+    const reasoningLabel =
+      runtimeConfig.reasoningEffort && runtimeConfig.reasoningEffort !== 'auto'
+        ? `${l('思考', 'Reasoning')} ${runtimeConfig.reasoningEffort}`
+        : l('思考 自动', 'Reasoning auto');
+
+    return `${temperatureLabel} · ${reasoningLabel}`;
+  };
+
+  const handleModelRuntimeConfigChange = (
+    role: ModelRuntimeRole,
+    patch: Partial<ModelRuntimeConfig>,
+  ) => {
+    const currentConfig = getModelRuntimeConfig(settings, role);
+
+    onSettingChange('modelRuntimeConfigs', {
+      ...settings.modelRuntimeConfigs,
+      [role]: normalizeModelRuntimeConfig({
+        ...currentConfig,
+        ...patch,
+      }),
+    });
+  };
 
   return (
     <div className="absolute inset-0 z-50 flex items-center justify-center bg-slate-950/62 backdrop-blur-sm">
@@ -1883,77 +2095,115 @@ function PreferencesWindow({
                   <SettingsField
                     label={l('功能角色绑定', 'Feature Role Binding')}
                     description={l(
-                      '为文档翻译、划词翻译、概览与问答分别选择默认模型。',
-                      'Choose default presets for document translation, selection translation, overview, and QA.',
+                      '为文档翻译、划词翻译、概览、问答与 Agent 工具调用分别选择默认模型。',
+                      'Choose default presets for document translation, selection translation, overview, QA, and Agent tool use.',
                     )}
                   >
-                    <div className="grid gap-3 md:grid-cols-2">
-                      <div className="space-y-2">
-                        <div className="text-xs font-medium text-slate-500">
-                          {l('文档翻译', 'Document Translation')}
-                        </div>
-                        <SettingsSelect
-                          value={settings.translationModelPresetId}
-                          onChange={(event) =>
-                            onSettingChange('translationModelPresetId', event.target.value)
-                          }
-                        >
-                          {qaModelPresets.map((preset) => (
-                            <option key={preset.id} value={preset.id}>
-                              {preset.label || preset.model}
-                            </option>
-                          ))}
-                        </SettingsSelect>
-                      </div>
-                      <div className="space-y-2">
-                        <div className="text-xs font-medium text-slate-500">
-                          {l('划词翻译', 'Selection Translation')}
-                        </div>
-                        <SettingsSelect
-                          value={settings.selectionTranslationModelPresetId}
-                          onChange={(event) =>
-                            onSettingChange('selectionTranslationModelPresetId', event.target.value)
-                          }
-                        >
-                          {qaModelPresets.map((preset) => (
-                            <option key={preset.id} value={preset.id}>
-                              {preset.label || preset.model}
-                            </option>
-                          ))}
-                        </SettingsSelect>
-                      </div>
-                      <div className="space-y-2">
-                        <div className="text-xs font-medium text-slate-500">
-                          {l('论文概览', 'Paper Overview')}
-                        </div>
-                        <SettingsSelect
-                          value={settings.summaryModelPresetId}
-                          onChange={(event) =>
-                            onSettingChange('summaryModelPresetId', event.target.value)
-                          }
-                        >
-                          {qaModelPresets.map((preset) => (
-                            <option key={preset.id} value={preset.id}>
-                              {preset.label || preset.model}
-                            </option>
-                          ))}
-                        </SettingsSelect>
-                      </div>
-                      <div className="space-y-2">
-                        <div className="text-xs font-medium text-slate-500">
-                          {l('问答默认模型', 'Default QA Model')}
-                        </div>
-                        <SettingsSelect
-                          value={settings.qaActivePresetId}
-                          onChange={(event) => onSettingChange('qaActivePresetId', event.target.value)}
-                        >
-                          {qaModelPresets.map((preset) => (
-                            <option key={preset.id} value={preset.id}>
-                              {preset.label || preset.model}
-                            </option>
-                          ))}
-                        </SettingsSelect>
-                      </div>
+                    <div className="space-y-3">
+                      {modelRoleBindings.map((binding) => {
+                        const selectedPresetId = settings[binding.settingKey];
+                        const selectedPreset = resolveModelPreset(qaModelPresets, selectedPresetId);
+                        const runtimeConfig = getModelRuntimeConfig(settings, binding.runtimeRole);
+                        const configKey = binding.key;
+                        const expanded = expandedModelConfigKey === configKey;
+
+                        return (
+                          <div
+                            key={binding.key}
+                            className="rounded-2xl border border-slate-200 bg-slate-50/70 p-3 dark:border-white/10 dark:bg-chrome-900/72"
+                          >
+                            <div className="grid gap-3 lg:grid-cols-[minmax(150px,220px)_minmax(0,1fr)_auto] lg:items-center">
+                              <div className="min-w-0">
+                                <div className="text-sm font-medium text-slate-900 dark:text-chrome-100">
+                                  {binding.title}
+                                </div>
+                                <div className="mt-1 text-xs leading-5 text-slate-500 dark:text-chrome-400">
+                                  {binding.description}
+                                </div>
+                              </div>
+                              <SettingsSelect
+                                value={selectedPresetId}
+                                onChange={(event) => onSettingChange(binding.settingKey, event.target.value)}
+                              >
+                                {qaModelPresets.map((preset) => (
+                                  <option key={preset.id} value={preset.id}>
+                                    {preset.label || preset.model}
+                                  </option>
+                                ))}
+                              </SettingsSelect>
+                              <button
+                                type="button"
+                                onClick={() => setExpandedModelConfigKey(expanded ? null : configKey)}
+                                disabled={!selectedPreset}
+                                className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50 dark:border-white/10 dark:bg-chrome-800 dark:text-chrome-200 dark:hover:bg-chrome-700"
+                              >
+                                <Settings2 className="h-4 w-4" strokeWidth={1.8} />
+                                {l('配置', 'Configure')}
+                              </button>
+                            </div>
+                            <div className="mt-2 text-[11px] leading-5 text-slate-400 dark:text-chrome-500">
+                              {selectedPreset
+                                ? `${selectedPreset.label || selectedPreset.model} · ${formatRuntimeConfig(runtimeConfig)}`
+                                : l('未选择模型预设', 'No model preset selected')}
+                            </div>
+
+                            {expanded && selectedPreset ? (
+                              <div className="mt-3 grid gap-3 rounded-2xl border border-slate-200 bg-white p-3 dark:border-white/10 dark:bg-chrome-800/80 md:grid-cols-2">
+                                <div className="space-y-2">
+                                  <div className="text-xs font-medium text-slate-500 dark:text-chrome-400">
+                                    {l('温度', 'Temperature')}
+                                  </div>
+                                  <SettingsInput
+                                    type="number"
+                                    min={0}
+                                    max={2}
+                                    step={0.05}
+                                    value={runtimeConfig.temperature ?? ''}
+                                    onChange={(event) =>
+                                      handleModelRuntimeConfigChange(binding.runtimeRole, {
+                                        temperature: normalizeModelTemperature(event.target.value),
+                                      })
+                                    }
+                                    placeholder={l('默认', 'Default')}
+                                  />
+                                  <div className="text-[11px] leading-5 text-slate-400 dark:text-chrome-500">
+                                    {l(
+                                      '留空时使用各功能默认值；建议翻译/概览 0.1-0.3，创意生成可提高。',
+                                      'Leave blank to use each feature default; 0.1-0.3 is recommended for translation/overview.',
+                                    )}
+                                  </div>
+                                </div>
+                                <div className="space-y-2">
+                                  <div className="text-xs font-medium text-slate-500 dark:text-chrome-400">
+                                    {l('思考程度', 'Reasoning Effort')}
+                                  </div>
+                                  <SettingsSelect
+                                    value={runtimeConfig.reasoningEffort ?? 'auto'}
+                                    onChange={(event) =>
+                                      handleModelRuntimeConfigChange(binding.runtimeRole, {
+                                        reasoningEffort: event.target.value as ModelReasoningEffort,
+                                      })
+                                    }
+                                  >
+                                    {MODEL_REASONING_OPTIONS.map((option) => (
+                                      <option key={option.value} value={option.value}>
+                                        {l(option.labelZh, option.labelEn)}
+                                      </option>
+                                    ))}
+                                  </SettingsSelect>
+                                  <div className="text-[11px] leading-5 text-slate-400 dark:text-chrome-500">
+                                    {
+                                      MODEL_REASONING_OPTIONS.find(
+                                        (option) => option.value === (runtimeConfig.reasoningEffort ?? 'auto'),
+                                      )?.[uiLanguage === 'en-US' ? 'descriptionEn' : 'descriptionZh']
+                                    }
+                                  </div>
+                                </div>
+                              </div>
+                            ) : null}
+                          </div>
+                        );
+                      })}
                     </div>
                   </SettingsField>
 
@@ -2470,6 +2720,41 @@ function Reader() {
     <T,>(zh: T, en: T) => pickLocaleText(settings.uiLanguage, zh, en),
     [settings.uiLanguage],
   );
+  const createPaperTaskState = useCallback(
+    (
+      kind: LiteraturePaperTaskKind,
+      status: LiteraturePaperTaskState['status'],
+      message: string,
+      completed?: number | null,
+      total?: number | null,
+    ) =>
+      buildPaperTaskState({
+        kind,
+        status,
+        label: taskLabel(kind, settings.uiLanguage),
+        message,
+        completed,
+        total,
+      }),
+    [settings.uiLanguage],
+  );
+  const updateLibraryPreviewOperation = useCallback(
+    (
+      item: WorkspaceItem,
+      operation: LiteraturePaperTaskState | null,
+      patch: Partial<Omit<LibraryPreviewState, 'operation'>> = {},
+    ) => {
+      setLibraryPreviewStates((current) => ({
+        ...current,
+        [item.workspaceId]: {
+          ...(current[item.workspaceId] ?? EMPTY_LIBRARY_PREVIEW_STATE),
+          ...patch,
+          operation,
+        },
+      }));
+    },
+    [],
+  );
   const syncNativeLibraryZoteroDir = useCallback(
     async (dataDir: string, source = 'reader-settings'): Promise<LibrarySettings | null> => {
       const normalizedDataDir = dataDir.trim();
@@ -2720,6 +3005,8 @@ function Reader() {
       nextTranslationPresetId;
     const nextSummaryPresetId =
       resolveModelPreset(nextPresets, settings.summaryModelPresetId)?.id ?? fallbackPresetId;
+    const nextAgentPresetId =
+      resolveModelPreset(nextPresets, settings.agentModelPresetId)?.id ?? fallbackPresetId;
     const nextQaPresetId =
       resolveModelPreset(nextPresets, settings.qaActivePresetId)?.id ?? fallbackPresetId;
     const nextTranslationPreset =
@@ -2749,6 +3036,7 @@ function Reader() {
       settings.translationModelPresetId !== nextTranslationPresetId ||
       settings.selectionTranslationModelPresetId !== nextSelectionTranslationPresetId ||
       settings.summaryModelPresetId !== nextSummaryPresetId ||
+      settings.agentModelPresetId !== nextAgentPresetId ||
       settings.qaActivePresetId !== nextQaPresetId ||
       settings.translationBaseUrl !== nextTranslationPreset.baseUrl ||
       settings.translationModel !== nextTranslationPreset.model ||
@@ -2760,6 +3048,7 @@ function Reader() {
         translationModelPresetId: nextTranslationPresetId,
         selectionTranslationModelPresetId: nextSelectionTranslationPresetId,
         summaryModelPresetId: nextSummaryPresetId,
+        agentModelPresetId: nextAgentPresetId,
         qaActivePresetId: nextQaPresetId,
         translationBaseUrl: nextTranslationPreset.baseUrl,
         translationModel: nextTranslationPreset.model,
@@ -2782,6 +3071,8 @@ function Reader() {
       nextTranslationPresetId;
     const nextSummaryPresetId =
       resolveModelPreset(qaModelPresets, settings.summaryModelPresetId)?.id ?? fallbackPresetId;
+    const nextAgentPresetId =
+      resolveModelPreset(qaModelPresets, settings.agentModelPresetId)?.id ?? fallbackPresetId;
     const nextQaPresetId =
       resolveModelPreset(qaModelPresets, settings.qaActivePresetId)?.id ?? fallbackPresetId;
     const nextTranslationPreset =
@@ -2793,6 +3084,7 @@ function Reader() {
       settings.translationModelPresetId !== nextTranslationPresetId ||
       settings.selectionTranslationModelPresetId !== nextSelectionTranslationPresetId ||
       settings.summaryModelPresetId !== nextSummaryPresetId ||
+      settings.agentModelPresetId !== nextAgentPresetId ||
       settings.qaActivePresetId !== nextQaPresetId ||
       settings.translationBaseUrl !== nextTranslationPreset.baseUrl ||
       settings.translationModel !== nextTranslationPreset.model ||
@@ -2804,6 +3096,7 @@ function Reader() {
         translationModelPresetId: nextTranslationPresetId,
         selectionTranslationModelPresetId: nextSelectionTranslationPresetId,
         summaryModelPresetId: nextSummaryPresetId,
+        agentModelPresetId: nextAgentPresetId,
         qaActivePresetId: nextQaPresetId,
         translationBaseUrl: nextTranslationPreset.baseUrl,
         translationModel: nextTranslationPreset.model,
@@ -2826,6 +3119,7 @@ function Reader() {
     qaModelPresets,
     readerSecrets.summaryApiKey,
     readerSecrets.translationApiKey,
+    settings.agentModelPresetId,
     settings.qaActivePresetId,
     settings.selectionTranslationModelPresetId,
     settings.summaryBaseUrl,
@@ -3004,6 +3298,23 @@ function Reader() {
         error: '',
       }
     : activeLibraryPreviewState;
+  const nativePaperActionStates = useMemo(() => {
+    const nextStates: Record<string, LiteraturePaperTaskState | null | undefined> = {};
+
+    for (const [workspaceId, previewState] of Object.entries(libraryPreviewStates)) {
+      if (!workspaceId.startsWith('native-library:')) {
+        continue;
+      }
+
+      const paperId = workspaceId.slice('native-library:'.length);
+
+      if (paperId) {
+        nextStates[paperId] = previewState.operation ?? null;
+      }
+    }
+
+    return nextStates;
+  }, [libraryPreviewStates]);
 
   useEffect(() => {
     if (!onboardingOpen) {
@@ -3183,6 +3494,7 @@ function Reader() {
       const hasSummary = Object.prototype.hasOwnProperty.call(payload, 'summary');
       const hasLoading = Object.prototype.hasOwnProperty.call(payload, 'loading');
       const hasError = Object.prototype.hasOwnProperty.call(payload, 'error');
+      const hasOperation = Object.prototype.hasOwnProperty.call(payload, 'operation');
 
       return {
         ...current,
@@ -3192,6 +3504,7 @@ function Reader() {
             : hasSummary ? payload.summary ?? null : existingState?.summary ?? null,
           loading: hasLoading ? Boolean(payload.loading) : false,
           error: hasError ? payload.error ?? '' : '',
+          operation: hasOperation ? payload.operation ?? null : existingState?.operation ?? null,
           hasBlocks: isWelcomeDemoPayload && onboardingOpen
             ? onboardingDemoReveal.parsed && payload.hasBlocks
             : payload.hasBlocks,
@@ -3935,6 +4248,18 @@ function Reader() {
         summary: force ? null : current[item.workspaceId]?.summary ?? null,
         loading: true,
         error: '',
+        operation: allowGenerate
+          ? createPaperTaskState(
+              'overview',
+              'running',
+              l(
+                '正在整理预览内容并生成 AI 概览...',
+                'Preparing the preview and generating the AI overview...',
+              ),
+              15,
+              100,
+            )
+          : current[item.workspaceId]?.operation ?? null,
         hasBlocks: current[item.workspaceId]?.hasBlocks ?? false,
         blockCount: current[item.workspaceId]?.blockCount ?? 0,
         currentPdfName: item.localPdfPath ? getFileNameFromPath(item.localPdfPath) : noPdfLoadedText,
@@ -3973,6 +4298,9 @@ function Reader() {
             summary: null,
             loading: false,
             error: '',
+            operation: allowGenerate
+              ? createPaperTaskState('overview', 'error', errorMessage, 100, 100)
+              : current[item.workspaceId]?.operation ?? null,
             hasBlocks: false,
             blockCount: 0,
             currentPdfName: previewContext.currentPdfName,
@@ -3991,6 +4319,15 @@ function Reader() {
             summary: historySummary,
             loading: false,
             error: '',
+            operation: allowGenerate
+              ? createPaperTaskState(
+                  'overview',
+                  'success',
+                  l('已从阅读历史恢复概览', 'Overview restored from reading history'),
+                  100,
+                  100,
+                )
+              : current[item.workspaceId]?.operation ?? null,
             hasBlocks: Boolean(documentText.trim()) || previewContext.blocks.length > 0,
             blockCount: previewContext.blocks.length,
             currentPdfName: previewContext.currentPdfName,
@@ -4010,6 +4347,15 @@ function Reader() {
             summary: cachedSummary,
             loading: false,
             error: '',
+            operation: allowGenerate
+              ? createPaperTaskState(
+                  'overview',
+                  'success',
+                  l('已加载缓存概览', 'Loaded the cached overview'),
+                  100,
+                  100,
+                )
+              : current[item.workspaceId]?.operation ?? null,
             hasBlocks: Boolean(documentText.trim()) || previewContext.blocks.length > 0,
             blockCount: previewContext.blocks.length,
             currentPdfName: previewContext.currentPdfName,
@@ -4029,6 +4375,18 @@ function Reader() {
             summary: null,
             loading: false,
             error: '',
+            operation: allowGenerate
+              ? createPaperTaskState(
+                  'overview',
+                  'error',
+                  l(
+                    '概览模型尚未配置完成，请检查 Base URL、模型名称和 API Key。',
+                    'The overview model is not configured yet. Check the Base URL, model name, and API key.',
+                  ),
+                  100,
+                  100,
+                )
+              : current[item.workspaceId]?.operation ?? null,
             hasBlocks: Boolean(documentText.trim()) || previewContext.blocks.length > 0,
             blockCount: previewContext.blocks.length,
             currentPdfName: previewContext.currentPdfName,
@@ -4049,6 +4407,15 @@ function Reader() {
           [item.workspaceId]: {
             ...cachedState,
             loading: false,
+            operation: allowGenerate
+              ? createPaperTaskState(
+                  'overview',
+                  'success',
+                  l('已加载当前概览', 'Loaded the current overview'),
+                  100,
+                  100,
+                )
+              : cachedState.operation ?? null,
           },
         }));
         return 'loaded';
@@ -4061,6 +4428,7 @@ function Reader() {
             summary: null,
             loading: false,
             error: '',
+            operation: current[item.workspaceId]?.operation ?? null,
             hasBlocks: Boolean(documentText.trim()) || previewContext.blocks.length > 0,
             blockCount: previewContext.blocks.length,
             currentPdfName: previewContext.currentPdfName,
@@ -4077,10 +4445,27 @@ function Reader() {
         return 'skipped';
       }
 
+      setLibraryPreviewStates((current) => ({
+        ...current,
+        [item.workspaceId]: {
+          ...(current[item.workspaceId] ?? EMPTY_LIBRARY_PREVIEW_STATE),
+          operation: createPaperTaskState(
+            'overview',
+            'running',
+            l('正在调用概览模型生成结构化结果...', 'Calling the overview model for a structured result...'),
+            55,
+            100,
+          ),
+          statusMessage: l('正在调用概览模型生成结构化结果...', 'Calling the overview model for a structured result...'),
+        },
+      }));
+
       const summary = await summarizeDocumentOpenAICompatible({
         baseUrl: summaryModelPreset.baseUrl,
         apiKey: summaryModelPreset.apiKey.trim(),
         model: summaryModelPreset.model,
+        temperature: getModelRuntimeConfig(settings, 'summary').temperature,
+        reasoningEffort: getModelRuntimeConfig(settings, 'summary').reasoningEffort,
         title: item.title,
         authors: item.creators || undefined,
         year: item.year || undefined,
@@ -4101,6 +4486,13 @@ function Reader() {
           summary,
           loading: false,
           error: '',
+          operation: createPaperTaskState(
+            'overview',
+            'success',
+            l('AI 概览已生成', 'AI overview generated'),
+            100,
+            100,
+          ),
           hasBlocks: Boolean(documentText.trim()) || previewContext.blocks.length > 0,
           blockCount: previewContext.blocks.length,
           currentPdfName: previewContext.currentPdfName,
@@ -4125,6 +4517,15 @@ function Reader() {
             nextError instanceof Error
               ? nextError.message
               : l('生成预览概览失败', 'Failed to generate the preview overview'),
+          operation: createPaperTaskState(
+            'overview',
+            'error',
+            nextError instanceof Error
+              ? nextError.message
+              : l('生成预览概览失败', 'Failed to generate the preview overview'),
+            100,
+            100,
+          ),
           hasBlocks: current[item.workspaceId]?.hasBlocks ?? false,
           blockCount: current[item.workspaceId]?.blockCount ?? 0,
           currentPdfName:
@@ -4175,6 +4576,15 @@ function Reader() {
         const message = l('这篇文献缺少可解析的 PDF 文件', 'This paper has no PDF file to parse');
         setError(message);
         setStatusMessage(message);
+        updateLibraryPreviewOperation(
+          item,
+          createPaperTaskState('mineru', 'error', message, 100, 100),
+          {
+            loading: false,
+            error: message,
+            statusMessage: message,
+          },
+        );
         return;
       }
 
@@ -4185,6 +4595,13 @@ function Reader() {
           ...(current[item.workspaceId] ?? EMPTY_LIBRARY_PREVIEW_STATE),
           loading: true,
           error: '',
+          operation: createPaperTaskState(
+            'mineru',
+            'running',
+            l('正在执行 MinerU 解析...', 'Running MinerU parsing...'),
+            10,
+            100,
+          ),
           currentPdfName: getFileNameFromPath(pdfPath),
           statusMessage: l('正在执行 MinerU 解析...', 'Running MinerU parsing...'),
         },
@@ -4195,11 +4612,25 @@ function Reader() {
         const existingParse = await findExistingMineruJson(item);
 
         if (existingParse) {
-          syncLibraryParsedState(
+          const parsedState = syncLibraryParsedState(
             item,
             existingParse.jsonText,
             existingParse.path,
             l('已复用已有的 MinerU 结果', 'Reused the existing MinerU result'),
+          );
+          updateLibraryPreviewOperation(
+            item,
+            createPaperTaskState(
+              'mineru',
+              'success',
+              l('已复用已有的 MinerU 解析结果', 'Reused the existing MinerU parse result'),
+              parsedState.blocks.length,
+              parsedState.blocks.length || null,
+            ),
+            {
+              loading: false,
+              error: '',
+            },
           );
           window.dispatchEvent(
             new CustomEvent('paperquay:native-mineru-status-updated', {
@@ -4218,6 +4649,22 @@ function Reader() {
           setPreferencesOpen(true);
           throw new Error(l('缺少 MinerU API Token', 'MinerU API Token is missing'));
         }
+
+        updateLibraryPreviewOperation(
+          item,
+          createPaperTaskState(
+            'mineru',
+            'running',
+            l('已提交 MinerU 云端任务，正在等待解析结果...', 'Submitted the MinerU cloud task. Waiting for the parse result...'),
+            35,
+            100,
+          ),
+          {
+            loading: true,
+            error: '',
+            statusMessage: l('已提交 MinerU 云端任务，正在等待解析结果...', 'Submitted the MinerU cloud task. Waiting for the parse result...'),
+          },
+        );
 
         const cachePaths = settings.mineruCacheDir.trim()
           ? buildMineruCachePaths(settings.mineruCacheDir.trim(), item)
@@ -4261,7 +4708,7 @@ function Reader() {
               : savedPaths.middleJsonPath
             : 'content_list_v2.json');
 
-        syncLibraryParsedState(
+        const parsedState = syncLibraryParsedState(
           item,
           jsonText,
           resolvedJsonPath,
@@ -4271,6 +4718,20 @@ function Reader() {
                 `MinerU parsing finished and was cached in: ${savedPaths.directory}`,
               )
             : l('已完成 MinerU 解析', 'MinerU parsing finished'),
+        );
+        updateLibraryPreviewOperation(
+          item,
+          createPaperTaskState(
+            'mineru',
+            'success',
+            l('MinerU 解析已完成', 'MinerU parsing finished'),
+            parsedState.blocks.length,
+            parsedState.blocks.length || null,
+          ),
+          {
+            loading: false,
+            error: '',
+          },
         );
         window.dispatchEvent(
           new CustomEvent('paperquay:native-mineru-status-updated', {
@@ -4294,6 +4755,7 @@ function Reader() {
             ...(current[item.workspaceId] ?? EMPTY_LIBRARY_PREVIEW_STATE),
             loading: false,
             error: message,
+            operation: createPaperTaskState('mineru', 'error', message, 100, 100),
             statusMessage: message,
           },
         }));
@@ -4303,9 +4765,11 @@ function Reader() {
       findExistingMineruJson,
       l,
       mineruApiToken,
+      createPaperTaskState,
       saveLibraryMineruParseCache,
       settings.mineruCacheDir,
       syncLibraryParsedState,
+      updateLibraryPreviewOperation,
     ],
   );
 
@@ -4317,6 +4781,15 @@ function Reader() {
         const message = l('请先配置可用的翻译模型', 'Configure an available translation model first');
         setError(message);
         setStatusMessage(message);
+        updateLibraryPreviewOperation(
+          item,
+          createPaperTaskState('translation', 'error', message, 100, 100),
+          {
+            loading: false,
+            error: message,
+            statusMessage: message,
+          },
+        );
         return;
       }
 
@@ -4327,6 +4800,13 @@ function Reader() {
           ...(current[item.workspaceId] ?? EMPTY_LIBRARY_PREVIEW_STATE),
           loading: true,
           error: '',
+          operation: createPaperTaskState(
+            'translation',
+            'running',
+            l('正在准备全文翻译...', 'Preparing full-document translation...'),
+            0,
+            null,
+          ),
           statusMessage: l('正在准备全文翻译...', 'Preparing full-document translation...'),
         },
       }));
@@ -4344,6 +4824,32 @@ function Reader() {
         if (blocksToTranslate.length === 0) {
           throw new Error(l('当前没有可翻译的结构化文本，请先执行 MinerU 解析。', 'There is no structured text to translate. Run MinerU parsing first.'));
         }
+
+        updateLibraryPreviewOperation(
+          item,
+          createPaperTaskState(
+            'translation',
+            'running',
+            l(
+              `正在翻译 ${blocksToTranslate.length} 个结构块`,
+              `Translating ${blocksToTranslate.length} structured blocks`,
+            ),
+            0,
+            blocksToTranslate.length,
+          ),
+          {
+            loading: true,
+            error: '',
+            hasBlocks: previewContext.blocks.length > 0,
+            blockCount: previewContext.blocks.length,
+            currentPdfName: previewContext.currentPdfName,
+            currentJsonName: previewContext.currentJsonName,
+            statusMessage: l(
+              `正在翻译 ${blocksToTranslate.length} 个结构块`,
+              `Translating ${blocksToTranslate.length} structured blocks`,
+            ),
+          },
+        );
 
         const batchSize = Math.max(1, settings.translationBatchSize);
         const concurrency = Math.max(1, settings.translationConcurrency);
@@ -4366,6 +4872,8 @@ function Reader() {
               baseUrl: translationModelPreset.baseUrl,
               apiKey: translationModelPreset.apiKey.trim(),
               model: translationModelPreset.model,
+              temperature: getModelRuntimeConfig(settings, 'translation').temperature,
+              reasoningEffort: getModelRuntimeConfig(settings, 'translation').reasoningEffort,
               sourceLanguage: settings.translationSourceLanguage,
               targetLanguage: settings.translationTargetLanguage,
               blocks: batch,
@@ -4385,6 +4893,27 @@ function Reader() {
                 `正在翻译 ${completedBlocks}/${blocksToTranslate.length} 个块`,
                 `Translating ${completedBlocks}/${blocksToTranslate.length} blocks`,
               ),
+            );
+            updateLibraryPreviewOperation(
+              item,
+              createPaperTaskState(
+                'translation',
+                'running',
+                l(
+                  `正在翻译 ${completedBlocks}/${blocksToTranslate.length} 个块`,
+                  `Translating ${completedBlocks}/${blocksToTranslate.length} blocks`,
+                ),
+                completedBlocks,
+                blocksToTranslate.length,
+              ),
+              {
+                loading: true,
+                error: '',
+                statusMessage: l(
+                  `正在翻译 ${completedBlocks}/${blocksToTranslate.length} 个块`,
+                  `Translating ${completedBlocks}/${blocksToTranslate.length} blocks`,
+                ),
+              },
             );
           }
         };
@@ -4406,6 +4935,16 @@ function Reader() {
             ...(current[item.workspaceId] ?? EMPTY_LIBRARY_PREVIEW_STATE),
             loading: false,
             error: '',
+            operation: createPaperTaskState(
+              'translation',
+              'success',
+              l(
+                `全文翻译完成，已生成 ${Object.keys(translations).length} 段译文`,
+                `Full translation complete. Generated ${Object.keys(translations).length} translated blocks`,
+              ),
+              blocksToTranslate.length,
+              blocksToTranslate.length,
+            ),
             hasBlocks: previewContext.blocks.length > 0,
             blockCount: previewContext.blocks.length,
             currentPdfName: previewContext.currentPdfName,
@@ -4433,20 +4972,24 @@ function Reader() {
             ...(current[item.workspaceId] ?? EMPTY_LIBRARY_PREVIEW_STATE),
             loading: false,
             error: message,
+            operation: createPaperTaskState('translation', 'error', message, 100, 100),
             statusMessage: message,
           },
         }));
       }
     },
     [
+      createPaperTaskState,
       l,
       loadLibraryPreviewBlocks,
       saveLibraryTranslationCache,
+      settings.modelRuntimeConfigs,
       settings.translationBatchSize,
       settings.translationConcurrency,
       settings.translationSourceLanguage,
       settings.translationTargetLanguage,
       translationModelPreset,
+      updateLibraryPreviewOperation,
     ],
   );
 
@@ -5531,6 +6074,10 @@ function Reader() {
           current.summaryModelPresetId === presetId
             ? fallbackPresetId
             : current.summaryModelPresetId,
+        agentModelPresetId:
+          current.agentModelPresetId === presetId
+            ? fallbackPresetId
+            : current.agentModelPresetId,
       };
     });
   }, [qaModelPresets]);
@@ -5950,6 +6497,7 @@ function Reader() {
                     blockCount={displayedLibraryPreviewState.blockCount}
                     statusMessage={displayedLibraryPreviewState.statusMessage}
                     summary={displayedLibraryPreviewState.summary}
+                    operation={displayedLibraryPreviewState.operation}
                     loading={displayedLibraryPreviewState.loading}
                     error={displayedLibraryPreviewState.error}
                     demoMode={selectedItemIsOnboardingWelcome}
@@ -5989,6 +6537,7 @@ function Reader() {
                 onRunMineruParse={handleNativeLibraryMineruParse}
                 onTranslatePaper={handleNativeLibraryTranslate}
                 onGenerateSummary={handleNativeLibraryGenerateSummary}
+                paperActionStates={nativePaperActionStates}
               />
             )}
           </div>

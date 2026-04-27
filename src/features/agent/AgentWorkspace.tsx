@@ -6,6 +6,7 @@ import {
   BrainCircuit,
   Check,
   CheckCircle2,
+  Clock3,
   Clipboard,
   Database,
   FileText,
@@ -15,7 +16,10 @@ import {
   MessageSquareText,
   Minus,
   Moon,
+  PanelLeftClose,
+  PanelLeftOpen,
   PlayCircle,
+  Plus,
   RefreshCw,
   RotateCcw,
   Search,
@@ -30,8 +34,8 @@ import {
 } from 'lucide-react';
 import {
   applyLibraryAgentPlan,
-  buildConversationalLibraryAgentPlan,
   loadLibraryAgentModelPreset,
+  runConversationalLibraryAgent,
   type LibraryAgentPlan,
 } from '../../services/libraryAgent';
 import { listLibraryPapers } from '../../services/library';
@@ -41,20 +45,23 @@ import { PlanDiffCard, ToolCallCard, TraceTimeline } from './AgentExecutionCards
 import {
   agentCapabilities,
   buildErrorTrace,
+  buildAgentHistorySession,
   buildPreviewToolCall,
-  buildRunningTrace,
   buildSuccessTrace,
   buildToolCallView,
   durationLabel,
   formatPaperMeta,
+  loadAgentHistorySessions,
+  newAgentSessionId,
   newMessageId,
   paperMatchesQuery,
   promptSuggestions,
+  saveAgentHistorySessions,
   toolFunctionName,
   toolLabel,
   uniqueTagNames,
 } from './AgentWorkspace.model';
-import type { AgentChatMessage, AgentToolCallView } from './AgentWorkspace.types';
+import type { AgentChatMessage, AgentHistorySession, AgentToolCallView } from './AgentWorkspace.types';
 
 interface AgentWorkspaceProps {
   onOpenPreferences?: () => void;
@@ -74,13 +81,16 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
   const [expandedStepKeys, setExpandedStepKeys] = useState<Set<string>>(() => new Set());
   const [expandedToolIds, setExpandedToolIds] = useState<Set<string>>(() => new Set());
   const [selectedInspectorItemId, setSelectedInspectorItemId] = useState<string | null>(null);
+  const [activeSessionId, setActiveSessionId] = useState(() => newAgentSessionId());
+  const [historySessions, setHistorySessions] = useState<AgentHistorySession[]>(() => loadAgentHistorySessions());
+  const [historySidebarCollapsed, setHistorySidebarCollapsed] = useState(false);
   const [messages, setMessages] = useState<AgentChatMessage[]>(() => [
     {
       id: newMessageId(),
       role: 'assistant',
       content:
-        '选择左侧文献后，直接用自然语言描述任务。我会自动选择工具，生成可审查执行链路和计划，只有在你确认后才会写入本地文库。',
-      meta: '支持重命名、元数据补全、智能标签、标签清洗、自动归类',
+        '选择左侧文献后，直接用自然语言提问或描述任务。普通问答会直接回答；需要修改文库时，我会调用工具生成可审查计划，只有确认后才写入本地文库。',
+      meta: '支持问答、重命名、元数据补全、智能标签、标签清洗、自动归类',
       createdAt: Date.now(),
       trace: [
         {
@@ -112,6 +122,10 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
     [approvedItemIds, plan],
   );
   const selectedTags = useMemo(() => uniqueTagNames(selectedPapers), [selectedPapers]);
+  const sortedHistorySessions = useMemo(
+    () => historySessions.slice().sort((left, right) => right.updatedAt - left.updatedAt),
+    [historySessions],
+  );
   const selectedInspectorItem =
     plan?.items.find((item) => item.id === selectedInspectorItemId) ?? plan?.items[0] ?? null;
 
@@ -152,30 +166,54 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
     });
   }, [messages, working]);
 
+  useEffect(() => {
+    const nextSession = buildAgentHistorySession({
+      id: activeSessionId,
+      messages,
+      selectedPaperIds: [...selectedPaperIds],
+      lastInstruction,
+    });
+
+    setHistorySessions((current) => {
+      const otherSessions = current.filter((session) => session.id !== activeSessionId);
+      return [nextSession, ...otherSessions].slice(0, 30);
+    });
+  }, [activeSessionId, lastInstruction, messages, selectedPaperIds]);
+
+  useEffect(() => {
+    saveAgentHistorySessions(historySessions);
+  }, [historySessions]);
+
   const updateMessage = (messageId: string, updater: (message: AgentChatMessage) => AgentChatMessage) => {
     setMessages((current) => current.map((message) => (message.id === messageId ? updater(message) : message)));
   };
 
   const togglePaper = (paperId: string) => {
+    const paper = papers.find((item) => item.id === paperId);
+
     setSelectedPaperIds((current) => {
       const next = new Set(current);
+      const selected = next.has(paperId);
 
-      if (next.has(paperId)) {
+      if (selected) {
         next.delete(paperId);
       } else {
         next.add(paperId);
       }
 
+      setStatusMessage(`${selected ? '已取消选择' : '已选择'}：${paper?.title ?? '论文'}`);
       return next;
     });
   };
 
   const selectAllVisible = () => {
     setSelectedPaperIds(new Set(filteredPapers.map((paper) => paper.id)));
+    setStatusMessage(`已选择当前结果中的 ${filteredPapers.length} 篇文献。`);
   };
 
   const clearSelection = () => {
     setSelectedPaperIds(new Set());
+    setStatusMessage('已清空当前选中的文献。');
   };
 
   const setNextPlan = (nextPlan: LibraryAgentPlan) => {
@@ -199,8 +237,14 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
   };
 
   const copyToolParameters = async (toolCall: AgentToolCallView) => {
-    await navigator.clipboard.writeText(JSON.stringify(toolCall.rawParameters, null, 2));
-    setStatusMessage('已复制工具参数。');
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(toolCall.rawParameters, null, 2));
+      setStatusMessage(`已复制 ${toolCall.functionName} 的工具参数。`);
+    } catch (nextError) {
+      const message = nextError instanceof Error ? nextError.message : '复制工具参数失败';
+      setError(message);
+      setStatusMessage(message);
+    }
   };
 
   const runAgent = async (rawInstruction: string) => {
@@ -233,14 +277,11 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
       {
         id: assistantMessageId,
         role: 'assistant',
-        content: '正在识别意图、选择工具并生成可审查计划。',
-        meta: 'Agent run started',
+        content: '正在判断这次请求是否需要调用工具...',
+        meta: 'Agent running',
         createdAt: Date.now(),
-        trace: buildRunningTrace(instruction, paperCount),
-        toolCall: buildPreviewToolCall(instruction, paperCount, 'running'),
       },
     ]);
-    setExpandedStepKeys((current) => new Set([...current, `${assistantMessageId}:intent`]));
     setComposerValue('');
     setWorking(true);
     setError('');
@@ -252,22 +293,42 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
       const preset = loadLibraryAgentModelPreset();
 
       if (!preset) {
-        throw new Error('请先在设置里配置问答/概览模型，Agent 会复用该 OpenAI-compatible 模型配置。');
+        throw new Error('请先在设置里配置 Agent 工具调用模型。');
       }
 
       setAgentPresetName(preset.label || preset.model);
       setStatusMessage(`正在调用大模型 Agent：${preset.label || preset.model}...`);
 
-      const nextPlan = await buildConversationalLibraryAgentPlan({
+      const result = await runConversationalLibraryAgent({
         papers: selectedPapers,
         instruction,
         preset,
       });
       const durationMs = Math.round(performance.now() - startedAt);
+
+      if (result.kind === 'answer') {
+        updateMessage(assistantMessageId, (message) => ({
+          ...message,
+          content: result.answer,
+          meta: `direct answer · ${durationLabel(durationMs)}`,
+          trace: undefined,
+          toolCall: undefined,
+          plan: undefined,
+        }));
+        setStatusMessage(`已直接回答，无需工具调用。${durationLabel(durationMs)}`);
+        return;
+      }
+
+      const nextPlan = result.plan;
       const nextToolCall = buildToolCallView(nextPlan, instruction, paperCount, durationMs);
 
       setNextPlan(nextPlan);
-      setExpandedStepKeys((current) => new Set([...current, `${assistantMessageId}:tool-call`, `${assistantMessageId}:tool-result`]));
+      setExpandedStepKeys((current) => new Set([
+        ...current,
+        `${assistantMessageId}:intent`,
+        `${assistantMessageId}:tool-call`,
+        `${assistantMessageId}:tool-result`,
+      ]));
 
       updateMessage(assistantMessageId, (message) => ({
         ...message,
@@ -350,15 +411,21 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
   };
 
   const togglePlanItem = (itemId: string) => {
+    const item = plan?.items.find((planItem) => planItem.id === itemId);
+
     setApprovedItemIds((current) => {
       const next = new Set(current);
+      const wasApproved = next.has(itemId);
 
-      if (next.has(itemId)) {
+      if (wasApproved) {
         next.delete(itemId);
       } else {
         next.add(itemId);
       }
 
+      setStatusMessage(
+        `${wasApproved ? '已取消勾选' : '已勾选'}：${item?.paperTitle ?? '计划项'}`,
+      );
       return next;
     });
   };
@@ -380,24 +447,169 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
   const toggleTool = (toolCallId: string) => {
     setExpandedToolIds((current) => {
       const next = new Set(current);
+      const expanded = next.has(toolCallId);
 
-      if (next.has(toolCallId)) {
+      if (expanded) {
         next.delete(toolCallId);
       } else {
         next.add(toolCallId);
       }
 
+      setStatusMessage(expanded ? '已收起工具调用详情。' : '已展开工具调用详情。');
       return next;
     });
   };
 
+  const handleOpenPreferences = () => {
+    setStatusMessage('正在打开设置，请在 AI 模型里检查 Agent 工具调用模型。');
+    onOpenPreferences?.();
+  };
+
+  const handleToggleThemeMode = () => {
+    const nextMode = themeMode === 'light' ? 'dark' : themeMode === 'dark' ? 'system' : 'light';
+    setThemeMode(nextMode);
+    setStatusMessage(
+      nextMode === 'light'
+        ? '已切换到浅色主题。'
+        : nextMode === 'dark'
+          ? '已切换到深色主题。'
+          : '已切换到跟随系统主题。',
+    );
+  };
+
+  const handleWindowMinimize = () => {
+    setStatusMessage('正在最小化窗口。');
+    void appWindow.minimize().catch((nextError) => {
+      const message = nextError instanceof Error ? nextError.message : '窗口最小化失败';
+      setError(message);
+      setStatusMessage(message);
+    });
+  };
+
+  const handleWindowToggleMaximize = () => {
+    setStatusMessage('正在切换窗口大小。');
+    void appWindow.toggleMaximize().catch((nextError) => {
+      const message = nextError instanceof Error ? nextError.message : '窗口缩放失败';
+      setError(message);
+      setStatusMessage(message);
+    });
+  };
+
+  const handleWindowClose = () => {
+    setStatusMessage('正在关闭窗口。');
+    void appWindow.close().catch((nextError) => {
+      const message = nextError instanceof Error ? nextError.message : '关闭窗口失败';
+      setError(message);
+      setStatusMessage(message);
+    });
+  };
+
+  const handleModifyPreviousParameters = () => {
+    const nextInstruction = `修改上一版参数：${lastInstruction || composerValue}`;
+    setComposerValue(nextInstruction);
+    setStatusMessage('已把修改参数指令放入输入框，请编辑后重新发送。');
+  };
+
+  const handlePreviewOnly = () => {
+    setStatusMessage('当前计划仅预览，未写入文库。你可以继续检查 diff 或取消勾选计划项。');
+  };
+
+  const handleRetryAgent = (instruction: string) => {
+    const nextInstruction = instruction.trim();
+
+    if (!nextInstruction) {
+      setStatusMessage('没有可重试的上一条指令。');
+      return;
+    }
+
+    setStatusMessage('正在重新生成 Agent 计划。');
+    void runAgent(nextInstruction);
+  };
+
+  const createWelcomeMessage = (): AgentChatMessage => ({
+    id: newMessageId(),
+    role: 'assistant',
+    content:
+      '选择左侧文献后，直接用自然语言提问或描述任务。普通问答会直接回答；需要修改文库时，我会调用工具生成可审查计划，只有确认后才写入本地文库。',
+    meta: '支持问答、重命名、元数据补全、智能标签、标签清洗、自动归类',
+    createdAt: Date.now(),
+    trace: [
+      {
+        id: 'welcome-intent',
+        type: 'intent',
+        title: '等待用户指令',
+        summary: '从左侧选择论文，然后输入要执行的任务。',
+        status: 'waiting',
+      },
+    ],
+  });
+
+  const handleNewAgentSession = () => {
+    setActiveSessionId(newAgentSessionId());
+    setMessages([createWelcomeMessage()]);
+    setPlan(null);
+    setApprovedItemIds(new Set());
+    setSelectedInspectorItemId(null);
+    setLastInstruction('');
+    setComposerValue('');
+    setError('');
+    setStatusMessage('已创建新的 Agent 对话。');
+  };
+
+  const handleOpenHistorySession = (session: AgentHistorySession) => {
+    setActiveSessionId(session.id);
+    setMessages(session.messages);
+    setSelectedPaperIds(new Set(session.selectedPaperIds));
+    setLastInstruction(session.lastInstruction);
+    setPlan(null);
+    setApprovedItemIds(new Set());
+    setSelectedInspectorItemId(null);
+    setComposerValue('');
+    setError('');
+    setStatusMessage(`已打开历史对话：${session.title}`);
+  };
+
+  const handleClearAgentHistory = () => {
+    const nextSessionId = newAgentSessionId();
+    const nextMessages = [createWelcomeMessage()];
+
+    setActiveSessionId(nextSessionId);
+    setMessages(nextMessages);
+    setPlan(null);
+    setApprovedItemIds(new Set());
+    setSelectedInspectorItemId(null);
+    setLastInstruction('');
+    setComposerValue('');
+    setHistorySessions([
+      buildAgentHistorySession({
+        id: nextSessionId,
+        messages: nextMessages,
+        selectedPaperIds: [...selectedPaperIds],
+        lastInstruction: '',
+      }),
+    ]);
+    setStatusMessage('已清空 Agent 历史记录。');
+  };
+
+  const formatHistoryTime = (timestamp: number) =>
+    new Intl.DateTimeFormat('zh-CN', {
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(timestamp);
+
   return (
-    <div className="h-full min-h-0 overflow-hidden bg-[#f6f8fb] text-slate-950 dark:bg-[#0f141b] dark:text-chrome-100">
-      <div className="flex h-full min-h-0 flex-col">
-        <header className="flex h-14 shrink-0 items-center justify-between border-b border-slate-200/80 bg-white/82 px-5 backdrop-blur-xl dark:border-white/10 dark:bg-[#121922]/88">
-          <div className="flex min-w-0 items-center gap-3">
-            <span className="flex h-9 w-9 items-center justify-center rounded-2xl bg-slate-950 text-white shadow-[0_12px_30px_rgba(15,23,42,0.20)] dark:bg-teal-300 dark:text-slate-950">
-              <Bot className="h-4.5 w-4.5" strokeWidth={2.2} />
+    <div className="relative h-full min-h-0 overflow-hidden bg-[linear-gradient(180deg,#eef2f8,#e7edf5)] text-slate-900 dark:bg-chrome-950 dark:text-chrome-100">
+      <div className="flex h-full min-h-0 flex-col rounded-[28px] border border-white/70 bg-white/55 shadow-[0_26px_70px_rgba(15,23,42,0.10)] backdrop-blur-xl dark:border-white/8 dark:bg-chrome-950 dark:shadow-none">
+        <header className="flex h-14 shrink-0 items-center justify-between border-b border-slate-200/80 bg-white/72 px-4 backdrop-blur-xl dark:border-white/10 dark:bg-chrome-950">
+          <div
+            className="flex min-w-0 items-center gap-3"
+            data-tauri-drag-region
+            onDoubleClick={handleWindowToggleMaximize}
+          >
+            <span className="flex h-9 w-9 items-center justify-center rounded-2xl bg-slate-950 text-white shadow-[0_10px_28px_rgba(15,23,42,0.16)] ring-1 ring-slate-200/80 dark:bg-teal-300 dark:text-slate-950 dark:shadow-[0_10px_28px_rgba(0,0,0,0.28)] dark:ring-white/10">
+              <Bot className="h-4 w-4" strokeWidth={2.2} />
             </span>
             <div className="min-w-0">
               <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-teal-600 dark:text-teal-300">
@@ -408,23 +620,211 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
               </div>
             </div>
           </div>
-          <div className="flex items-center gap-3">
+
+          <div
+            className="mx-4 min-w-8 flex-1 self-stretch"
+            data-tauri-drag-region
+            onDoubleClick={handleWindowToggleMaximize}
+          />
+
+          <div className="flex items-center gap-2">
             <div className="hidden rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-500 dark:border-white/10 dark:bg-chrome-900 dark:text-chrome-400 md:block">
-              {agentPresetName ? `Model · ${agentPresetName}` : 'Model · 使用设置中的问答/概览模型'}
+              {agentPresetName ? `Agent · ${agentPresetName}` : 'Agent · 使用设置中的 Agent 模型'}
             </div>
             <button
               type="button"
               onClick={() => void refreshPapers()}
               disabled={loading || working}
-              className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 disabled:opacity-60 dark:border-white/10 dark:bg-chrome-900 dark:text-chrome-200 dark:hover:bg-chrome-800"
+              className="inline-flex items-center rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition-all duration-200 hover:border-slate-300 hover:bg-slate-50 disabled:opacity-60 dark:border-chrome-700 dark:bg-chrome-800 dark:text-chrome-200 dark:hover:border-chrome-600 dark:hover:bg-chrome-700"
             >
-              <RefreshCw className={loading ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} strokeWidth={2} />
+              <RefreshCw className={loading ? 'mr-2 h-4 w-4 animate-spin' : 'mr-2 h-4 w-4'} strokeWidth={1.8} />
               刷新
             </button>
+            <button
+              type="button"
+              onClick={handleOpenPreferences}
+              className="inline-flex items-center rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition-all duration-200 hover:border-slate-300 hover:bg-slate-50 dark:border-chrome-700 dark:bg-chrome-800 dark:text-chrome-200 dark:hover:border-chrome-600 dark:hover:bg-chrome-700"
+              title="设置"
+            >
+              <Settings2 className="mr-2 h-4 w-4" strokeWidth={1.8} />
+              设置
+            </button>
+            <button
+              type="button"
+              onClick={handleToggleThemeMode}
+              className="inline-flex items-center rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition-all duration-200 hover:border-slate-300 hover:bg-slate-50 dark:border-chrome-700 dark:bg-chrome-800 dark:text-chrome-200 dark:hover:border-chrome-600 dark:hover:bg-chrome-700"
+              title="切换主题"
+            >
+              {themeMode === 'dark' ? (
+                <Moon className="mr-2 h-4 w-4" strokeWidth={1.8} />
+              ) : (
+                <Sun className="mr-2 h-4 w-4" strokeWidth={1.8} />
+              )}
+              {themeMode === 'light' ? '浅色' : themeMode === 'dark' ? '深色' : '自动'}
+            </button>
+            <div className="flex items-center rounded-xl border border-slate-200 bg-white p-1 dark:border-chrome-700 dark:bg-chrome-800">
+              <button
+                type="button"
+                onClick={handleWindowMinimize}
+                className="rounded-lg p-2 text-slate-500 transition-all duration-200 hover:bg-slate-100 hover:text-slate-700 dark:text-chrome-400 dark:hover:bg-chrome-700 dark:hover:text-chrome-200"
+                aria-label="最小化窗口"
+                title="最小化"
+              >
+                <Minus className="h-4 w-4" strokeWidth={1.9} />
+              </button>
+              <button
+                type="button"
+                onClick={handleWindowToggleMaximize}
+                className="rounded-lg p-2 text-slate-500 transition-all duration-200 hover:bg-slate-100 hover:text-slate-700 dark:text-chrome-400 dark:hover:bg-chrome-700 dark:hover:text-chrome-200"
+                aria-label="最大化或还原窗口"
+                title="最大化/还原"
+              >
+                <Square className="h-3.5 w-3.5" strokeWidth={1.9} />
+              </button>
+              <button
+                type="button"
+                onClick={handleWindowClose}
+                className="rounded-lg p-2 text-slate-500 transition-all duration-200 hover:bg-rose-50 hover:text-rose-600 dark:text-chrome-400 dark:hover:bg-rose-400/10 dark:hover:text-rose-400"
+                aria-label="关闭窗口"
+                title="关闭"
+              >
+                <X className="h-4 w-4" strokeWidth={1.9} />
+              </button>
+            </div>
           </div>
         </header>
 
-        <main className="grid min-h-0 flex-1 overflow-hidden xl:grid-cols-[350px_minmax(0,1fr)_420px]">
+        <main
+          className="grid min-h-0 flex-1 overflow-hidden"
+          style={{
+            gridTemplateColumns: historySidebarCollapsed
+              ? '76px 350px minmax(0,1fr) 420px'
+              : '280px 350px minmax(0,1fr) 420px',
+          }}
+        >
+          <aside className="min-h-0 border-r border-slate-200/80 bg-white/64 backdrop-blur-xl dark:border-white/10 dark:bg-[#101720]/86">
+            {historySidebarCollapsed ? (
+              <div className="flex h-full min-h-0 flex-col items-center gap-3 px-2 py-4">
+                <button
+                  type="button"
+                  onClick={() => setHistorySidebarCollapsed(false)}
+                  className="rounded-xl border border-slate-200 bg-white p-2 text-slate-600 transition hover:bg-slate-50 dark:border-white/10 dark:bg-chrome-900 dark:text-chrome-300"
+                  title="展开历史记录"
+                >
+                  <PanelLeftOpen className="h-4 w-4" strokeWidth={1.8} />
+                </button>
+                <button
+                  type="button"
+                  onClick={handleNewAgentSession}
+                  className="rounded-xl bg-slate-950 p-2 text-white transition hover:bg-slate-800 dark:bg-teal-300 dark:text-slate-950"
+                  title="新建对话"
+                >
+                  <Plus className="h-4 w-4" strokeWidth={2} />
+                </button>
+                <div className="mt-1 flex min-h-0 flex-1 flex-col items-center gap-2 overflow-y-auto">
+                  {sortedHistorySessions.slice(0, 12).map((session) => (
+                    <button
+                      key={session.id}
+                      type="button"
+                      onClick={() => handleOpenHistorySession(session)}
+                      className={[
+                        'h-2.5 w-2.5 rounded-full transition',
+                        session.id === activeSessionId
+                          ? 'bg-teal-500 shadow-[0_0_0_4px_rgba(20,184,166,0.14)]'
+                          : session.status === 'error'
+                            ? 'bg-rose-400 hover:bg-rose-500'
+                            : 'bg-slate-300 hover:bg-slate-400 dark:bg-chrome-600 dark:hover:bg-chrome-500',
+                      ].join(' ')}
+                      title={session.title}
+                    />
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="flex h-full min-h-0 flex-col">
+                <div className="border-b border-slate-200/70 p-4 dark:border-white/10">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 text-sm font-black text-slate-950 dark:text-white">
+                        <Clock3 className="h-4 w-4 text-teal-600 dark:text-teal-300" strokeWidth={2} />
+                        历史记录
+                      </div>
+                      <div className="mt-1 truncate text-xs text-slate-500 dark:text-chrome-400">
+                        {sortedHistorySessions.length} 个 Agent 对话
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setHistorySidebarCollapsed(true)}
+                      className="rounded-xl border border-slate-200 bg-white p-2 text-slate-600 transition hover:bg-slate-50 dark:border-white/10 dark:bg-chrome-900 dark:text-chrome-300"
+                      title="折叠历史记录"
+                    >
+                      <PanelLeftClose className="h-4 w-4" strokeWidth={1.8} />
+                    </button>
+                  </div>
+                  <div className="mt-4 grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={handleNewAgentSession}
+                      className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-950 px-3 py-2 text-xs font-black text-white transition hover:bg-slate-800 dark:bg-teal-300 dark:text-slate-950 dark:hover:bg-teal-200"
+                    >
+                      <Plus className="h-3.5 w-3.5" strokeWidth={2} />
+                      新对话
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleClearAgentHistory}
+                      className="rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 transition hover:bg-slate-50 dark:border-white/10 dark:bg-chrome-900 dark:text-chrome-300"
+                    >
+                      清空
+                    </button>
+                  </div>
+                </div>
+
+                <div className="min-h-0 flex-1 overflow-y-auto p-3">
+                  <div className="space-y-2">
+                    {sortedHistorySessions.map((session) => (
+                      <button
+                        key={session.id}
+                        type="button"
+                        onClick={() => handleOpenHistorySession(session)}
+                        className={[
+                          'w-full rounded-[22px] border p-3 text-left transition',
+                          session.id === activeSessionId
+                            ? 'border-teal-300 bg-teal-50 shadow-[0_14px_35px_rgba(20,184,166,0.12)] dark:border-teal-300/30 dark:bg-teal-300/10'
+                            : 'border-transparent bg-white/70 hover:border-slate-200 hover:bg-white dark:bg-chrome-900/54 dark:hover:border-white/10 dark:hover:bg-chrome-900',
+                        ].join(' ')}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="truncate text-sm font-black text-slate-950 dark:text-white">
+                            {session.title}
+                          </span>
+                          <span
+                            className={[
+                              'h-2 w-2 shrink-0 rounded-full',
+                              session.status === 'error'
+                                ? 'bg-rose-400'
+                                : session.status === 'running'
+                                  ? 'bg-amber-400'
+                                  : 'bg-teal-400',
+                            ].join(' ')}
+                          />
+                        </div>
+                        <div className="mt-2 line-clamp-2 text-xs leading-5 text-slate-500 dark:text-chrome-400">
+                          {session.summary}
+                        </div>
+                        <div className="mt-3 flex items-center justify-between text-[11px] font-semibold text-slate-400 dark:text-chrome-500">
+                          <span>{formatHistoryTime(session.updatedAt)}</span>
+                          <span>{session.selectedPaperIds.length} papers</span>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+          </aside>
+
           <aside className="min-h-0 border-r border-slate-200/80 bg-white/70 backdrop-blur-xl dark:border-white/10 dark:bg-[#121922]/74">
             <div className="flex h-full min-h-0 flex-col">
               <div className="border-b border-slate-200/70 p-4 dark:border-white/10">
@@ -688,7 +1088,7 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
                               expanded={expandedToolIds.has(toolCall.id)}
                               onToggle={() => toggleTool(toolCall.id)}
                               onCopyParameters={() => void copyToolParameters(toolCall)}
-                              onRetry={() => void runAgent(lastInstruction || composerValue)}
+                              onRetry={() => handleRetryAgent(lastInstruction || composerValue)}
                             />
                           </div>
                         ) : null}
@@ -721,7 +1121,10 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
                                       setStatusMessage('这是历史计划，只能查看，不能修改审批状态。');
                                     }
                                   }}
-                                  onInspect={() => setSelectedInspectorItemId(item.id)}
+                                  onInspect={() => {
+                                    setSelectedInspectorItemId(item.id);
+                                    setStatusMessage(`正在查看计划项：${item.paperTitle}`);
+                                  }}
                                 />
                               ))}
                             </div>
@@ -741,7 +1144,7 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
                             </button>
                             <button
                               type="button"
-                              onClick={() => setComposerValue(`修改上一版参数：${lastInstruction}`)}
+                              onClick={handleModifyPreviousParameters}
                               className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 transition hover:bg-slate-50 dark:border-white/10 dark:bg-chrome-900 dark:text-chrome-200"
                             >
                               <Clipboard className="h-4 w-4" />
@@ -749,7 +1152,7 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
                             </button>
                             <button
                               type="button"
-                              onClick={() => setStatusMessage('当前计划仅预览，未写入文库。')}
+                              onClick={handlePreviewOnly}
                               className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 transition hover:bg-slate-50 dark:border-white/10 dark:bg-chrome-900 dark:text-chrome-200"
                             >
                               <FileText className="h-4 w-4" />
@@ -766,7 +1169,7 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
                             </button>
                             <button
                               type="button"
-                              onClick={() => void runAgent(lastInstruction)}
+                              onClick={() => handleRetryAgent(lastInstruction)}
                               disabled={!lastInstruction || working}
                               className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50 dark:border-white/10 dark:bg-chrome-900 dark:text-chrome-200"
                             >
@@ -789,7 +1192,10 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
                     <button
                       key={suggestion}
                       type="button"
-                      onClick={() => setComposerValue(suggestion)}
+                      onClick={() => {
+                        setComposerValue(suggestion);
+                        setStatusMessage('已填入示例指令，可直接发送或继续编辑。');
+                      }}
                       className="rounded-full border border-slate-200 bg-white/82 px-3 py-1.5 text-xs font-bold text-slate-600 transition hover:border-teal-200 hover:bg-teal-50 hover:text-teal-700 dark:border-white/10 dark:bg-chrome-900/70 dark:text-chrome-300 dark:hover:border-teal-300/30 dark:hover:bg-teal-300/10 dark:hover:text-teal-200"
                     >
                       {suggestion}
@@ -920,7 +1326,10 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
                             item={item}
                             approved={approvedItemIds.has(item.id)}
                             onToggle={() => togglePlanItem(item.id)}
-                            onInspect={() => setSelectedInspectorItemId(item.id)}
+                            onInspect={() => {
+                              setSelectedInspectorItemId(item.id);
+                              setStatusMessage(`正在查看计划项：${item.paperTitle}`);
+                            }}
                           />
                         ))}
                       </section>

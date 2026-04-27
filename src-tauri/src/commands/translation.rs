@@ -21,6 +21,8 @@ pub struct OpenAICompatibleTranslateOptions {
     base_url: String,
     api_key: String,
     model: String,
+    temperature: Option<f32>,
+    reasoning_effort: Option<String>,
     source_language: String,
     target_language: String,
     blocks: Vec<TranslateBlockInput>,
@@ -74,6 +76,24 @@ fn build_chat_completions_url(base_url: &str) -> String {
     }
 
     format!("{}/v1/chat/completions", trimmed)
+}
+
+fn model_temperature(value: Option<f32>, fallback: f32) -> f32 {
+    value.unwrap_or(fallback).clamp(0.0, 2.0)
+}
+
+fn apply_reasoning_effort(body: &mut Value, reasoning_effort: Option<&str>) {
+    let Some(reasoning_effort) = reasoning_effort.map(str::trim) else {
+        return;
+    };
+
+    if reasoning_effort.is_empty() || reasoning_effort == "auto" {
+        return;
+    }
+
+    if let Some(object) = body.as_object_mut() {
+        object.insert("reasoning_effort".to_string(), json!(reasoning_effort));
+    }
 }
 
 fn strip_json_fences(content: &str) -> String {
@@ -320,6 +340,8 @@ async fn translate_batch(
     model: &str,
     source_language: &str,
     target_language: &str,
+    temperature: Option<f32>,
+    reasoning_effort: Option<&str>,
     blocks: &[TranslateBlockInput],
 ) -> Result<BatchTranslationOutcome, String> {
     let payload_blocks = blocks
@@ -341,9 +363,9 @@ async fn translate_batch(
     "blocks": payload_blocks
   })
   .to_string();
-    let body = json!({
+    let mut body = json!({
       "model": model,
-      "temperature": 0.2,
+      "temperature": model_temperature(temperature, 0.2),
       "messages": [
         {
           "role": "system",
@@ -355,6 +377,7 @@ async fn translate_batch(
         }
       ]
     });
+    apply_reasoning_effort(&mut body, reasoning_effort);
 
     let response = client
         .post(endpoint)
@@ -429,11 +452,13 @@ async fn translate_single_block_plaintext(
     model: &str,
     source_language: &str,
     target_language: &str,
+    temperature: Option<f32>,
+    reasoning_effort: Option<&str>,
     block: &TranslateBlockInput,
 ) -> Result<TranslateBlockOutput, String> {
-    let body = json!({
+    let mut body = json!({
       "model": model,
-      "temperature": 0.1,
+      "temperature": model_temperature(temperature, 0.1),
       "messages": [
         {
           "role": "system",
@@ -453,6 +478,7 @@ async fn translate_single_block_plaintext(
         }
       ]
     });
+    apply_reasoning_effort(&mut body, reasoning_effort);
 
     let content = request_translation_content(client, endpoint, api_key, body).await?;
     let translated_text = clean_plaintext_translation(&content);
@@ -477,6 +503,8 @@ pub async fn translate_blocks_openai_compatible(
     let base_url = options.base_url.trim();
     let api_key = options.api_key.trim();
     let model = options.model.trim();
+    let temperature = options.temperature;
+    let reasoning_effort = options.reasoning_effort.clone();
     let source_language = options.source_language.trim();
     let target_language = options.target_language.trim();
     let blocks = options
@@ -528,6 +556,8 @@ pub async fn translate_blocks_openai_compatible(
             let task_endpoint = endpoint.clone();
             let task_api_key = api_key.to_string();
             let task_model = model.to_string();
+            let task_temperature = temperature;
+            let task_reasoning_effort = reasoning_effort.clone();
             let task_source_language = source_language.to_string();
             let task_target_language = target_language.to_string();
 
@@ -539,6 +569,8 @@ pub async fn translate_blocks_openai_compatible(
                     &task_model,
                     &task_source_language,
                     &task_target_language,
+                    task_temperature,
+                    task_reasoning_effort.as_deref(),
                     &batch,
                 )
                 .await;
@@ -569,6 +601,8 @@ pub async fn translate_blocks_openai_compatible(
                         model,
                         source_language,
                         target_language,
+                        temperature,
+                        reasoning_effort.as_deref(),
                         &batch[0],
                     )
                     .await?;
@@ -594,6 +628,8 @@ pub async fn translate_blocks_openai_compatible(
                         model,
                         source_language,
                         target_language,
+                        temperature,
+                        reasoning_effort.as_deref(),
                         &batch[0],
                     )
                     .await
@@ -644,6 +680,8 @@ pub async fn translate_blocks_openai_compatible(
             model,
             source_language,
             target_language,
+            temperature,
+            reasoning_effort.as_deref(),
             block,
         )
         .await?;

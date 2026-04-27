@@ -14,6 +14,8 @@ import type {
 } from '../types/library';
 import type { MetadataLookupResult } from '../types/metadata';
 import type {
+  ModelRuntimeConfig,
+  ModelReasoningEffort,
   QaModelPreset,
   ReaderSecrets,
   ReaderSettings,
@@ -80,10 +82,17 @@ interface OpenAICompatibleLibraryAgentOptions {
   baseUrl: string;
   apiKey: string;
   model: string;
+  temperature?: number;
+  reasoningEffort?: ModelReasoningEffort;
   tool: LibraryAgentToolChoice;
   instruction?: string | null;
   papers: LibraryAgentPaperInput[];
 }
+
+type LibraryAgentModelPreset = QaModelPreset & {
+  temperature?: number;
+  reasoningEffort?: ModelReasoningEffort;
+};
 
 interface LibraryAgentPaperUpdate {
   title?: string | null;
@@ -113,6 +122,16 @@ interface LibraryAgentGeneratedPlan {
   summary: string;
   items: LibraryAgentGeneratedItem[];
 }
+
+interface LibraryAgentGeneratedResponse {
+  kind: 'answer' | 'plan';
+  answer?: string | null;
+  plan?: LibraryAgentGeneratedPlan | null;
+}
+
+export type LibraryAgentRunResult =
+  | { kind: 'answer'; answer: string }
+  | { kind: 'plan'; plan: LibraryAgentPlan };
 
 const SETTINGS_STORAGE_KEY = 'paper-reader-settings-v3';
 const SECRETS_STORAGE_KEY = 'paper-reader-secrets-v1';
@@ -243,17 +262,46 @@ function readStorageJson<T>(key: string): Partial<T> {
   }
 }
 
-export function loadLibraryAgentModelPreset(): QaModelPreset | null {
+function normalizeAgentRuntimeConfig(settings: Partial<ReaderSettings>): ModelRuntimeConfig {
+  const config = settings.modelRuntimeConfigs?.agent ?? {};
+  const temperature =
+    typeof config.temperature === 'number' && Number.isFinite(config.temperature)
+      ? Math.min(2, Math.max(0, config.temperature))
+      : undefined;
+  const reasoningEffort =
+    config.reasoningEffort === 'low' ||
+    config.reasoningEffort === 'medium' ||
+    config.reasoningEffort === 'high'
+      ? config.reasoningEffort
+      : 'auto';
+
+  return { temperature, reasoningEffort };
+}
+
+export function loadLibraryAgentModelPreset(): LibraryAgentModelPreset | null {
   const settings = readStorageJson<ReaderSettings>(SETTINGS_STORAGE_KEY);
   const secrets = readStorageJson<ReaderSecrets>(SECRETS_STORAGE_KEY);
   const presets = Array.isArray(secrets.qaModelPresets) ? secrets.qaModelPresets : [];
   const preferredId =
+    settings.agentModelPresetId ||
     settings.qaActivePresetId ||
     settings.summaryModelPresetId ||
     settings.translationModelPresetId ||
     presets[0]?.id;
 
-  return presets.find((preset) => preset.id === preferredId) ?? presets[0] ?? null;
+  const preset = presets.find((item) => item.id === preferredId) ?? presets[0] ?? null;
+
+  if (!preset) {
+    return null;
+  }
+
+  const runtimeConfig = normalizeAgentRuntimeConfig(settings);
+
+  return {
+    ...preset,
+    temperature: runtimeConfig.temperature,
+    reasoningEffort: runtimeConfig.reasoningEffort,
+  };
 }
 
 function normalizeComparable(value: string): string {
@@ -478,9 +526,9 @@ function convertGeneratedAgentPlan(
 
 async function generateLibraryAgentPlanOpenAICompatible(
   options: OpenAICompatibleLibraryAgentOptions,
-): Promise<LibraryAgentGeneratedPlan> {
+): Promise<LibraryAgentGeneratedResponse> {
   try {
-    return await invoke<LibraryAgentGeneratedPlan>('generate_library_agent_plan_openai_compatible', {
+    return await invoke<LibraryAgentGeneratedResponse>('generate_library_agent_plan_openai_compatible', {
       options,
     });
   } catch (error) {
@@ -497,33 +545,40 @@ export async function buildToolUseLibraryAgentPlan({
   tool: LibraryAgentTool;
   papers: LiteraturePaper[];
   instruction?: string;
-  preset: QaModelPreset;
+  preset: LibraryAgentModelPreset;
 }): Promise<LibraryAgentPlan> {
   if (!preset.baseUrl.trim() || !preset.apiKey.trim() || !preset.model.trim()) {
     throw new Error('请先在设置里配置支持 tool/function calling 的 OpenAI-compatible 模型。');
   }
 
-  const generatedPlan = await generateLibraryAgentPlanOpenAICompatible({
+  const generatedResponse = await generateLibraryAgentPlanOpenAICompatible({
     baseUrl: preset.baseUrl,
     apiKey: preset.apiKey.trim(),
     model: preset.model,
+    temperature: preset.temperature,
+    reasoningEffort: preset.reasoningEffort,
     tool,
     instruction,
     papers: papers.map(paperToAgentInput),
   });
+  const generatedPlan = generatedResponse.plan;
+
+  if (!generatedPlan) {
+    throw new Error('模型没有返回可审查的工具计划。');
+  }
 
   return convertGeneratedAgentPlan(tool, papers, generatedPlan);
 }
 
-export async function buildConversationalLibraryAgentPlan({
+export async function runConversationalLibraryAgent({
   papers,
   instruction,
   preset,
 }: {
   papers: LiteraturePaper[];
   instruction: string;
-  preset: QaModelPreset;
-}): Promise<LibraryAgentPlan> {
+  preset: LibraryAgentModelPreset;
+}): Promise<LibraryAgentRunResult> {
   if (!preset.baseUrl.trim() || !preset.apiKey.trim() || !preset.model.trim()) {
     throw new Error('请先在设置里配置支持 tool/function calling 的 OpenAI-compatible 模型。');
   }
@@ -534,16 +589,32 @@ export async function buildConversationalLibraryAgentPlan({
     throw new Error('请输入要让 Agent 执行的文库整理指令。');
   }
 
-  const generatedPlan = await generateLibraryAgentPlanOpenAICompatible({
+  const generatedResponse = await generateLibraryAgentPlanOpenAICompatible({
     baseUrl: preset.baseUrl,
     apiKey: preset.apiKey.trim(),
     model: preset.model,
+    temperature: preset.temperature,
+    reasoningEffort: preset.reasoningEffort,
     tool: 'auto',
     instruction: normalizedInstruction,
     papers: papers.map(paperToAgentInput),
   });
 
-  return convertGeneratedAgentPlan(generatedPlan.tool ?? 'classify', papers, generatedPlan);
+  if (generatedResponse.kind === 'answer') {
+    return {
+      kind: 'answer',
+      answer: generatedResponse.answer?.trim() || '模型没有返回有效回答。',
+    };
+  }
+
+  if (!generatedResponse.plan) {
+    throw new Error('模型没有返回可审查的工具计划。');
+  }
+
+  return {
+    kind: 'plan',
+    plan: convertGeneratedAgentPlan(generatedResponse.plan.tool ?? 'classify', papers, generatedResponse.plan),
+  };
 }
 
 function metadataUpdateForPaper(

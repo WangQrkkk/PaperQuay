@@ -25,6 +25,8 @@ pub struct OpenAICompatibleLibraryAgentOptions {
     base_url: String,
     api_key: String,
     model: String,
+    temperature: Option<f32>,
+    reasoning_effort: Option<String>,
     tool: String,
     instruction: Option<String>,
     papers: Vec<LibraryAgentPaperInput>,
@@ -63,6 +65,14 @@ pub struct LibraryAgentGeneratedPlan {
     tool: String,
     summary: String,
     items: Vec<LibraryAgentGeneratedItem>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LibraryAgentGeneratedResponse {
+    kind: String,
+    answer: Option<String>,
+    plan: Option<LibraryAgentGeneratedPlan>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -118,6 +128,24 @@ fn truncate_for_display(value: &str, max_chars: usize) -> String {
     }
 }
 
+fn model_temperature(value: Option<f32>, fallback: f32) -> f32 {
+    value.unwrap_or(fallback).clamp(0.0, 2.0)
+}
+
+fn apply_reasoning_effort(body: &mut Value, reasoning_effort: Option<&str>) {
+    let Some(reasoning_effort) = reasoning_effort.map(str::trim) else {
+        return;
+    };
+
+    if reasoning_effort.is_empty() || reasoning_effort == "auto" {
+        return;
+    }
+
+    if let Some(object) = body.as_object_mut() {
+        object.insert("reasoning_effort".to_string(), json!(reasoning_effort));
+    }
+}
+
 fn extract_message_text(content: Option<Value>) -> Option<String> {
     match content? {
         Value::String(text) => Some(text),
@@ -149,9 +177,14 @@ fn extract_message_text(content: Option<Value>) -> Option<String> {
 
 fn build_agent_prompt(tool: &str, instruction: Option<&str>, papers_json: &str) -> String {
     let tool_mode = if tool == "auto" {
-        "Auto select the single best function tool from the available tools."
+        "Auto decide whether the request needs a library-editing tool. If it does, select the single best function tool. If it is only a question, explanation, comparison, or reading-assistant request, answer directly without calling any tool."
     } else {
         "A preferred tool is provided. Use that function unless the user instruction clearly requires a safer matching tool."
+    };
+    let response_rule = if tool == "auto" {
+        "Use a function tool only when the user asks to change, organize, rename, tag, classify, or update library records. For ordinary Q&A that does not require a local library change, answer directly in Simplified Chinese and do not call tools."
+    } else {
+        "Use tool/function calling. Do not answer with plain text unless tool calling is unavailable."
     };
 
     format!(
@@ -159,7 +192,7 @@ fn build_agent_prompt(tool: &str, instruction: Option<&str>, papers_json: &str) 
 Preferred tool: {tool}
 User instruction: {instruction}
 
-You are the PaperQuay literature-library agent. Select and call exactly one provided function tool.
+You are the PaperQuay literature-library agent. Decide whether this request needs a local library action or only a direct answer.
 
 Available tools:
 - rename_papers: add, remove, replace, normalize, or rewrite paper titles.
@@ -169,7 +202,7 @@ Available tools:
 - classify_papers: create dynamic Collections and assign selected papers to them.
 
 Rules:
-1. Use tool/function calling. Do not answer with plain text unless tool calling is unavailable.
+1. {response_rule}
 2. Do not execute anything. You only propose tool arguments. The app will show your tool call to the user for approval.
 3. Use the exact paper ids from the input.
 4. For rename, call rename_papers and set newTitle according to the user instruction.
@@ -184,6 +217,7 @@ Input papers:
 "#,
         tool_mode = tool_mode,
         tool = tool,
+        response_rule = response_rule,
         instruction = instruction.unwrap_or(""),
         papers_json = papers_json
     )
@@ -524,7 +558,7 @@ fn parse_tool_call_plan(
 #[tauri::command]
 pub async fn generate_library_agent_plan_openai_compatible(
     options: OpenAICompatibleLibraryAgentOptions,
-) -> Result<LibraryAgentGeneratedPlan, String> {
+) -> Result<LibraryAgentGeneratedResponse, String> {
     let base_url = options.base_url.trim();
     let api_key = options.api_key.trim();
     let model = options.model.trim();
@@ -572,15 +606,15 @@ pub async fn generate_library_agent_plan_openai_compatible(
         }),
         None => json!("auto"),
     };
-    let body = json!({
+    let mut body = json!({
       "model": model,
-      "temperature": 0.1,
+      "temperature": model_temperature(options.temperature, 0.1),
       "tools": build_agent_tools(),
       "tool_choice": tool_choice,
       "messages": [
         {
           "role": "system",
-          "content": "You are a precise tool-use agent for a desktop literature manager. Use the provided function tools to produce reviewable actions. Never claim that actions were executed."
+          "content": "You are a precise literature-library agent for a desktop literature manager. Use function tools only for reviewable local library actions. For ordinary questions that do not require changing library records, answer directly. Never claim that actions were executed."
         },
         {
           "role": "user",
@@ -588,6 +622,7 @@ pub async fn generate_library_agent_plan_openai_compatible(
         }
       ]
     });
+    apply_reasoning_effort(&mut body, options.reasoning_effort.as_deref());
 
     let response = client
         .post(endpoint)
@@ -629,17 +664,27 @@ pub async fn generate_library_agent_plan_openai_compatible(
         return Err(format!("Agent 模型拒绝执行: {}", refusal));
     }
 
-    let tool_calls = message
-        .tool_calls
-        .as_ref()
-        .filter(|items| !items.is_empty())
-        .ok_or_else(|| {
-            let content = extract_message_text(message.content.clone()).unwrap_or_default();
-            format!(
-                "Agent 模型没有返回 tool call。请确认当前模型支持 OpenAI-compatible tools/function calling。模型文本响应: {}",
-                truncate_for_display(content.trim(), 700)
-            )
-        })?;
+    let tool_calls = message.tool_calls.as_ref().filter(|items| !items.is_empty());
+
+    if tool_calls.is_none() {
+        let content = extract_message_text(message.content.clone()).unwrap_or_default();
+        let answer = content.trim();
+
+        if tool == "auto" && !answer.is_empty() {
+            return Ok(LibraryAgentGeneratedResponse {
+                kind: "answer".to_string(),
+                answer: Some(answer.to_string()),
+                plan: None,
+            });
+        }
+
+        return Err(format!(
+            "Agent 模型没有返回 tool call。请确认当前模型支持 OpenAI-compatible tools/function calling。模型文本响应: {}",
+            truncate_for_display(answer, 700)
+        ));
+    }
+
+    let tool_calls = tool_calls.unwrap();
     let selected_tool_call = if let Some(tool_name) = forced_tool_name {
         tool_calls
             .iter()
@@ -649,11 +694,17 @@ pub async fn generate_library_agent_plan_openai_compatible(
         &tool_calls[0]
     };
 
-    parse_tool_call_plan(
+    let plan = parse_tool_call_plan(
         selected_tool_call,
         &format!(
             "模型调用工具 {} 生成了文库整理计划",
             selected_tool_call.function.name
         ),
-    )
+    )?;
+
+    Ok(LibraryAgentGeneratedResponse {
+        kind: "plan".to_string(),
+        answer: None,
+        plan: Some(plan),
+    })
 }

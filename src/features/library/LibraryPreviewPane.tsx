@@ -1,6 +1,7 @@
-import { BookOpenText, FileJson, FileText, Languages, Sparkles } from 'lucide-react';
+import { BookOpenText, FileJson, FileText, Languages, Loader2, Sparkles } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useLocaleText } from '../../i18n/uiLanguage';
+import type { LiteraturePaperTaskState } from '../../types/library';
 import type { PaperSummary, WorkspaceItem } from '../../types/reader';
 import { SectionCard, SummaryPanel } from '../reader/AssistantSidebar';
 
@@ -39,6 +40,7 @@ interface LibraryPreviewPaneProps {
   blockCount: number;
   statusMessage: string;
   summary: PaperSummary | null;
+  operation?: LiteraturePaperTaskState | null;
   loading: boolean;
   error: string;
   aiConfigured: boolean;
@@ -58,6 +60,7 @@ function LibraryPreviewPane({
   blockCount,
   statusMessage,
   summary,
+  operation,
   loading,
   error,
   aiConfigured,
@@ -71,6 +74,17 @@ function LibraryPreviewPane({
   const l = useLocaleText();
   const actionButtonClassName =
     'inline-flex items-center rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition-all duration-200 hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-white/10 dark:bg-chrome-800 dark:text-chrome-200 dark:hover:border-white/15 dark:hover:bg-chrome-700';
+
+  const progressTotal = typeof operation?.total === 'number' ? operation.total : 0;
+  const progressCompleted = typeof operation?.completed === 'number' ? operation.completed : 0;
+  const hasProgress = progressTotal > 0;
+  const progressRatio = hasProgress
+    ? Math.min(100, Math.max(0, (progressCompleted / progressTotal) * 100))
+    : operation?.status === 'success'
+      ? 100
+      : operation?.status === 'error'
+        ? 100
+        : 42;
 
   if (!selectedItem) {
     return (
@@ -199,6 +213,45 @@ function LibraryPreviewPane({
               <div className="rounded-[20px] border border-slate-200/80 bg-white px-4 py-4 text-sm leading-7 text-slate-600 dark:border-chrome-700/80 dark:bg-chrome-800 dark:text-chrome-200">
                 {statusMessage || l('当前还没有可显示的预览状态。', 'No preview status is available yet.')}
               </div>
+
+              {operation ? (
+                <div className="rounded-[20px] border border-teal-200/80 bg-teal-50/80 px-4 py-4 dark:border-teal-300/20 dark:bg-teal-300/10">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-sm font-semibold text-teal-900 dark:text-teal-100">
+                        {operation.label}
+                      </div>
+                      <div className="mt-1 text-xs leading-5 text-teal-700/80 dark:text-teal-100/72">
+                        {operation.message}
+                      </div>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2">
+                      {operation.status === 'running' ? (
+                        <Loader2 className="h-4 w-4 animate-spin text-teal-600 dark:text-teal-100" strokeWidth={2} />
+                      ) : null}
+                      {hasProgress ? (
+                        <div className="rounded-full bg-white/80 px-2.5 py-1 text-xs font-semibold text-teal-700 dark:bg-white/10 dark:text-teal-100">
+                          {progressCompleted}/{progressTotal}
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                  <div className="mt-3 h-2 overflow-hidden rounded-full bg-teal-900/10 dark:bg-white/10">
+                    <div
+                      className={[
+                        'h-full rounded-full transition-all duration-300',
+                        operation.status === 'error'
+                          ? 'bg-rose-500'
+                          : operation.status === 'success'
+                            ? 'bg-emerald-500'
+                            : 'bg-teal-500',
+                        operation.status === 'running' && !hasProgress ? 'animate-pulse' : '',
+                      ].join(' ')}
+                      style={{ width: `${progressRatio}%` }}
+                    />
+                  </div>
+                </div>
+              ) : null}
             </SectionCard>
           </div>
 

@@ -96,6 +96,8 @@ export interface OpenAICompatibleTranslateOptions {
   baseUrl: string;
   apiKey: string;
   model: string;
+  temperature?: number;
+  reasoningEffort?: ModelReasoningEffort;
   sourceLanguage: string;
   targetLanguage: string;
   blocks: TranslationBlockInput[];
@@ -125,6 +127,20 @@ export interface QaModelPreset {
   apiKey: string;
   model: string;
   labelCustomized?: boolean;
+}
+
+export type ModelReasoningEffort = 'auto' | 'low' | 'medium' | 'high';
+
+export type ModelRuntimeRole =
+  | 'translation'
+  | 'selectionTranslation'
+  | 'summary'
+  | 'agent'
+  | 'qa';
+
+export interface ModelRuntimeConfig {
+  temperature?: number;
+  reasoningEffort?: ModelReasoningEffort;
 }
 
 export interface PaperSummarySection {
@@ -247,6 +263,8 @@ export interface OpenAICompatibleSummaryOptions {
   baseUrl: string;
   apiKey: string;
   model: string;
+  temperature?: number;
+  reasoningEffort?: ModelReasoningEffort;
   title: string;
   authors?: string;
   year?: string;
@@ -259,6 +277,8 @@ export interface OpenAICompatibleQaOptions {
   baseUrl: string;
   apiKey: string;
   model: string;
+  temperature?: number;
+  reasoningEffort?: ModelReasoningEffort;
   title: string;
   authors?: string;
   year?: string;
@@ -334,6 +354,8 @@ export interface ReaderSettings {
   translationModelPresetId: string;
   selectionTranslationModelPresetId: string;
   summaryModelPresetId: string;
+  agentModelPresetId: string;
+  modelRuntimeConfigs: Partial<Record<ModelRuntimeRole, ModelRuntimeConfig>>;
   summarySourceMode: SummarySourceMode;
   summaryOutputLanguage: string;
   qaSourceMode: QaSourceMode;
