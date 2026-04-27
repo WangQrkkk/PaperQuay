@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Bot, Library, PanelLeft, type LucideIcon } from 'lucide-react';
 import Reader from '../features/reader/Reader';
 import AgentWorkspace from '../features/agent/AgentWorkspace';
+import { emitOpenPreferences } from './appEvents';
 
 type AppWorkspaceKey = 'library' | 'agent';
 
@@ -41,6 +42,11 @@ function App() {
   useEffect(() => {
     window.localStorage.setItem(ACTIVE_WORKSPACE_STORAGE_KEY, activeWorkspace);
   }, [activeWorkspace]);
+
+  const handleOpenPreferencesFromAgent = () => {
+    setActiveWorkspace('library');
+    window.setTimeout(() => emitOpenPreferences('models'), 0);
+  };
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-[linear-gradient(180deg,#eef2f8,#e7edf5)] text-slate-900 antialiased dark:bg-chrome-950 dark:text-chrome-100">
@@ -100,7 +106,7 @@ function App() {
           <Reader />
         </div>
         <div className="h-full min-h-0" hidden={activeWorkspace !== 'agent'}>
-          <AgentWorkspace />
+          <AgentWorkspace onOpenPreferences={handleOpenPreferencesFromAgent} />
         </div>
       </main>
     </div>

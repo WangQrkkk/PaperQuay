@@ -53,7 +53,11 @@ import {
   parseMineruPages,
 } from '../../services/mineru';
 import { testOpenAICompatibleChat } from '../../services/llm';
-import { updateLibraryPaper } from '../../services/library';
+import {
+  getLibrarySettings,
+  updateLibraryPaper,
+  updateLibrarySettings,
+} from '../../services/library';
 import { summarizeDocumentOpenAICompatible } from '../../services/summary';
 import { translateBlocksOpenAICompatible } from '../../services/translation';
 import {
@@ -95,7 +99,17 @@ import type {
   ZoteroCollection,
   ZoteroLibraryItem,
 } from '../../types/reader';
-import type { LiteraturePaper } from '../../types/library';
+import type { LibrarySettings, LiteraturePaper } from '../../types/library';
+import {
+  emitLibrarySettingsUpdated,
+  emitZoteroImportRequest,
+  LIBRARY_SETTINGS_UPDATED_EVENT,
+  type LibrarySettingsUpdatedEventDetail,
+} from '../literature/libraryEvents';
+import {
+  OPEN_PREFERENCES_EVENT,
+  type OpenPreferencesEventDetail,
+} from '../../app/appEvents';
 import { AppLocaleProvider, useAppLocale } from '../../i18n/uiLanguage';
 import { truncateMiddle, getFileNameFromPath } from '../../utils/text';
 import {
@@ -1004,6 +1018,7 @@ interface PreferencesWindowProps {
   onDetectLocalZotero: () => void;
   onSelectLocalZoteroDir: () => void;
   onReloadLocalZotero: () => void;
+  onImportLocalZotero: () => void;
   onSelectMineruCacheDir: () => void;
   onSelectRemotePdfDownloadDir: () => void;
   onTestLlmConnection: (preset?: QaModelPreset) => Promise<OpenAICompatibleTestResult>;
@@ -1094,6 +1109,7 @@ function PreferencesWindow({
   onDetectLocalZotero,
   onSelectLocalZoteroDir,
   onReloadLocalZotero,
+  onImportLocalZotero,
   onSelectMineruCacheDir,
   onSelectRemotePdfDownloadDir,
   onTestLlmConnection,
@@ -1419,6 +1435,14 @@ function PreferencesWindow({
                         className="rounded-xl bg-slate-900 px-3 py-2 text-sm font-medium text-white transition hover:bg-slate-800 disabled:opacity-60"
                       >
                         {l('重新读取', 'Reload')}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={onImportLocalZotero}
+                        disabled={libraryLoading}
+                        className="rounded-xl bg-teal-600 px-3 py-2 text-sm font-medium text-white transition hover:bg-teal-500 disabled:opacity-60 dark:bg-accent-teal dark:text-chrome-950 dark:hover:bg-accent-teal/90"
+                      >
+                        {l('读取并导入本地文库', 'Read and Import to Library')}
                       </button>
                     </div>
                   </SettingsField>
@@ -2446,6 +2470,37 @@ function Reader() {
     <T,>(zh: T, en: T) => pickLocaleText(settings.uiLanguage, zh, en),
     [settings.uiLanguage],
   );
+  const syncNativeLibraryZoteroDir = useCallback(
+    async (dataDir: string, source = 'reader-settings'): Promise<LibrarySettings | null> => {
+      const normalizedDataDir = dataDir.trim();
+
+      try {
+        const currentSettings = await getLibrarySettings();
+
+        if (currentSettings.zoteroLocalDataDir.trim() === normalizedDataDir) {
+          return currentSettings;
+        }
+
+        const nextSettings = await updateLibrarySettings({
+          ...currentSettings,
+          zoteroLocalDataDir: normalizedDataDir,
+        });
+
+        emitLibrarySettingsUpdated(nextSettings, source);
+        return nextSettings;
+      } catch (nextError) {
+        const message =
+          nextError instanceof Error
+            ? nextError.message
+            : l('同步 Zotero 文库设置失败', 'Failed to sync Zotero library settings');
+
+        setError(message);
+        setStatusMessage(message);
+        return null;
+      }
+    },
+    [l],
+  );
   useEffect(() => {
     setHomeTabTitle(getHomeTabTitle(settings.uiLanguage));
   }, [setHomeTabTitle, settings.uiLanguage]);
@@ -2522,10 +2577,30 @@ function Reader() {
           return;
         }
 
+        let nativeLibrarySettings: LibrarySettings | null = null;
+
+        try {
+          nativeLibrarySettings = await getLibrarySettings();
+        } catch {
+        }
+
+        const configZoteroDir = nextConfig.zoteroLocalDataDir.trim();
+        const nativeZoteroDir = nativeLibrarySettings?.zoteroLocalDataDir.trim() ?? '';
+        const resolvedZoteroDir = nativeZoteroDir || configZoteroDir;
+
         setSettings(nextConfig.settings);
         setReaderSecrets(nextConfig.secrets);
-        setZoteroLocalDataDir(nextConfig.zoteroLocalDataDir);
+        setZoteroLocalDataDir(resolvedZoteroDir);
         setLeftSidebarCollapsed(nextConfig.leftSidebarCollapsed);
+
+        if (nativeLibrarySettings && configZoteroDir && !nativeZoteroDir) {
+          const syncedSettings = await updateLibrarySettings({
+            ...nativeLibrarySettings,
+            zoteroLocalDataDir: configZoteroDir,
+          });
+
+          emitLibrarySettingsUpdated(syncedSettings, 'reader-config-hydration');
+        }
       } finally {
         if (!cancelled) {
           setConfigHydrated(true);
@@ -2541,6 +2616,21 @@ function Reader() {
   const handleOpenPreferences = useCallback(() => {
     setPreferredPreferencesSection(undefined);
     setPreferencesOpen(true);
+  }, []);
+
+  useEffect(() => {
+    const handleOpenPreferencesEvent = (event: Event) => {
+      const detail = (event as CustomEvent<OpenPreferencesEventDetail>).detail;
+
+      setPreferredPreferencesSection(detail?.section);
+      setPreferencesOpen(true);
+    };
+
+    window.addEventListener(OPEN_PREFERENCES_EVENT, handleOpenPreferencesEvent);
+
+    return () => {
+      window.removeEventListener(OPEN_PREFERENCES_EVENT, handleOpenPreferencesEvent);
+    };
   }, []);
 
   const markOnboardingSeen = useCallback(() => {
@@ -3345,6 +3435,7 @@ function Reader() {
       setZoteroCollections(collections);
       setZoteroAllItems(mapZoteroItems(items));
       setCollectionItemsCache({});
+      await syncNativeLibraryZoteroDir(resolvedDataDir, 'reader-zotero-loader');
       setStatusMessage(
         l(
           `已加载 Zotero 本地文库，共发现 ${items.length} 篇 PDF 记录`,
@@ -3447,6 +3538,69 @@ function Reader() {
   const handleReloadLocalZotero = async () => {
     await loadLocalLibrary();
   };
+
+  const handleImportLocalZoteroToNativeLibrary = async () => {
+    setError('');
+
+    try {
+      const dataDir =
+        zoteroLocalDataDir.trim() ||
+        (await detectLocalZoteroDataDir()) ||
+        '';
+
+      if (!dataDir) {
+        setStatusMessage(
+          l(
+            '未找到 Zotero 本地目录，请先自动查找或手动选择包含 zotero.sqlite 的目录。',
+            'No Zotero local directory was found. Detect or choose the folder containing zotero.sqlite first.',
+          ),
+        );
+        return;
+      }
+
+      setZoteroLocalDataDir(dataDir);
+      await syncNativeLibraryZoteroDir(dataDir, 'reader-zotero-import-request');
+      await loadLocalLibrary(dataDir, true);
+      emitZoteroImportRequest(dataDir, 'reader-preferences');
+      setStatusMessage(
+        l(
+          '已提交 Zotero 导入任务，正在把 Zotero 分类和 PDF 导入本地文库。',
+          'Zotero import has been submitted. Collections and PDFs are being imported into the native library.',
+        ),
+      );
+    } catch (nextError) {
+      const message =
+        nextError instanceof Error
+          ? nextError.message
+          : l('提交 Zotero 导入失败', 'Failed to submit Zotero import');
+
+      setError(message);
+      setStatusMessage(message);
+    }
+  };
+
+  useEffect(() => {
+    const handleLibrarySettingsUpdated = (event: Event) => {
+      const detail = (event as CustomEvent<LibrarySettingsUpdatedEventDetail>).detail;
+
+      if (!detail?.settings || detail.source?.startsWith('reader')) {
+        return;
+      }
+
+      const nextDataDir = detail.settings.zoteroLocalDataDir.trim();
+      setZoteroLocalDataDir(nextDataDir);
+
+      if (nextDataDir) {
+        void loadLocalLibrary(nextDataDir, true);
+      }
+    };
+
+    window.addEventListener(LIBRARY_SETTINGS_UPDATED_EVENT, handleLibrarySettingsUpdated);
+
+    return () => {
+      window.removeEventListener(LIBRARY_SETTINGS_UPDATED_EVENT, handleLibrarySettingsUpdated);
+    };
+  }, [loadLocalLibrary]);
 
   const handleSelectLibrarySection = async (sectionKey: LibrarySectionKey) => {
     setSelectedSectionKey(sectionKey);
@@ -5407,6 +5561,20 @@ function Reader() {
   }, [leftSidebarCollapsed]);
 
   useEffect(() => {
+    if (!configHydrated) {
+      return undefined;
+    }
+
+    const timer = window.setTimeout(() => {
+      void syncNativeLibraryZoteroDir(zoteroLocalDataDir, 'reader-zotero-input');
+    }, 500);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [configHydrated, syncNativeLibraryZoteroDir, zoteroLocalDataDir]);
+
+  useEffect(() => {
     if (!configHydrated || !appDefaultPaths) {
       return;
     }
@@ -5902,6 +6070,7 @@ function Reader() {
         onDetectLocalZotero={() => void handleDetectLocalZotero()}
         onSelectLocalZoteroDir={() => void handleSelectLocalZoteroDir()}
         onReloadLocalZotero={() => void handleReloadLocalZotero()}
+        onImportLocalZotero={() => void handleImportLocalZoteroToNativeLibrary()}
         onSelectMineruCacheDir={() => void handleSelectMineruCacheDir()}
         onSelectRemotePdfDownloadDir={() => void handleSelectRemotePdfDownloadDir()}
         onTestLlmConnection={handleTestLlmConnection}

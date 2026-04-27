@@ -16,6 +16,7 @@ import {
   createLibraryCategory,
   deleteLibraryPaper,
   deleteLibraryCategory,
+  getLibrarySettings,
   importPdfsToLibrary,
   initializeLiteratureLibrary,
   listLibraryCategories,
@@ -65,6 +66,13 @@ import LiteraturePaperList, {
   type LiteraturePaperListStatus,
 } from './components/LiteraturePaperList';
 import { flattenCategories, paperPdfPath } from './literatureUi';
+import {
+  emitLibrarySettingsUpdated,
+  LIBRARY_SETTINGS_UPDATED_EVENT,
+  ZOTERO_IMPORT_REQUEST_EVENT,
+  type LibrarySettingsUpdatedEventDetail,
+  type ZoteroImportRequestEventDetail,
+} from './libraryEvents';
 import { useTauriPdfDrop } from './useTauriPdfDrop';
 
 interface LiteratureLibraryViewProps {
@@ -688,8 +696,31 @@ export default function LiteratureLibraryView({
   };
 
   const handleOpenLibrarySettings = () => {
-    setEditingSettings(settings);
     setLibrarySettingsOpen(true);
+
+    void (async () => {
+      try {
+        const latestSettings = await getLibrarySettings();
+
+        setSettings(latestSettings);
+        setEditingSettings(latestSettings);
+      } catch {
+        setEditingSettings(settings);
+      }
+    })();
+  };
+
+  const saveLibrarySettingsPatch = async (patch: Partial<LibrarySettings>, source: string) => {
+    const base = editingSettings ?? settings ?? await getLibrarySettings();
+    const nextSettings = await updateLibrarySettings({
+      ...base,
+      ...patch,
+    });
+
+    setSettings(nextSettings);
+    setEditingSettings(nextSettings);
+    emitLibrarySettingsUpdated(nextSettings, source);
+    return nextSettings;
   };
 
   const handleSelectEditingStorageDir = async () => {
@@ -742,7 +773,10 @@ export default function LiteratureLibraryView({
         return;
       }
 
-      patchEditingSettings({ zoteroLocalDataDir: dataDir });
+      await saveLibrarySettingsPatch(
+        { zoteroLocalDataDir: dataDir },
+        'literature-zotero-detect',
+      );
       setStatusMessage(l('已检测到 Zotero 本地数据目录', 'Detected the Zotero local data directory'));
     } catch (nextError) {
       const message =
@@ -761,7 +795,10 @@ export default function LiteratureLibraryView({
         return;
       }
 
-      patchEditingSettings({ zoteroLocalDataDir: dataDir });
+      await saveLibrarySettingsPatch(
+        { zoteroLocalDataDir: dataDir },
+        'literature-zotero-select',
+      );
       setStatusMessage(l('已选择 Zotero 本地数据目录', 'Selected the Zotero local data directory'));
     } catch (nextError) {
       const message =
@@ -783,6 +820,7 @@ export default function LiteratureLibraryView({
       const nextSettings = await updateLibrarySettings(editingSettings);
       setSettings(nextSettings);
       setEditingSettings(nextSettings);
+      emitLibrarySettingsUpdated(nextSettings, 'literature-settings-save');
       setLibrarySettingsOpen(false);
       setStatusMessage(l('文库设置已保存', 'Library settings saved'));
     } catch (nextError) {
@@ -795,18 +833,13 @@ export default function LiteratureLibraryView({
     }
   };
 
-  const handleImportZoteroLibrary = async () => {
-    const activeSettings = editingSettings ?? settings;
-
-    if (!activeSettings) {
-      return;
-    }
-
+  const handleImportZoteroLibrary = async (preferredDataDir?: string) => {
     setWorking(true);
     setError('');
 
     try {
-      let dataDir = activeSettings.zoteroLocalDataDir.trim();
+      const activeSettings = editingSettings ?? settings ?? await getLibrarySettings();
+      let dataDir = preferredDataDir?.trim() || activeSettings.zoteroLocalDataDir.trim();
 
       if (!dataDir) {
         dataDir = (await detectLocalZoteroDataDir()) ?? '';
@@ -823,6 +856,7 @@ export default function LiteratureLibraryView({
       });
       setSettings(nextSettings);
       setEditingSettings(nextSettings);
+      emitLibrarySettingsUpdated(nextSettings, 'literature-zotero-import');
 
       setStatusMessage(l('正在读取 Zotero 分类树...', 'Reading Zotero collection tree...'));
       const zoteroCollections = await listLocalZoteroCollections({ dataDir });
@@ -952,6 +986,33 @@ export default function LiteratureLibraryView({
       setWorking(false);
     }
   };
+
+  useEffect(() => {
+    const handleLibrarySettingsUpdated = (event: Event) => {
+      const detail = (event as CustomEvent<LibrarySettingsUpdatedEventDetail>).detail;
+
+      if (!detail?.settings || detail.source?.startsWith('literature')) {
+        return;
+      }
+
+      setSettings(detail.settings);
+      setEditingSettings((current) => (current ? detail.settings : current));
+    };
+
+    const handleZoteroImportRequest = (event: Event) => {
+      const detail = (event as CustomEvent<ZoteroImportRequestEventDetail>).detail;
+
+      void handleImportZoteroLibrary(detail?.dataDir);
+    };
+
+    window.addEventListener(LIBRARY_SETTINGS_UPDATED_EVENT, handleLibrarySettingsUpdated);
+    window.addEventListener(ZOTERO_IMPORT_REQUEST_EVENT, handleZoteroImportRequest);
+
+    return () => {
+      window.removeEventListener(LIBRARY_SETTINGS_UPDATED_EVENT, handleLibrarySettingsUpdated);
+      window.removeEventListener(ZOTERO_IMPORT_REQUEST_EVENT, handleZoteroImportRequest);
+    };
+  }, [handleImportZoteroLibrary]);
 
   const handleImportPdfs = async () => {
     setError('');

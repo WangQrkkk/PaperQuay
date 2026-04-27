@@ -1,152 +1,96 @@
 import { type FormEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import {
-  ArrowRight,
   BookOpen,
   Bot,
   BrainCircuit,
   Check,
   CheckCircle2,
-  FileSearch,
-  FolderTree,
+  Clipboard,
+  Database,
+  FileText,
+  GitBranch,
+  Layers3,
   Loader2,
+  MessageSquareText,
+  Minus,
+  Moon,
+  PlayCircle,
   RefreshCw,
+  RotateCcw,
   Search,
   Send,
+  Settings2,
   ShieldCheck,
-  Sparkles,
+  Square,
+  Sun,
   Tags,
   User,
-  WandSparkles,
+  X,
 } from 'lucide-react';
 import {
   applyLibraryAgentPlan,
   buildConversationalLibraryAgentPlan,
   loadLibraryAgentModelPreset,
   type LibraryAgentPlan,
-  type LibraryAgentTool,
 } from '../../services/libraryAgent';
 import { listLibraryPapers } from '../../services/library';
 import type { LiteraturePaper } from '../../types/library';
+import { useThemeStore } from '../../stores/useThemeStore';
+import { PlanDiffCard, ToolCallCard, TraceTimeline } from './AgentExecutionCards';
+import {
+  agentCapabilities,
+  buildErrorTrace,
+  buildPreviewToolCall,
+  buildRunningTrace,
+  buildSuccessTrace,
+  buildToolCallView,
+  durationLabel,
+  formatPaperMeta,
+  newMessageId,
+  paperMatchesQuery,
+  promptSuggestions,
+  toolFunctionName,
+  toolLabel,
+  uniqueTagNames,
+} from './AgentWorkspace.model';
+import type { AgentChatMessage, AgentToolCallView } from './AgentWorkspace.types';
 
-interface AgentCapability {
-  key: LibraryAgentTool;
-  functionName: string;
-  title: string;
-  description: string;
-  icon: typeof WandSparkles;
+interface AgentWorkspaceProps {
+  onOpenPreferences?: () => void;
 }
 
-interface AgentChatMessage {
-  id: string;
-  role: 'assistant' | 'user';
-  content: string;
-  meta?: string;
-}
-
-const agentCapabilities: AgentCapability[] = [
-  {
-    key: 'rename',
-    functionName: 'rename_papers',
-    title: '批量重命名',
-    description: '添加、替换、规范化或重写论文标题。',
-    icon: WandSparkles,
-  },
-  {
-    key: 'metadata',
-    functionName: 'update_paper_metadata',
-    title: '元数据补全',
-    description: '补全标题、作者、年份、期刊、DOI、摘要和关键词。',
-    icon: FileSearch,
-  },
-  {
-    key: 'smart-tags',
-    functionName: 'update_paper_tags',
-    title: '智能标签',
-    description: '根据标题、摘要、关键词生成学术标签。',
-    icon: Sparkles,
-  },
-  {
-    key: 'clean-tags',
-    functionName: 'clean_paper_tags',
-    title: '标签清洗',
-    description: '合并同义词、大小写变体、重复标签和拼写差异。',
-    icon: Tags,
-  },
-  {
-    key: 'classify',
-    functionName: 'classify_papers',
-    title: '自动归类',
-    description: '由模型动态创建 Collection，不使用固定分类表。',
-    icon: FolderTree,
-  },
-];
-
-const promptSuggestions = [
-  '把选中的论文标题后面加 123',
-  '给这些论文自动补全元数据，只改有把握的字段',
-  '清理这些论文的标签，合并同义词并去掉重复项',
-  '根据研究主题给这些论文自动归类到新的 Collection',
-  '给这些论文生成 3 到 6 个简洁的学术标签',
-];
-
-function newMessageId(): string {
-  return `agent-message:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`;
-}
-
-function paperAuthors(paper: LiteraturePaper): string {
-  return paper.authors.length > 0
-    ? paper.authors.map((author) => author.name).join(', ')
-    : '未知作者';
-}
-
-function formatPaperMeta(paper: LiteraturePaper): string {
-  return [paperAuthors(paper), paper.year, paper.publication].filter(Boolean).join(' · ');
-}
-
-function toolLabel(tool: LibraryAgentTool): string {
-  return agentCapabilities.find((item) => item.key === tool)?.title ?? tool;
-}
-
-function paperMatchesQuery(paper: LiteraturePaper, query: string): boolean {
-  const normalizedQuery = query.trim().toLocaleLowerCase();
-
-  if (!normalizedQuery) {
-    return true;
-  }
-
-  const searchableText = [
-    paper.title,
-    paper.year,
-    paper.publication,
-    paper.doi,
-    paper.url,
-    paper.abstractText,
-    paperAuthors(paper),
-    paper.keywords.join(' '),
-    paper.tags.map((tag) => tag.name).join(' '),
-  ]
-    .filter(Boolean)
-    .join('\n')
-    .toLocaleLowerCase();
-
-  return searchableText.includes(normalizedQuery);
-}
-
-function AgentWorkspace() {
+function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
+  const appWindow = getCurrentWindow();
+  const { mode: themeMode, setMode: setThemeMode } = useThemeStore();
   const [papers, setPapers] = useState<LiteraturePaper[]>([]);
   const [selectedPaperIds, setSelectedPaperIds] = useState<Set<string>>(() => new Set());
   const [paperSearchQuery, setPaperSearchQuery] = useState('');
   const [composerValue, setComposerValue] = useState('把选中的论文标题后面加 123');
+  const [lastInstruction, setLastInstruction] = useState('');
   const [agentPresetName, setAgentPresetName] = useState('');
   const [plan, setPlan] = useState<LibraryAgentPlan | null>(null);
   const [approvedItemIds, setApprovedItemIds] = useState<Set<string>>(() => new Set());
+  const [expandedStepKeys, setExpandedStepKeys] = useState<Set<string>>(() => new Set());
+  const [expandedToolIds, setExpandedToolIds] = useState<Set<string>>(() => new Set());
+  const [selectedInspectorItemId, setSelectedInspectorItemId] = useState<string | null>(null);
   const [messages, setMessages] = useState<AgentChatMessage[]>(() => [
     {
       id: newMessageId(),
       role: 'assistant',
       content:
-        '选择左侧文献后，直接用自然语言告诉我你要做什么。我会让大模型自动选择合适的函数工具，先生成可审查计划，再等你确认执行。',
+        '选择左侧文献后，直接用自然语言描述任务。我会自动选择工具，生成可审查执行链路和计划，只有在你确认后才会写入本地文库。',
       meta: '支持重命名、元数据补全、智能标签、标签清洗、自动归类',
+      createdAt: Date.now(),
+      trace: [
+        {
+          id: 'welcome-intent',
+          type: 'intent',
+          title: '等待用户指令',
+          summary: '从左侧选择论文，然后输入要执行的任务。',
+          status: 'waiting',
+        },
+      ],
     },
   ]);
   const [loading, setLoading] = useState(true);
@@ -167,6 +111,9 @@ function AgentWorkspace() {
     () => plan?.items.filter((item) => approvedItemIds.has(item.id)) ?? [],
     [approvedItemIds, plan],
   );
+  const selectedTags = useMemo(() => uniqueTagNames(selectedPapers), [selectedPapers]);
+  const selectedInspectorItem =
+    plan?.items.find((item) => item.id === selectedInspectorItemId) ?? plan?.items[0] ?? null;
 
   const refreshPapers = async () => {
     setLoading(true);
@@ -205,6 +152,10 @@ function AgentWorkspace() {
     });
   }, [messages, working]);
 
+  const updateMessage = (messageId: string, updater: (message: AgentChatMessage) => AgentChatMessage) => {
+    setMessages((current) => current.map((message) => (message.id === messageId ? updater(message) : message)));
+  };
+
   const togglePaper = (paperId: string) => {
     setSelectedPaperIds((current) => {
       const next = new Set(current);
@@ -230,6 +181,7 @@ function AgentWorkspace() {
   const setNextPlan = (nextPlan: LibraryAgentPlan) => {
     setPlan(nextPlan);
     setApprovedItemIds(new Set(nextPlan.items.map((item) => item.id)));
+    setSelectedInspectorItemId(nextPlan.items[0]?.id ?? null);
     setStatusMessage(nextPlan.description);
   };
 
@@ -241,8 +193,14 @@ function AgentWorkspace() {
         role: 'assistant',
         content,
         meta,
+        createdAt: Date.now(),
       },
     ]);
+  };
+
+  const copyToolParameters = async (toolCall: AgentToolCallView) => {
+    await navigator.clipboard.writeText(JSON.stringify(toolCall.rawParameters, null, 2));
+    setStatusMessage('已复制工具参数。');
   };
 
   const runAgent = async (rawInstruction: string) => {
@@ -258,20 +216,37 @@ function AgentWorkspace() {
       return;
     }
 
+    const startedAt = performance.now();
+    const assistantMessageId = newMessageId();
+    const paperCount = selectedPapers.length;
+
+    setLastInstruction(instruction);
     setMessages((current) => [
       ...current,
       {
         id: newMessageId(),
         role: 'user',
         content: instruction,
-        meta: `作用于 ${selectedPapers.length} 篇文献`,
+        meta: `作用于 ${paperCount} 篇文献`,
+        createdAt: Date.now(),
+      },
+      {
+        id: assistantMessageId,
+        role: 'assistant',
+        content: '正在识别意图、选择工具并生成可审查计划。',
+        meta: 'Agent run started',
+        createdAt: Date.now(),
+        trace: buildRunningTrace(instruction, paperCount),
+        toolCall: buildPreviewToolCall(instruction, paperCount, 'running'),
       },
     ]);
+    setExpandedStepKeys((current) => new Set([...current, `${assistantMessageId}:intent`]));
     setComposerValue('');
     setWorking(true);
     setError('');
     setPlan(null);
     setApprovedItemIds(new Set());
+    setSelectedInspectorItemId(null);
 
     try {
       const preset = loadLibraryAgentModelPreset();
@@ -288,29 +263,39 @@ function AgentWorkspace() {
         instruction,
         preset,
       });
+      const durationMs = Math.round(performance.now() - startedAt);
+      const nextToolCall = buildToolCallView(nextPlan, instruction, paperCount, durationMs);
 
       setNextPlan(nextPlan);
+      setExpandedStepKeys((current) => new Set([...current, `${assistantMessageId}:tool-call`, `${assistantMessageId}:tool-result`]));
 
-      if (nextPlan.items.length === 0) {
-        appendAssistantMessage(
-          `我调用了 ${toolLabel(nextPlan.tool)}，但没有生成需要变更的计划项。`,
-          nextPlan.description,
-        );
-      } else {
-        appendAssistantMessage(
-          `我已自动选择「${toolLabel(nextPlan.tool)}」，生成 ${nextPlan.items.length} 个可审查计划项。右侧可以逐项勾选，确认后才会写入本地文库。`,
-          nextPlan.description,
-        );
-      }
+      updateMessage(assistantMessageId, (message) => ({
+        ...message,
+        content:
+          nextPlan.items.length > 0
+            ? `已自动选择「${toolLabel(nextPlan.tool)}」，生成 ${nextPlan.items.length} 个可审查计划项。`
+            : `已自动选择「${toolLabel(nextPlan.tool)}」，当前没有需要变更的计划项。`,
+        meta: `${toolFunctionName(nextPlan.tool)} · ${durationLabel(durationMs)}`,
+        trace: buildSuccessTrace(instruction, paperCount, nextPlan, durationMs),
+        toolCall: nextToolCall,
+        plan: nextPlan,
+      }));
     } catch (nextError) {
       const message = nextError instanceof Error ? nextError.message : '生成 Agent 计划失败';
+      const durationMs = Math.round(performance.now() - startedAt);
+
       setError(message);
       setStatusMessage(message);
-      appendAssistantMessage(
-        message.includes('tool call')
+      updateMessage(assistantMessageId, (chatMessage) => ({
+        ...chatMessage,
+        content: message.includes('tool call')
           ? '当前模型没有返回 tool call。请换用支持 OpenAI-compatible tools/function calling 的模型。'
           : `生成计划失败：${message}`,
-      );
+        meta: `error · ${durationLabel(durationMs)}`,
+        trace: buildErrorTrace(instruction, paperCount, message, durationMs),
+        toolCall: buildPreviewToolCall(instruction, paperCount, 'error'),
+        error: message,
+      }));
     } finally {
       setWorking(false);
     }
@@ -337,10 +322,11 @@ function AgentWorkspace() {
       await refreshPapers();
       setPlan(null);
       setApprovedItemIds(new Set());
+      setSelectedInspectorItemId(null);
       setStatusMessage(`执行完成：成功 ${result.applied}，失败 ${result.failed}。`);
       appendAssistantMessage(
         `已执行计划：成功 ${result.applied} 项，失败 ${result.failed} 项。`,
-        result.failed > 0 ? result.errors.join('\n') : undefined,
+        result.failed > 0 ? result.errors.join('\n') : 'Local write completed',
       );
 
       if (result.failed > 0) {
@@ -354,6 +340,13 @@ function AgentWorkspace() {
     } finally {
       setWorking(false);
     }
+  };
+
+  const cancelPlan = () => {
+    setPlan(null);
+    setApprovedItemIds(new Set());
+    setSelectedInspectorItemId(null);
+    setStatusMessage('已取消当前计划。');
   };
 
   const togglePlanItem = (itemId: string) => {
@@ -370,41 +363,79 @@ function AgentWorkspace() {
     });
   };
 
+  const toggleStep = (stepKey: string) => {
+    setExpandedStepKeys((current) => {
+      const next = new Set(current);
+
+      if (next.has(stepKey)) {
+        next.delete(stepKey);
+      } else {
+        next.add(stepKey);
+      }
+
+      return next;
+    });
+  };
+
+  const toggleTool = (toolCallId: string) => {
+    setExpandedToolIds((current) => {
+      const next = new Set(current);
+
+      if (next.has(toolCallId)) {
+        next.delete(toolCallId);
+      } else {
+        next.add(toolCallId);
+      }
+
+      return next;
+    });
+  };
+
   return (
-    <div className="h-full min-h-0 overflow-hidden bg-[radial-gradient(circle_at_top_left,#f8fbff_0,#edf4fb_38%,#e6edf4_100%)] text-slate-900 dark:bg-[radial-gradient(circle_at_top_left,rgba(20,184,166,0.10),rgba(15,23,42,0.98)_44%,#070b12_100%)] dark:text-chrome-100">
+    <div className="h-full min-h-0 overflow-hidden bg-[#f6f8fb] text-slate-950 dark:bg-[#0f141b] dark:text-chrome-100">
       <div className="flex h-full min-h-0 flex-col">
-        <header className="flex h-14 shrink-0 items-center justify-between border-b border-slate-200/80 bg-white/76 px-5 backdrop-blur-xl dark:border-white/10 dark:bg-chrome-950/78">
-          <div className="min-w-0">
-            <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-teal-600 dark:text-teal-300">
-              PaperQuay Agent
-            </div>
-            <div className="mt-1 truncate text-sm font-semibold text-slate-950 dark:text-chrome-100">
-              对话式文库整理助手
+        <header className="flex h-14 shrink-0 items-center justify-between border-b border-slate-200/80 bg-white/82 px-5 backdrop-blur-xl dark:border-white/10 dark:bg-[#121922]/88">
+          <div className="flex min-w-0 items-center gap-3">
+            <span className="flex h-9 w-9 items-center justify-center rounded-2xl bg-slate-950 text-white shadow-[0_12px_30px_rgba(15,23,42,0.20)] dark:bg-teal-300 dark:text-slate-950">
+              <Bot className="h-4.5 w-4.5" strokeWidth={2.2} />
+            </span>
+            <div className="min-w-0">
+              <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-teal-600 dark:text-teal-300">
+                PaperQuay Agent
+              </div>
+              <div className="mt-0.5 truncate text-sm font-black text-slate-950 dark:text-white">
+                论文助手 · 工具调用工作台
+              </div>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={() => void refreshPapers()}
-            disabled={loading || working}
-            className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 disabled:opacity-60 dark:border-white/10 dark:bg-chrome-900 dark:text-chrome-200 dark:hover:bg-chrome-800"
-          >
-            <RefreshCw className={loading ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} strokeWidth={2} />
-            刷新文库
-          </button>
+          <div className="flex items-center gap-3">
+            <div className="hidden rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-500 dark:border-white/10 dark:bg-chrome-900 dark:text-chrome-400 md:block">
+              {agentPresetName ? `Model · ${agentPresetName}` : 'Model · 使用设置中的问答/概览模型'}
+            </div>
+            <button
+              type="button"
+              onClick={() => void refreshPapers()}
+              disabled={loading || working}
+              className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 disabled:opacity-60 dark:border-white/10 dark:bg-chrome-900 dark:text-chrome-200 dark:hover:bg-chrome-800"
+            >
+              <RefreshCw className={loading ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} strokeWidth={2} />
+              刷新
+            </button>
+          </div>
         </header>
 
-        <main className="grid min-h-0 flex-1 gap-0 overflow-hidden xl:grid-cols-[360px_minmax(0,1fr)_420px]">
-          <aside className="min-h-0 border-r border-slate-200/80 bg-white/68 backdrop-blur-xl dark:border-white/10 dark:bg-chrome-950/72">
+        <main className="grid min-h-0 flex-1 overflow-hidden xl:grid-cols-[350px_minmax(0,1fr)_420px]">
+          <aside className="min-h-0 border-r border-slate-200/80 bg-white/70 backdrop-blur-xl dark:border-white/10 dark:bg-[#121922]/74">
             <div className="flex h-full min-h-0 flex-col">
               <div className="border-b border-slate-200/70 p-4 dark:border-white/10">
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <div className="flex items-center gap-2 text-sm font-bold text-slate-950 dark:text-white">
+                    <div className="flex items-center gap-2 text-sm font-black text-slate-950 dark:text-white">
                       <BookOpen className="h-4 w-4 text-teal-600 dark:text-teal-300" strokeWidth={2} />
-                      选择文献
+                      上下文文献
                     </div>
                     <div className="mt-1 text-xs text-slate-500 dark:text-chrome-400">
-                      已选择 {selectedPaperIds.size} / 当前结果 {filteredPapers.length} / 全部 {papers.length}
+                      已选择 {selectedPaperIds.size} · 当前结果 {filteredPapers.length} · 全部 {papers.length}
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
@@ -412,21 +443,21 @@ function AgentWorkspace() {
                       type="button"
                       onClick={selectAllVisible}
                       disabled={filteredPapers.length === 0}
-                      className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 disabled:opacity-50 dark:border-white/10 dark:bg-chrome-900 dark:text-chrome-300"
+                      className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-600 transition hover:bg-slate-50 disabled:opacity-50 dark:border-white/10 dark:bg-chrome-900 dark:text-chrome-300"
                     >
                       选择结果
                     </button>
                     <button
                       type="button"
                       onClick={clearSelection}
-                      className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 dark:border-white/10 dark:bg-chrome-900 dark:text-chrome-300"
+                      className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-600 transition hover:bg-slate-50 dark:border-white/10 dark:bg-chrome-900 dark:text-chrome-300"
                     >
                       清空
                     </button>
                   </div>
                 </div>
 
-                <label className="mt-4 flex items-center gap-2 rounded-2xl border border-slate-200 bg-white/86 px-3 py-2 text-sm text-slate-600 shadow-sm dark:border-white/10 dark:bg-chrome-900/80 dark:text-chrome-300">
+                <label className="mt-4 flex items-center gap-2 rounded-2xl border border-slate-200 bg-white/90 px-3 py-2.5 text-sm text-slate-600 shadow-sm dark:border-white/10 dark:bg-chrome-900/84 dark:text-chrome-300">
                   <Search className="h-4 w-4 shrink-0 text-slate-400 dark:text-chrome-500" strokeWidth={2} />
                   <input
                     value={paperSearchQuery}
@@ -435,6 +466,25 @@ function AgentWorkspace() {
                     className="min-w-0 flex-1 bg-transparent text-sm text-slate-800 outline-none placeholder:text-slate-400 dark:text-chrome-100 dark:placeholder:text-chrome-500"
                   />
                 </label>
+
+                {selectedTags.length > 0 ? (
+                  <div className="mt-4 rounded-[22px] border border-slate-200 bg-slate-50/80 p-3 dark:border-white/10 dark:bg-chrome-950/60">
+                    <div className="mb-2 flex items-center gap-2 text-xs font-bold text-slate-500 dark:text-chrome-400">
+                      <Tags className="h-3.5 w-3.5" />
+                      当前标签
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {selectedTags.map((tag) => (
+                        <span
+                          key={tag}
+                          className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-600 dark:border-white/10 dark:bg-chrome-900 dark:text-chrome-300"
+                        >
+                          {tag}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
               </div>
 
               <div className="min-h-0 flex-1 overflow-y-auto p-3">
@@ -464,8 +514,8 @@ function AgentWorkspace() {
                           className={[
                             'flex w-full items-start gap-3 rounded-[22px] border p-3 text-left transition',
                             selected
-                              ? 'border-teal-300 bg-teal-50/90 shadow-[0_12px_30px_rgba(20,184,166,0.14)] dark:border-teal-300/30 dark:bg-teal-300/10'
-                              : 'border-transparent bg-white/72 hover:border-slate-200 hover:bg-white dark:bg-chrome-900/60 dark:hover:border-white/10 dark:hover:bg-chrome-900',
+                              ? 'border-teal-300 bg-teal-50 shadow-[0_14px_35px_rgba(20,184,166,0.12)] dark:border-teal-300/30 dark:bg-teal-300/10'
+                              : 'border-transparent bg-white/74 hover:border-slate-200 hover:bg-white dark:bg-chrome-900/58 dark:hover:border-white/10 dark:hover:bg-chrome-900',
                           ].join(' ')}
                         >
                           <span
@@ -478,7 +528,7 @@ function AgentWorkspace() {
                           >
                             <Check className="h-3.5 w-3.5" strokeWidth={2.2} />
                           </span>
-                          <span className="min-w-0">
+                          <span className="min-w-0 flex-1">
                             <span className="line-clamp-2 text-sm font-bold text-slate-950 dark:text-white">
                               {paper.title}
                             </span>
@@ -506,22 +556,33 @@ function AgentWorkspace() {
           </aside>
 
           <section className="flex min-h-0 flex-col">
-            <div className="border-b border-slate-200/70 bg-white/48 px-5 py-4 backdrop-blur-xl dark:border-white/10 dark:bg-chrome-950/36">
+            <div className="border-b border-slate-200/70 bg-white/50 px-5 py-4 backdrop-blur-xl dark:border-white/10 dark:bg-[#0f141b]/60">
               <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
                 <div>
-                  <div className="inline-flex items-center gap-2 rounded-full border border-teal-200 bg-teal-50 px-3 py-1 text-xs font-semibold text-teal-700 dark:border-teal-300/20 dark:bg-teal-300/10 dark:text-teal-200">
+                  <div className="inline-flex items-center gap-2 rounded-full border border-teal-200 bg-teal-50 px-3 py-1 text-xs font-bold text-teal-700 dark:border-teal-300/20 dark:bg-teal-300/10 dark:text-teal-200">
                     <ShieldCheck className="h-3.5 w-3.5" strokeWidth={2} />
-                    Tool-use with approval
+                    Human-in-the-loop · Tool Use
                   </div>
                   <h1 className="mt-3 text-xl font-black tracking-tight text-slate-950 dark:text-white">
-                    不用选工具，直接对 Agent 下指令
+                    对话驱动的论文 Agent 执行链路
                   </h1>
                   <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600 dark:text-chrome-300">
-                    工具说明已内置到 Agent prompt。模型只能返回函数调用参数，右侧生成可审查计划；本地数据库只有在你确认后才会被修改。
+                    Agent 会把你的自然语言指令转换成可审查时间线、工具调用和 diff 计划。本地文库只有在你点击确认后才会被修改。
                   </p>
                 </div>
-                <div className="rounded-[22px] border border-slate-200 bg-white/80 px-4 py-3 text-xs leading-5 text-slate-500 dark:border-white/10 dark:bg-chrome-900/70 dark:text-chrome-400">
-                  {agentPresetName ? `当前模型：${agentPresetName}` : '复用设置中的问答/概览模型配置'}
+                <div className="grid grid-cols-3 gap-2">
+                  <div className="rounded-2xl border border-slate-200 bg-white/82 px-3 py-2 text-center dark:border-white/10 dark:bg-chrome-900/70">
+                    <div className="text-lg font-black text-slate-950 dark:text-white">{selectedPaperIds.size}</div>
+                    <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">papers</div>
+                  </div>
+                  <div className="rounded-2xl border border-slate-200 bg-white/82 px-3 py-2 text-center dark:border-white/10 dark:bg-chrome-900/70">
+                    <div className="text-lg font-black text-slate-950 dark:text-white">{plan?.items.length ?? 0}</div>
+                    <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">steps</div>
+                  </div>
+                  <div className="rounded-2xl border border-slate-200 bg-white/82 px-3 py-2 text-center dark:border-white/10 dark:bg-chrome-900/70">
+                    <div className="text-lg font-black text-slate-950 dark:text-white">{selectedPlanItems.length}</div>
+                    <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">approved</div>
+                  </div>
                 </div>
               </div>
 
@@ -538,7 +599,7 @@ function AgentWorkspace() {
                         <Icon className="h-3.5 w-3.5 text-teal-600 dark:text-teal-300" strokeWidth={2} />
                         {capability.title}
                       </div>
-                      <div className="mt-1 font-mono text-[10px] text-slate-400 dark:text-chrome-500">
+                      <div className="mt-1 truncate font-mono text-[10px] text-slate-400 dark:text-chrome-500">
                         {capability.functionName}
                       </div>
                     </div>
@@ -548,72 +609,188 @@ function AgentWorkspace() {
             </div>
 
             <div ref={chatScrollRef} className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
-              <div className="mx-auto max-w-4xl space-y-4">
+              <div className="mx-auto max-w-5xl space-y-5">
                 {messages.map((message) => {
                   const isUser = message.role === 'user';
 
-                  return (
-                    <article
-                      key={message.id}
-                      className={['flex items-start gap-3', isUser ? 'justify-end' : 'justify-start'].join(' ')}
-                    >
-                      {!isUser ? (
-                        <span className="mt-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl bg-slate-950 text-white shadow-lg dark:bg-teal-300 dark:text-slate-950">
-                          <Bot className="h-4.5 w-4.5" strokeWidth={2} />
+                  if (isUser) {
+                    return (
+                      <article key={message.id} className="flex items-start justify-end gap-3">
+                        <div className="max-w-[72%] rounded-[24px] border border-teal-300 bg-teal-600 px-4 py-3 text-sm leading-7 text-white shadow-[0_18px_40px_rgba(20,184,166,0.18)] dark:border-teal-300/30 dark:bg-teal-300 dark:text-slate-950">
+                          <div className="whitespace-pre-wrap">{message.content}</div>
+                          {message.meta ? (
+                            <div className="mt-2 text-xs text-teal-50/85 dark:text-slate-700">{message.meta}</div>
+                          ) : null}
+                        </div>
+                        <span className="mt-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl bg-white text-slate-700 shadow-lg dark:bg-chrome-900 dark:text-chrome-100">
+                          <User className="h-4 w-4" strokeWidth={2} />
                         </span>
-                      ) : null}
-                      <div
-                        className={[
-                          'max-w-[78%] rounded-[26px] border px-4 py-3 text-sm leading-7 shadow-sm',
-                          isUser
-                            ? 'border-teal-300 bg-teal-600 text-white dark:border-teal-300/30 dark:bg-teal-300 dark:text-slate-950'
-                            : 'border-white/80 bg-white/82 text-slate-700 dark:border-white/10 dark:bg-chrome-900/76 dark:text-chrome-200',
-                        ].join(' ')}
-                      >
-                        <div className="whitespace-pre-wrap">{message.content}</div>
-                        {message.meta ? (
-                          <div
-                            className={[
-                              'mt-2 text-xs',
-                              isUser ? 'text-teal-50/85 dark:text-slate-700' : 'text-slate-400 dark:text-chrome-500',
-                            ].join(' ')}
-                          >
-                            {message.meta}
+                      </article>
+                    );
+                  }
+
+                  const messagePlan = message.plan;
+                  const toolCall = message.toolCall;
+                  const isActivePlan = Boolean(messagePlan && plan?.id === messagePlan.id);
+
+                  return (
+                    <article key={message.id} className="flex items-start gap-3">
+                      <span className="mt-1 flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-slate-950 text-white shadow-lg dark:bg-teal-300 dark:text-slate-950">
+                        <Bot className="h-4.5 w-4.5" strokeWidth={2.2} />
+                      </span>
+                      <div className="min-w-0 flex-1 rounded-[30px] border border-white/80 bg-white/86 p-5 shadow-[0_24px_70px_rgba(15,23,42,0.08)] dark:border-white/10 dark:bg-[#171d26]/86 dark:shadow-none">
+                        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500 dark:border-white/10 dark:bg-chrome-950 dark:text-chrome-400">
+                                Agent Reply
+                              </span>
+                              {message.meta ? (
+                                <span className="text-xs font-semibold text-slate-400 dark:text-chrome-500">
+                                  {message.meta}
+                                </span>
+                              ) : null}
+                            </div>
+                            <div className="mt-3 whitespace-pre-wrap text-sm leading-7 text-slate-700 dark:text-chrome-200">
+                              {message.content}
+                            </div>
+                          </div>
+                          {messagePlan ? (
+                            <div className="shrink-0 rounded-[22px] border border-slate-200 bg-slate-50/80 px-4 py-3 dark:border-white/10 dark:bg-chrome-950/70">
+                              <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400">
+                                当前工具
+                              </div>
+                              <div className="mt-1 text-sm font-black text-slate-950 dark:text-white">
+                                {toolLabel(messagePlan.tool)}
+                              </div>
+                              <div className="mt-1 font-mono text-[11px] text-slate-400">
+                                {toolFunctionName(messagePlan.tool)}
+                              </div>
+                            </div>
+                          ) : null}
+                        </div>
+
+                        {message.trace ? (
+                          <div className="mt-5">
+                            <TraceTimeline
+                              steps={message.trace}
+                              traceKey={message.id}
+                              expandedStepKeys={expandedStepKeys}
+                              onToggleStep={toggleStep}
+                            />
+                          </div>
+                        ) : null}
+
+                        {toolCall ? (
+                          <div className="mt-4">
+                            <ToolCallCard
+                              toolCall={toolCall}
+                              expanded={expandedToolIds.has(toolCall.id)}
+                              onToggle={() => toggleTool(toolCall.id)}
+                              onCopyParameters={() => void copyToolParameters(toolCall)}
+                              onRetry={() => void runAgent(lastInstruction || composerValue)}
+                            />
+                          </div>
+                        ) : null}
+
+                        {messagePlan && messagePlan.items.length > 0 ? (
+                          <div className="mt-4 rounded-[26px] border border-slate-200 bg-slate-50/70 p-4 dark:border-white/10 dark:bg-chrome-950/54">
+                            <div className="mb-3 flex items-center justify-between gap-3">
+                              <div>
+                                <div className="text-sm font-black text-slate-950 dark:text-white">
+                                  结果 Diff 预览
+                                </div>
+                                <div className="mt-1 text-xs text-slate-500 dark:text-chrome-400">
+                                  原值与新值分开展示，确认前不会写入数据库。
+                                </div>
+                              </div>
+                              <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-bold text-slate-500 dark:border-white/10 dark:bg-chrome-900 dark:text-chrome-400">
+                                {messagePlan.items.length} changes
+                              </span>
+                            </div>
+                            <div className="grid gap-3 xl:grid-cols-2">
+                              {messagePlan.items.slice(0, 4).map((item) => (
+                                <PlanDiffCard
+                                  key={item.id}
+                                  item={item}
+                                  approved={isActivePlan && approvedItemIds.has(item.id)}
+                                  onToggle={() => {
+                                    if (isActivePlan) {
+                                      togglePlanItem(item.id);
+                                    } else {
+                                      setStatusMessage('这是历史计划，只能查看，不能修改审批状态。');
+                                    }
+                                  }}
+                                  onInspect={() => setSelectedInspectorItemId(item.id)}
+                                />
+                              ))}
+                            </div>
+                          </div>
+                        ) : null}
+
+                        {messagePlan ? (
+                          <div className="mt-4 flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              onClick={() => void applyPlan()}
+                              disabled={working || !isActivePlan || approvedItemIds.size === 0}
+                              className="inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-slate-800 disabled:opacity-50 dark:bg-teal-300 dark:text-slate-950 dark:hover:bg-teal-200"
+                            >
+                              <PlayCircle className="h-4 w-4" />
+                              {isActivePlan ? '确认执行' : '历史计划'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setComposerValue(`修改上一版参数：${lastInstruction}`)}
+                              className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 transition hover:bg-slate-50 dark:border-white/10 dark:bg-chrome-900 dark:text-chrome-200"
+                            >
+                              <Clipboard className="h-4 w-4" />
+                              修改参数
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setStatusMessage('当前计划仅预览，未写入文库。')}
+                              className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 transition hover:bg-slate-50 dark:border-white/10 dark:bg-chrome-900 dark:text-chrome-200"
+                            >
+                              <FileText className="h-4 w-4" />
+                              只预览
+                            </button>
+                            <button
+                              type="button"
+                              onClick={cancelPlan}
+                              disabled={working || !isActivePlan}
+                              className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50 dark:border-white/10 dark:bg-chrome-900 dark:text-chrome-200"
+                            >
+                              <X className="h-4 w-4" />
+                              取消
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void runAgent(lastInstruction)}
+                              disabled={!lastInstruction || working}
+                              className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50 dark:border-white/10 dark:bg-chrome-900 dark:text-chrome-200"
+                            >
+                              <RotateCcw className="h-4 w-4" />
+                              重新生成
+                            </button>
                           </div>
                         ) : null}
                       </div>
-                      {isUser ? (
-                        <span className="mt-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl bg-white text-slate-700 shadow-lg dark:bg-chrome-900 dark:text-chrome-100">
-                          <User className="h-4.5 w-4.5" strokeWidth={2} />
-                        </span>
-                      ) : null}
                     </article>
                   );
                 })}
-
-                {working ? (
-                  <article className="flex items-start gap-3">
-                    <span className="mt-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl bg-slate-950 text-white shadow-lg dark:bg-teal-300 dark:text-slate-950">
-                      <Bot className="h-4.5 w-4.5" strokeWidth={2} />
-                    </span>
-                    <div className="rounded-[26px] border border-white/80 bg-white/82 px-4 py-3 text-sm leading-7 text-slate-600 shadow-sm dark:border-white/10 dark:bg-chrome-900/76 dark:text-chrome-300">
-                      <Loader2 className="mr-2 inline h-4 w-4 animate-spin" strokeWidth={2} />
-                      正在让模型选择工具并生成计划...
-                    </div>
-                  </article>
-                ) : null}
               </div>
             </div>
 
-            <div className="border-t border-slate-200/70 bg-white/58 px-5 py-4 backdrop-blur-xl dark:border-white/10 dark:bg-chrome-950/52">
-              <div className="mx-auto max-w-4xl">
+            <div className="border-t border-slate-200/70 bg-white/68 px-5 py-4 backdrop-blur-xl dark:border-white/10 dark:bg-[#121922]/72">
+              <div className="mx-auto max-w-5xl">
                 <div className="mb-3 flex flex-wrap gap-2">
                   {promptSuggestions.map((suggestion) => (
                     <button
                       key={suggestion}
                       type="button"
                       onClick={() => setComposerValue(suggestion)}
-                      className="rounded-full border border-slate-200 bg-white/82 px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:border-teal-200 hover:bg-teal-50 hover:text-teal-700 dark:border-white/10 dark:bg-chrome-900/70 dark:text-chrome-300 dark:hover:border-teal-300/30 dark:hover:bg-teal-300/10 dark:hover:text-teal-200"
+                      className="rounded-full border border-slate-200 bg-white/82 px-3 py-1.5 text-xs font-bold text-slate-600 transition hover:border-teal-200 hover:bg-teal-50 hover:text-teal-700 dark:border-white/10 dark:bg-chrome-900/70 dark:text-chrome-300 dark:hover:border-teal-300/30 dark:hover:bg-teal-300/10 dark:hover:text-teal-200"
                     >
                       {suggestion}
                     </button>
@@ -642,13 +819,13 @@ function AgentWorkspace() {
                         void runAgent(composerValue);
                       }
                     }}
-                    className="min-h-[56px] flex-1 resize-none rounded-[24px] border border-slate-200 bg-white/92 px-4 py-3 text-sm leading-6 text-slate-800 shadow-sm outline-none transition focus:border-teal-300 focus:bg-white dark:border-white/10 dark:bg-chrome-900 dark:text-chrome-100 dark:focus:border-teal-300/50"
+                    className="min-h-[58px] flex-1 resize-none rounded-[24px] border border-slate-200 bg-white/95 px-4 py-3 text-sm leading-6 text-slate-800 shadow-sm outline-none transition focus:border-teal-300 focus:bg-white dark:border-white/10 dark:bg-chrome-900 dark:text-chrome-100 dark:focus:border-teal-300/50"
                     placeholder="例如：把选中的论文标题后面加 123，或者清理标签并自动归类..."
                   />
                   <button
                     type="submit"
                     disabled={working || selectedPapers.length === 0 || !composerValue.trim()}
-                    className="inline-flex h-[56px] items-center gap-2 rounded-[22px] bg-slate-950 px-5 text-sm font-bold text-white shadow-[0_18px_40px_rgba(15,23,42,0.18)] transition hover:-translate-y-0.5 hover:bg-slate-800 disabled:translate-y-0 disabled:opacity-50 dark:bg-teal-300 dark:text-slate-950 dark:hover:bg-teal-200"
+                    className="inline-flex h-[58px] items-center gap-2 rounded-[22px] bg-slate-950 px-5 text-sm font-black text-white shadow-[0_18px_40px_rgba(15,23,42,0.18)] transition hover:-translate-y-0.5 hover:bg-slate-800 disabled:translate-y-0 disabled:opacity-50 dark:bg-teal-300 dark:text-slate-950 dark:hover:bg-teal-200"
                   >
                     {working ? <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2} /> : <Send className="h-4 w-4" strokeWidth={2} />}
                     发送
@@ -658,106 +835,126 @@ function AgentWorkspace() {
             </div>
           </section>
 
-          <aside className="min-h-0 border-l border-slate-200/80 bg-white/72 backdrop-blur-xl dark:border-white/10 dark:bg-chrome-950/72">
+          <aside className="min-h-0 border-l border-slate-200/80 bg-white/72 backdrop-blur-xl dark:border-white/10 dark:bg-[#121922]/74">
             <div className="flex h-full min-h-0 flex-col">
               <div className="border-b border-slate-200/70 p-4 dark:border-white/10">
                 <div className="flex items-center justify-between gap-3">
                   <div>
-                    <div className="flex items-center gap-2 text-sm font-bold text-slate-950 dark:text-white">
-                      <BrainCircuit className="h-4 w-4 text-teal-600 dark:text-teal-300" strokeWidth={2} />
-                      计划预览
+                    <div className="flex items-center gap-2 text-sm font-black text-slate-950 dark:text-white">
+                      <GitBranch className="h-4 w-4 text-teal-600 dark:text-teal-300" strokeWidth={2} />
+                      Inspector
                     </div>
                     <div className="mt-1 text-xs text-slate-500 dark:text-chrome-400">
-                      {plan ? `${approvedItemIds.size} / ${plan.items.length} 项待执行` : '尚未生成计划'}
+                      {plan ? `${approvedItemIds.size} / ${plan.items.length} 项待执行` : '等待 Agent 计划'}
                     </div>
                   </div>
                   <button
                     type="button"
                     onClick={() => void applyPlan()}
                     disabled={!plan || approvedItemIds.size === 0 || working}
-                    className="inline-flex items-center gap-2 rounded-2xl bg-teal-600 px-3.5 py-2 text-xs font-bold text-white transition hover:bg-teal-500 disabled:opacity-60 dark:bg-teal-300 dark:text-slate-950 dark:hover:bg-teal-200"
+                    className="inline-flex items-center gap-2 rounded-2xl bg-teal-600 px-3.5 py-2 text-xs font-black text-white transition hover:bg-teal-500 disabled:opacity-60 dark:bg-teal-300 dark:text-slate-950 dark:hover:bg-teal-200"
                   >
                     {working ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
-                    应用
+                    执行
                   </button>
                 </div>
               </div>
 
               <div className="min-h-0 flex-1 overflow-y-auto p-4">
-                {!plan ? (
-                  <div className="rounded-[28px] border border-dashed border-slate-200 bg-slate-50/80 p-5 text-sm leading-7 text-slate-500 dark:border-white/10 dark:bg-chrome-900/60 dark:text-chrome-400">
-                    对话发送后，Agent 会把工具调用拆成独立计划项。你可以逐项取消勾选，再应用到本地文库。
-                  </div>
-                ) : plan.items.length === 0 ? (
-                  <div className="rounded-[28px] border border-emerald-200 bg-emerald-50/80 p-5 text-sm leading-7 text-emerald-700 dark:border-emerald-300/20 dark:bg-emerald-300/10 dark:text-emerald-200">
-                    没有需要变更的内容。当前选择已经符合 {toolLabel(plan.tool)} 的策略。
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    <div className="rounded-[24px] border border-slate-200 bg-slate-50/80 p-4 dark:border-white/10 dark:bg-chrome-900/70">
-                      <div className="text-xs font-semibold uppercase tracking-[0.14em] text-teal-600 dark:text-teal-300">
-                        {toolLabel(plan.tool)}
-                      </div>
-                      <div className="mt-2 text-sm font-bold text-slate-950 dark:text-white">{plan.title}</div>
-                      <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-chrome-400">
-                        {plan.description}
-                      </p>
+                <div className="space-y-4">
+                  <section className="rounded-[26px] border border-slate-200 bg-slate-50/80 p-4 dark:border-white/10 dark:bg-chrome-950/58">
+                    <div className="flex items-center gap-2 text-sm font-black text-slate-950 dark:text-white">
+                      <Database className="h-4 w-4 text-teal-600 dark:text-teal-300" />
+                      当前上下文
                     </div>
+                    <div className="mt-3 grid grid-cols-3 gap-2">
+                      <div className="rounded-2xl border border-slate-200 bg-white p-3 text-center dark:border-white/10 dark:bg-chrome-900">
+                        <div className="text-lg font-black">{selectedPapers.length}</div>
+                        <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">论文</div>
+                      </div>
+                      <div className="rounded-2xl border border-slate-200 bg-white p-3 text-center dark:border-white/10 dark:bg-chrome-900">
+                        <div className="text-lg font-black">{selectedTags.length}</div>
+                        <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">标签</div>
+                      </div>
+                      <div className="rounded-2xl border border-slate-200 bg-white p-3 text-center dark:border-white/10 dark:bg-chrome-900">
+                        <div className="text-lg font-black">{new Set(selectedPapers.flatMap((paper) => paper.categoryIds)).size}</div>
+                        <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">分类</div>
+                      </div>
+                    </div>
+                  </section>
 
-                    {plan.items.map((item) => {
-                      const approved = approvedItemIds.has(item.id);
-
-                      return (
-                        <article
-                          key={item.id}
-                          className={[
-                            'rounded-[24px] border p-4 transition',
-                            approved
-                              ? 'border-teal-200 bg-teal-50/70 dark:border-teal-300/20 dark:bg-teal-300/10'
-                              : 'border-slate-200 bg-white/76 opacity-70 dark:border-white/10 dark:bg-chrome-900/60',
-                          ].join(' ')}
-                        >
-                          <div className="flex items-start gap-3">
-                            <button
-                              type="button"
-                              onClick={() => togglePlanItem(item.id)}
-                              className={[
-                                'mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border',
-                                approved
-                                  ? 'border-teal-500 bg-teal-500 text-white'
-                                  : 'border-slate-300 bg-white text-transparent dark:border-white/20 dark:bg-chrome-950',
-                              ].join(' ')}
-                            >
-                              <Check className="h-3.5 w-3.5" strokeWidth={2.2} />
-                            </button>
-                            <div className="min-w-0 flex-1">
-                              <div className="text-sm font-bold text-slate-950 dark:text-white">
-                                {item.paperTitle}
-                              </div>
-                              <div className="mt-1 text-xs text-slate-500 dark:text-chrome-400">
-                                {item.description}
-                              </div>
-
-                              {item.before || item.after ? (
-                                <div className="mt-3 space-y-2 text-xs leading-5">
-                                  <div className="rounded-2xl border border-slate-200 bg-white px-3 py-2 text-slate-500 dark:border-white/10 dark:bg-chrome-950 dark:text-chrome-400">
-                                    {item.before || '空'}
-                                  </div>
-                                  <div className="flex justify-center text-teal-600 dark:text-teal-300">
-                                    <ArrowRight className="h-4 w-4" strokeWidth={2} />
-                                  </div>
-                                  <div className="rounded-2xl border border-teal-200 bg-white px-3 py-2 text-slate-800 dark:border-teal-300/20 dark:bg-chrome-950 dark:text-chrome-100">
-                                    {item.after || '空'}
-                                  </div>
-                                </div>
-                              ) : null}
-                            </div>
+                  {!plan ? (
+                    <section className="rounded-[28px] border border-dashed border-slate-200 bg-slate-50/80 p-5 text-sm leading-7 text-slate-500 dark:border-white/10 dark:bg-chrome-900/60 dark:text-chrome-400">
+                      发送对话后，Agent 会在这里展示工具、参数、返回结果、diff 和审批按钮。
+                    </section>
+                  ) : (
+                    <>
+                      <section className="rounded-[26px] border border-slate-200 bg-white p-4 dark:border-white/10 dark:bg-chrome-900/72">
+                        <div className="flex items-center gap-2 text-sm font-black text-slate-950 dark:text-white">
+                          <BrainCircuit className="h-4 w-4 text-teal-600 dark:text-teal-300" />
+                          计划概览
+                        </div>
+                        <div className="mt-2 text-xs leading-5 text-slate-500 dark:text-chrome-400">
+                          {plan.description}
+                        </div>
+                        <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 dark:border-white/10 dark:bg-chrome-950">
+                          <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400">Tool</div>
+                          <div className="mt-1 text-sm font-black text-slate-950 dark:text-white">
+                            {toolLabel(plan.tool)}
                           </div>
-                        </article>
-                      );
-                    })}
-                  </div>
-                )}
+                          <div className="font-mono text-[11px] text-slate-400">{toolFunctionName(plan.tool)}</div>
+                        </div>
+                      </section>
+
+                      <section className="space-y-3">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2 text-sm font-black text-slate-950 dark:text-white">
+                            <Layers3 className="h-4 w-4 text-teal-600 dark:text-teal-300" />
+                            审批项
+                          </div>
+                          <span className="text-xs font-bold text-slate-400">{selectedPlanItems.length} selected</span>
+                        </div>
+                        {plan.items.map((item) => (
+                          <PlanDiffCard
+                            key={item.id}
+                            item={item}
+                            approved={approvedItemIds.has(item.id)}
+                            onToggle={() => togglePlanItem(item.id)}
+                            onInspect={() => setSelectedInspectorItemId(item.id)}
+                          />
+                        ))}
+                      </section>
+                    </>
+                  )}
+
+                  {selectedInspectorItem ? (
+                    <section className="rounded-[26px] border border-slate-200 bg-white p-4 dark:border-white/10 dark:bg-chrome-900/72">
+                      <div className="flex items-center gap-2 text-sm font-black text-slate-950 dark:text-white">
+                        <MessageSquareText className="h-4 w-4 text-teal-600 dark:text-teal-300" />
+                        选中项详情
+                      </div>
+                      <div className="mt-3 space-y-3">
+                        <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 dark:border-white/10 dark:bg-chrome-950">
+                          <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400">Paper</div>
+                          <div className="mt-1 text-xs font-bold leading-5 text-slate-700 dark:text-chrome-200">
+                            {selectedInspectorItem.paperTitle}
+                          </div>
+                        </div>
+                        <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 dark:border-white/10 dark:bg-chrome-950">
+                          <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400">Action</div>
+                          <div className="mt-1 text-xs leading-5 text-slate-600 dark:text-chrome-300">
+                            {selectedInspectorItem.description}
+                          </div>
+                        </div>
+                        {selectedInspectorItem.targetCategoryName ? (
+                          <div className="rounded-2xl border border-teal-200 bg-teal-50 px-3 py-2 text-xs leading-5 text-teal-700 dark:border-teal-300/20 dark:bg-teal-300/10 dark:text-teal-200">
+                            Collection · {selectedInspectorItem.targetCategoryParentName} / {selectedInspectorItem.targetCategoryName}
+                          </div>
+                        ) : null}
+                      </div>
+                    </section>
+                  ) : null}
+                </div>
               </div>
 
               {plan && plan.items.length > 0 ? (
@@ -765,15 +962,26 @@ function AgentWorkspace() {
                   <div className="mb-3 text-xs text-slate-500 dark:text-chrome-400">
                     将应用 {selectedPlanItems.length} 个已勾选计划项。
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => void applyPlan()}
-                    disabled={selectedPlanItems.length === 0 || working}
-                    className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-slate-950 px-4 py-3 text-sm font-bold text-white transition hover:bg-slate-800 disabled:opacity-60 dark:bg-teal-300 dark:text-slate-950 dark:hover:bg-teal-200"
-                  >
-                    {working ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-                    确认应用计划
-                  </button>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void applyPlan()}
+                      disabled={selectedPlanItems.length === 0 || working}
+                      className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-950 px-4 py-3 text-sm font-black text-white transition hover:bg-slate-800 disabled:opacity-60 dark:bg-teal-300 dark:text-slate-950 dark:hover:bg-teal-200"
+                    >
+                      <PlayCircle className="h-4 w-4" />
+                      确认执行
+                    </button>
+                    <button
+                      type="button"
+                      onClick={cancelPlan}
+                      disabled={working}
+                      className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-black text-slate-700 transition hover:bg-slate-50 disabled:opacity-60 dark:border-white/10 dark:bg-chrome-900 dark:text-chrome-200"
+                    >
+                      <X className="h-4 w-4" />
+                      取消
+                    </button>
+                  </div>
                 </div>
               ) : null}
             </div>
