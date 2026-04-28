@@ -1,17 +1,19 @@
-﻿import clsx from 'clsx';
+import clsx from 'clsx';
 import {
   ArrowLeft,
   ArrowRight,
   BookOpenText,
+  Bot,
   CheckCircle2,
   FileText,
   FolderOpen,
   Languages,
-  MessageSquareText,
+  Library,
   MousePointerClick,
   Settings2,
   Sparkles,
   X,
+  type LucideIcon,
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import type { UiLanguage } from '../../types/reader';
@@ -31,7 +33,7 @@ interface OnboardingStep {
   targetLabel: string;
   targetSelector?: string;
   requiresTargetClick?: boolean;
-  icon: typeof FolderOpen;
+  icon: LucideIcon;
 }
 
 interface OnboardingGuideProps {
@@ -51,84 +53,102 @@ function buildSteps(language: UiLanguage): OnboardingStep[] {
   return [
     {
       eyebrow: pickText(language, '第 1 步', 'Step 1'),
-      title: pickText(language, '先找到设置入口', 'Start from Settings'),
+      title: pickText(language, '认识左侧工作区', 'Understand the workspace rail'),
       description: pickText(
         language,
-        '新手第一步不是先打开 PDF，而是先进入设置，把文库来源接好。',
-        'For first use, start in Settings and connect your library source before opening PDFs.',
+        '现在 PaperQuay 左侧是工作区入口：文库负责管理和阅读论文，Agent 负责用自然语言批量整理文献。',
+        'PaperQuay now uses a workspace rail: Library is for managing and reading papers, while Agent handles natural-language batch operations.',
       ),
       detail: pickText(
         language,
-        '点击发光的设置按钮，引导会自动进入 Zotero 配置页。',
-        'Click the highlighted area to continue. The guide will open Settings and move into Zotero setup automatically.',
+        '新手引导会先停留在文库工作区，完成本地文库、导入、解析、翻译和概览的核心流程，最后再介绍 Agent。',
+        'This guide starts in the Library workspace, walks through local library setup, import, parsing, translation, and overview, then introduces Agent.',
       ),
-      targetLabel: pickText(language, '设置按钮', 'Settings button'),
-      targetSelector: '[data-tour="settings"]',
-      icon: Settings2,
+      targetLabel: pickText(language, '文库工作区入口', 'Library workspace entry'),
+      targetSelector: '[data-tour="workspace-library"]',
+      icon: Library,
     },
     {
       eyebrow: pickText(language, '第 2 步', 'Step 2'),
-      title: pickText(language, '配置 Zotero 本地文库', 'Configure the local Zotero library'),
+      title: pickText(language, '打开设置', 'Open Settings'),
       description: pickText(
         language,
-        '在“本地库与 Zotero”里，可以自动搜索 Zotero，也可以手动选择包含 zotero.sqlite 的目录。',
-        'In Library & Zotero settings, use Auto Detect or manually select the folder that contains zotero.sqlite.',
+        '第一次使用时，先进入设置检查文库来源、模型、MinerU 和翻译配置。',
+        'For first use, open Settings to review library sources, models, MinerU, and translation configuration.',
       ),
       detail: pickText(
         language,
-        '配置完后不用手动找页面，下一步会自动关闭设置并回到文库。',
-        'After setup, the next step will close Settings and return to the library automatically.',
+        '请点击发光的设置按钮继续。引导会自动进入文库相关配置页。',
+        'Click the highlighted Settings button to continue. The guide will open the library-related settings page.',
       ),
-      targetLabel: pickText(language, 'Zotero 导入区', 'Zotero import area'),
+      targetLabel: pickText(language, '设置按钮', 'Settings button'),
+      targetSelector: '[data-tour="settings"]',
+      requiresTargetClick: true,
+      icon: Settings2,
+    },
+    {
+      eyebrow: pickText(language, '第 3 步', 'Step 3'),
+      title: pickText(language, '配置本地文献存储与可选 Zotero', 'Configure local storage and optional Zotero'),
+      description: pickText(
+        language,
+        'PaperQuay 已经是独立文献管理软件：你可以直接导入 PDF；Zotero 只是可选导入来源。',
+        'PaperQuay is now a standalone literature manager: you can import PDFs directly; Zotero is only an optional import source.',
+      ),
+      detail: pickText(
+        language,
+        '如果你使用 Zotero，可以在这里自动查找或手动选择 zotero.sqlite 所在目录；独立 PDF 的存储文件夹可在文库侧栏继续设置。',
+        'If you use Zotero, auto-detect or select the folder containing zotero.sqlite here. Standalone PDF storage is configured from the Library sidebar.',
+      ),
+      targetLabel: pickText(language, '文库与 Zotero 设置区', 'Library & Zotero settings'),
       targetSelector: '[data-tour="zotero-settings"]',
       icon: FolderOpen,
     },
     {
-      eyebrow: pickText(language, '第 3 步', 'Step 3'),
-      title: pickText(language, '回到文库，先认识来源', 'Return to the library and review sources'),
+      eyebrow: pickText(language, '第 4 步', 'Step 4'),
+      title: pickText(language, '回到文库，导入或拖拽 PDF', 'Return to Library and import PDFs'),
       description: pickText(
         language,
-        '这里是论文的入口。左侧用来切换最近文档、全部条目、Zotero 分类和独立 PDF。',
-        'This is the paper entry point. The left side switches recent papers, all items, Zotero collections, and standalone PDFs.',
+        '文库是默认工作区。你可以点击“打开 PDF”、拖拽 PDF 到窗口，或从 Zotero 导入已有分类。',
+        'Library is the default workspace. You can click Open PDF, drag PDFs into the window, or import existing Zotero collections.',
       ),
       detail: pickText(
         language,
-        '引导已自动关闭设置并回到文库，后面会以一篇论文做演示。',
-        'The guide has closed Settings and returned to the library. Next it will use one paper as the demo document.',
+        '引导模式会暂时只显示内置 Welcome 文档，避免和你已有的文库内容混在一起。',
+        'Guide mode temporarily shows only the bundled Welcome document, so it does not mix with your existing library.',
       ),
-      targetLabel: pickText(language, '文库来源栏', 'Library source sidebar'),
+      targetLabel: pickText(language, '文库来源与导入区', 'Library source and import area'),
       targetSelector: '[data-tour="library-sidebar"]',
       icon: BookOpenText,
     },
     {
-      eyebrow: pickText(language, '第 4 步', 'Step 4'),
-      title: pickText(language, '选中一篇论文', 'Select one paper'),
+      eyebrow: pickText(language, '第 5 步', 'Step 5'),
+      title: pickText(language, '查看文献列表和右侧详情', 'Review the paper list and details'),
       description: pickText(
         language,
-        '中间是论文列表。单击一篇论文会更新右侧预览，双击则进入阅读页。',
-        'The center pane is the paper list. Single-click a paper to update the preview; double-click opens the reader.',
+        '中间区域显示当前分类下的文献，右侧显示 PDF、解析状态、AI 概览和论文详情。',
+        'The center pane lists papers in the current collection, and the right side shows PDF state, parsing status, AI overview, and details.',
       ),
       detail: pickText(
         language,
-        '如果文库已有论文，引导会自动选中一篇。没有的话，先完成 Zotero 导入或添加独立 PDF。',
-        'If papers exist, the guide selects one automatically. If not, finish Zotero import or add a standalone PDF first.',
+        '真实使用时可以搜索、排序、拖动排序、右键管理标签和分类；这里先以 Welcome 文档演示主流程。',
+        'In real use, you can search, sort, drag to reorder, and right-click to manage tags and collections. Here we use the Welcome document for the main flow.',
       ),
-      targetLabel: pickText(language, '论文列表', 'Paper list'),
+      targetLabel: pickText(language, '文献列表', 'Paper list'),
       targetSelector: '[data-tour="paper-list"]',
       icon: MousePointerClick,
     },
     {
-      eyebrow: pickText(language, '第 5 步', 'Step 5'),
+      eyebrow: pickText(language, '第 6 步', 'Step 6'),
       title: pickText(language, '先执行 MinerU 解析', 'Run MinerU parsing first'),
       description: pickText(
         language,
-        'Welcome 文档一开始没有解析结果。点击 MinerU 解析后，会直接显示内置结构块。',
-        'The Welcome document starts without parsed results. Click MinerU Parse to reveal the bundled structure blocks.',
+        '结构化解析会把 PDF 拆成标题、段落、公式、表格等块，后续翻译、跳转和概览都依赖这些结构。',
+        'Structured parsing splits the PDF into headings, paragraphs, equations, tables, and blocks used by translation, jumping, and overview.',
       ),
       detail: pickText(
         language,
-        '必须点击发光的 MinerU 解析按钮才能继续；这是内置演示数据，不会调用 API。',
-        'Click the highlighted MinerU Parse button to continue. This uses bundled demo data and does not call any API.',
+        '请点击发光的 MinerU 解析按钮继续。Welcome 使用内置演示数据，不会调用 API。',
+        'Click the highlighted MinerU Parse button to continue. Welcome uses bundled demo data and will not call any API.',
       ),
       targetLabel: pickText(language, 'MinerU 解析按钮', 'MinerU Parse button'),
       targetSelector: '[data-tour="overview-mineru-parse"]',
@@ -136,125 +156,108 @@ function buildSteps(language: UiLanguage): OnboardingStep[] {
       icon: Sparkles,
     },
     {
-      eyebrow: pickText(language, '第 6 步', 'Step 6'),
-      title: pickText(language, '再显示全文翻译', 'Reveal the full translation'),
+      eyebrow: pickText(language, '第 7 步', 'Step 7'),
+      title: pickText(language, '显示全文翻译结果', 'Reveal full-document translation'),
       description: pickText(
         language,
-        '解析完成后，全文翻译按钮会可用。点击后会显示 Welcome 的内置译文状态。',
-        'After parsing, the Translate Document button becomes available. Click it to reveal the bundled Welcome translation state.',
+        '全文翻译会按结构块保存译文，便于后续左右对照和段落级跳转。',
+        'Full-document translation is stored by structured blocks, which enables side-by-side reading and block-level jumping.',
       ),
       detail: pickText(
         language,
-        '这一步同样不调用 API，只是演示全文翻译完成后的概览效果。',
-        'This step also does not call any API; it demonstrates how the overview looks after full translation is ready.',
+        '请点击发光的全文翻译按钮。这里同样只显示内置演示状态，不调用真实翻译接口。',
+        'Click the highlighted full-translation button. This only reveals bundled demo state and does not call a real translation API.',
       ),
-      targetLabel: pickText(language, '全文翻译按钮', 'Translate Document button'),
+      targetLabel: pickText(language, '全文翻译按钮', 'Full translation button'),
       targetSelector: '[data-tour="overview-translate-document"]',
       requiresTargetClick: true,
       icon: Languages,
     },
     {
-      eyebrow: pickText(language, '第 7 步', 'Step 7'),
-      title: pickText(language, '生成 AI 概览', 'Generate the AI overview'),
+      eyebrow: pickText(language, '第 8 步', 'Step 8'),
+      title: pickText(language, '生成论文概览', 'Generate the paper overview'),
       description: pickText(
         language,
-        '概览也先不显示。点击生成概览后，概览页会加载内置 AI 概览。',
-        'The overview is also hidden at first. Click Generate Overview to load the bundled AI overview into the overview page.',
+        '概览不是单纯摘要，而是把研究背景、问题、方法、发现和阅读建议整理成结构化卡片。',
+        'The overview is more than a summary: it organizes background, problem, method, findings, and reading suggestions into structured cards.',
       ),
       detail: pickText(
         language,
-        '点击发光的生成概览按钮后，引导会自动进入阅读器。',
-        'After clicking the highlighted Generate Overview button, the guide will open the reader automatically.',
+        '请点击发光的生成概览按钮。完成后，引导会自动进入阅读器。',
+        'Click the highlighted Generate Overview button. After that, the guide will open the reader automatically.',
       ),
       targetLabel: pickText(language, '生成概览按钮', 'Generate Overview button'),
       targetSelector: '[data-tour="generate-summary"]',
       requiresTargetClick: true,
-      icon: Sparkles,
+      icon: FileText,
     },
     {
-      eyebrow: pickText(language, '第 8 步', 'Step 8'),
+      eyebrow: pickText(language, '第 9 步', 'Step 9'),
       title: pickText(language, '试一下左右对照跳转', 'Try linked left-right jumping'),
       description: pickText(
         language,
-        '解析后，PDF 上的热区和右侧结构块使用同一个 blockId 联动。',
-        'After parsing, PDF hot zones and right-side blocks are linked by the same blockId.',
+        '阅读器会把 PDF 页面热区和右侧结构块绑定起来，适合快速定位公式、段落和译文。',
+        'The reader links PDF hot zones with structured blocks on the right, making it easy to locate formulas, paragraphs, and translations.',
       ),
       detail: pickText(
         language,
         '点 PDF 热区会定位右侧块；点右侧块会跳回对应 PDF 页面和 bbox。',
-        'Click a PDF hot zone to locate the right block; click a right block to jump back to the PDF page and bbox.',
+        'Click a PDF hot zone to locate the right block; click a right-side block to jump back to the PDF page and bbox.',
       ),
       targetLabel: pickText(language, '左右对照阅读区', 'Linked reading area'),
       targetSelector: '[data-tour="linked-reading"]',
       icon: MousePointerClick,
     },
     {
-      eyebrow: pickText(language, '第 9 步', 'Step 9'),
-      title: pickText(language, '了解划词翻译、AI 模型和 AI 概览', 'Selection translation, AI model, and AI overview'),
-      description: pickText(
-        language,
-        '右侧问答助手和 AI 概览会跟当前论文绑定。划选文本后可以做划词翻译，模型和 Key 在设置里配置。',
-        'The assistant and AI overview are bound to the current paper. Select text for selection translation; configure models and keys in Settings.',
-      ),
-      detail: pickText(
-        language,
-        '这里主要看问答助手和概览区，真正使用时再输入问题或选中文本。',
-        'Focus on the assistant and overview area. In real use, type a question or select text when needed.',
-      ),
-      targetLabel: pickText(language, 'AI 概览 / 助手区', 'AI overview / assistant area'),
-      targetSelector: '[data-tour="ai-summary"]',
-      icon: MessageSquareText,
-    },
-    {
       eyebrow: pickText(language, '第 10 步', 'Step 10'),
-      title: pickText(language, '点击全文翻译', 'Click full-document translation'),
+      title: pickText(language, '阅读器里的工具入口', 'Reader tools'),
       description: pickText(
         language,
-        '全文翻译会按结构块生成译文，保存到当前论文工作区。',
-        'Full-document translation translates by structured blocks and stores results in the current paper workspace.',
+        '阅读器顶部工具里也能打开 JSON、执行 MinerU 解析、全文翻译、清空译文和切换显示状态。',
+        'Reader tools can open JSON, run MinerU parsing, translate the document, clear translations, and toggle display state.',
       ),
       detail: pickText(
         language,
-        '入口也在“工具”里。如果按钮不可用，通常是还没有结构块或正在处理。',
-        'The entry is also in Tools. If disabled, blocks may be missing or processing may already be running.',
+        '这里重点认识入口位置。真实使用时，如果按钮不可用，通常是还没有结构块或正在执行任务。',
+        'This step focuses on where the entry is. In real use, disabled actions usually mean blocks are missing or a task is running.',
       ),
-      targetLabel: pickText(language, '全文翻译入口', 'Full translation entry'),
+      targetLabel: pickText(language, '阅读器工具入口', 'Reader tools entry'),
       targetSelector: '[data-tour="reader-tools"]',
       icon: Languages,
     },
     {
       eyebrow: pickText(language, '第 11 步', 'Step 11'),
-      title: pickText(language, '看译文块并演示跳转', 'Review translated blocks and jumping'),
+      title: pickText(language, '概览与问答助手', 'Overview and QA assistant'),
       description: pickText(
         language,
-        '翻译完成后，右侧结构块会显示译文。原文、译文和当前激活块会一起联动。',
-        'After translation, the right-side blocks show translated text. Source text, translations, and the active block stay linked.',
+        '概览页和问答助手会跟当前论文绑定。划词翻译、问答模型、概览模型都可以在设置中单独配置。',
+        'The overview page and QA assistant are bound to the current paper. Selection translation, QA models, and overview models can be configured separately.',
       ),
       detail: pickText(
         language,
-        '这一步重点看右侧结构块：点击译文块仍然可以跳回 PDF。',
-        'Focus on the right block pane: clicking a translated block still jumps back to the PDF.',
+        '如果你想让模型基于全文回答，先完成解析；如果只是快速理解，可以先看概览卡片。',
+        'If you want answers grounded in the full text, parse first. For quick understanding, start with the overview cards.',
       ),
-      targetLabel: pickText(language, '结构块与译文区', 'Block and translation pane'),
-      targetSelector: '[data-tour="block-translation"]',
-      icon: ArrowRight,
+      targetLabel: pickText(language, 'AI 概览 / 助手区', 'AI overview / assistant area'),
+      targetSelector: '[data-tour="ai-summary"]',
+      icon: Sparkles,
     },
     {
       eyebrow: pickText(language, '最后一步', 'Final step'),
-      title: pickText(language, '概览页也能解析和翻译', 'Overview can also parse and translate'),
+      title: pickText(language, 'Agent 工作区用于批量整理', 'Use Agent for batch library operations'),
       description: pickText(
         language,
-        '引导会自动切回概览页。不进入细读也可以在这里执行 MinerU 解析、全文翻译和概览生成。',
-        'The guide switches back to Overview. You can run MinerU parsing, full translation, and overview generation here without entering close reading.',
+        'Agent 是第二个工作区。它可以基于你选择的论文调用工具，生成可审查的重命名、标签清洗、元数据补全和自动归类计划。',
+        'Agent is the second workspace. It can call tools over selected papers and produce reviewable plans for renaming, tag cleanup, metadata completion, and classification.',
       ),
       detail: pickText(
         language,
-        '这就是推荐的新手路径：先接入文库，再选论文，然后解析、对照阅读、翻译和概览。',
-        'Recommended path: connect the library, select a paper, then parse, read side by side, translate, and generate an overview.',
+        '引导结束后，你可以点击左侧 Agent 图标，用自然语言让它整理文库；写入本地数据库前都会让你确认。',
+        'After the guide, click the Agent icon on the left and describe library tasks in natural language. Local writes require confirmation.',
       ),
-      targetLabel: pickText(language, '阅读器概览操作', 'Reader overview actions'),
-      targetSelector: '[data-tour="overview-actions"]',
-      icon: CheckCircle2,
+      targetLabel: pickText(language, 'Agent 工作区入口', 'Agent workspace entry'),
+      targetSelector: '[data-tour="workspace-agent"]',
+      icon: Bot,
     },
   ];
 }
@@ -326,8 +329,8 @@ function getSpotlightRect(selector?: string): SpotlightRect | null {
 }
 
 function getCardPosition(rect: SpotlightRect | null) {
-  const cardWidth = Math.min(420, window.innerWidth - 32);
-  const cardHeight = 360;
+  const cardWidth = Math.min(430, window.innerWidth - 32);
+  const cardHeight = 372;
 
   if (!rect) {
     return {
@@ -409,10 +412,7 @@ export default function OnboardingGuide({
   const clickCurrentTarget = () => {
     if (step.requiresTargetClick && step.targetSelector) {
       const target = document.querySelector<HTMLElement>(step.targetSelector);
-
-      if (target) {
-        target.click();
-      }
+      target?.click();
     }
 
     advanceStep();
@@ -464,7 +464,7 @@ export default function OnboardingGuide({
             width: spotlightRect.width,
             height: spotlightRect.height,
           }}
-          aria-label={l('\u7ee7\u7eed\u65b0\u624b\u5f15\u5bfc', 'Continue onboarding')}
+          aria-label={l('继续新手引导', 'Continue onboarding')}
         />
       ) : null}
 
@@ -537,7 +537,7 @@ export default function OnboardingGuide({
               onClick={onClose}
               className="inline-flex items-center justify-center rounded-xl px-4 py-2.5 text-sm font-semibold text-rose-600 transition hover:bg-rose-50 hover:text-rose-700 dark:text-rose-300 dark:hover:bg-rose-400/10 dark:hover:text-rose-200"
             >
-              {l('\u9000\u51fa\u65b0\u624b\u5f15\u5bfc', 'Exit Guide')}
+              {l('退出新手引导', 'Exit Guide')}
             </button>
             <div className="flex items-center justify-end gap-3">
               <button
@@ -561,10 +561,10 @@ export default function OnboardingGuide({
                   <ArrowRight className="mr-2 h-4 w-4" strokeWidth={1.9} />
                 )}
                 {isLastStep
-                  ? l('\u5b8c\u6210', 'Finish')
+                  ? l('完成', 'Finish')
                   : step.requiresTargetClick && spotlightRect
                     ? l('请点击高亮区域', 'Click Highlight')
-                    : l('\u7ee7\u7eed', 'Continue')}
+                    : l('继续', 'Continue')}
               </button>
             </div>
           </div>

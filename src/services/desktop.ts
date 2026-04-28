@@ -250,14 +250,6 @@ export async function loadPdfBinary(source: PdfSource): Promise<Uint8Array | nul
   return bytes;
 }
 
-export async function runMineruPlaceholder(pdfPath: string): Promise<string> {
-  try {
-    return await invoke<string>('run_mineru_placeholder', { pdfPath });
-  } catch (error) {
-    throw new Error(toErrorMessage(error, '调用 MinerU 预留入口失败'));
-  }
-}
-
 export interface MineruCloudParseOptions {
   apiToken: string;
   pdfPath: string;

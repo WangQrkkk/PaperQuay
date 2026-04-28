@@ -6,9 +6,97 @@ on:
     tags:
       - "app-v*"
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
+  create-release:
+    name: Create release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      release_id: ${{ steps.release.outputs.release_id }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+      version: ${{ steps.release.outputs.version }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create or reuse one draft release
+        id: release
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+
+            const packageJson = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+            const tagName = context.ref.startsWith('refs/tags/')
+              ? context.ref.replace('refs/tags/', '')
+              : `app-v${packageJson.version}`;
+            const version = tagName.replace(/^app-v/, '');
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const releaseName = `PaperQuay v${version}`;
+            const releaseBodyTemplate = fs.existsSync('.github/release-notes.md')
+              ? fs.readFileSync('.github/release-notes.md', 'utf8')
+              : 'Download installers from Assets.';
+            const releaseBody = releaseBodyTemplate.replaceAll('{{VERSION}}', version);
+
+            const releases = await github.paginate(github.rest.repos.listReleases, {
+              owner,
+              repo,
+              per_page: 100,
+            });
+            const matches = releases
+              .filter((release) => release.tag_name === tagName)
+              .sort((left, right) => new Date(left.created_at) - new Date(right.created_at));
+
+            let release = matches.find((item) => !item.draft) ?? matches[0];
+
+            if (release) {
+              const { data } = await github.rest.repos.updateRelease({
+                owner,
+                repo,
+                release_id: release.id,
+                name: releaseName,
+                body: releaseBody,
+                prerelease: false,
+                ...(release.draft ? { draft: true } : {}),
+              });
+              release = data;
+            } else {
+              const { data } = await github.rest.repos.createRelease({
+                owner,
+                repo,
+                tag_name: tagName,
+                name: releaseName,
+                body: releaseBody,
+                draft: true,
+                prerelease: false,
+              });
+              release = data;
+            }
+
+            for (const duplicate of matches) {
+              if (duplicate.id !== release.id && duplicate.draft) {
+                await github.rest.repos.deleteRelease({
+                  owner,
+                  repo,
+                  release_id: duplicate.id,
+                });
+              }
+            }
+
+            core.setOutput('release_id', String(release.id));
+            core.setOutput('tag_name', tagName);
+            core.setOutput('version', version);
+
   publish-tauri:
     name: Build ${{ matrix.name }}
+    needs: create-release
     runs-on: ${{ matrix.platform }}
     permissions:
       contents: write
@@ -58,14 +146,10 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Build and create GitHub release
-        uses: tauri-apps/tauri-action@v0
+      - name: Build and upload release assets
+        uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: app-v__VERSION__
-          releaseName: "PaperQuay v__VERSION__"
-          releaseBody: "Download installers from Assets."
-          releaseDraft: true
-          prerelease: false
+          releaseId: ${{ needs.create-release.outputs.release_id }}
           args: ${{ matrix.args }}

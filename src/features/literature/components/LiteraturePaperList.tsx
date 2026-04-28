@@ -52,6 +52,8 @@ interface LiteraturePaperListProps {
     targetPaperId: string,
     placement: 'before' | 'after',
   ) => void;
+  onPaperDropOnCategory: (paperId: string, categoryId: string) => void;
+  onPaperPointerDragOverCategory: (categoryId: string | null) => void;
   onPaperContextMenu: (
     event: MouseEvent<HTMLDivElement>,
     paper: LiteraturePaper,
@@ -74,6 +76,8 @@ export default function LiteraturePaperList({
   onOpenPaper,
   onPaperDragStart,
   onPaperReorder,
+  onPaperDropOnCategory,
+  onPaperPointerDragOverCategory,
   onPaperContextMenu,
 }: LiteraturePaperListProps) {
   const l = useLocaleText();
@@ -88,7 +92,15 @@ export default function LiteraturePaperList({
     startY: number;
     active: boolean;
   } | null>(null);
+  const categoryDragRef = useRef<{
+    paperId: string;
+    pointerId: number;
+    startX: number;
+    startY: number;
+    active: boolean;
+  } | null>(null);
   const [sortDraggingPaperId, setSortDraggingPaperId] = useState<string | null>(null);
+  const [categoryDraggingPaperId, setCategoryDraggingPaperId] = useState<string | null>(null);
   const [suppressClickPaperId, setSuppressClickPaperId] = useState<string | null>(null);
 
   const findPointerDropTarget = (
@@ -108,6 +120,13 @@ export default function LiteraturePaperList({
       clientY < rect.top + rect.height / 2 ? 'before' : 'after';
 
     return { paperId, placement };
+  };
+
+  const findCategoryDropTarget = (clientX: number, clientY: number): string | null => {
+    const element = document.elementFromPoint(clientX, clientY);
+    const target = element?.closest<HTMLElement>('[data-paperquay-category-drop-id]');
+
+    return target?.dataset.paperquayCategoryDropId ?? null;
   };
 
   const handlePaperDragOver = (
@@ -154,6 +173,13 @@ export default function LiteraturePaperList({
     sortDragRef.current = null;
     setDropIndicator(null);
     setSortDraggingPaperId(null);
+    onPaperPointerDragOverCategory(null);
+  };
+
+  const resetCategoryDrag = () => {
+    categoryDragRef.current = null;
+    setCategoryDraggingPaperId(null);
+    onPaperPointerDragOverCategory(null);
   };
 
   const handleSortPointerDown = (
@@ -194,6 +220,16 @@ export default function LiteraturePaperList({
     dragState.active = true;
     setSortDraggingPaperId(dragState.paperId);
 
+    const categoryId = findCategoryDropTarget(event.clientX, event.clientY);
+
+    if (categoryId) {
+      setDropIndicator(null);
+      onPaperPointerDragOverCategory(categoryId);
+      return;
+    }
+
+    onPaperPointerDragOverCategory(null);
+
     const target = findPointerDropTarget(event.clientX, event.clientY);
 
     if (!target || target.paperId === dragState.paperId) {
@@ -212,6 +248,7 @@ export default function LiteraturePaperList({
     }
 
     event.currentTarget.releasePointerCapture(event.pointerId);
+    const categoryId = findCategoryDropTarget(event.clientX, event.clientY);
     const target = findPointerDropTarget(event.clientX, event.clientY);
 
     if (dragState.active) {
@@ -219,11 +256,80 @@ export default function LiteraturePaperList({
       window.setTimeout(() => setSuppressClickPaperId(null), 0);
     }
 
-    if (dragState.active && target && target.paperId !== dragState.paperId) {
+    if (dragState.active && categoryId) {
+      onPaperDropOnCategory(dragState.paperId, categoryId);
+    } else if (dragState.active && target && target.paperId !== dragState.paperId) {
       onPaperReorder(dragState.paperId, target.paperId, target.placement);
     }
 
     resetSortDrag();
+  };
+
+  const handleCategoryPointerDown = (
+    event: PointerEvent<HTMLDivElement>,
+    paper: LiteraturePaper,
+  ) => {
+    if (event.button !== 0) {
+      return;
+    }
+
+    if ((event.target as HTMLElement).closest('[data-paper-sort-handle]')) {
+      return;
+    }
+
+    event.currentTarget.setPointerCapture(event.pointerId);
+    categoryDragRef.current = {
+      paperId: paper.id,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      active: false,
+    };
+  };
+
+  const handleCategoryPointerMove = (event: PointerEvent<HTMLDivElement>) => {
+    const dragState = categoryDragRef.current;
+
+    if (!dragState) {
+      return;
+    }
+
+    const distance = Math.hypot(
+      event.clientX - dragState.startX,
+      event.clientY - dragState.startY,
+    );
+
+    if (!dragState.active && distance < 6) {
+      return;
+    }
+
+    event.preventDefault();
+    dragState.active = true;
+    setCategoryDraggingPaperId(dragState.paperId);
+    onPaperPointerDragOverCategory(findCategoryDropTarget(event.clientX, event.clientY));
+  };
+
+  const handleCategoryPointerUp = (event: PointerEvent<HTMLDivElement>) => {
+    const dragState = categoryDragRef.current;
+
+    if (!dragState) {
+      return;
+    }
+
+    event.currentTarget.releasePointerCapture(event.pointerId);
+    const categoryId = findCategoryDropTarget(event.clientX, event.clientY);
+
+    if (dragState.active) {
+      event.preventDefault();
+      setSuppressClickPaperId(dragState.paperId);
+      window.setTimeout(() => setSuppressClickPaperId(null), 0);
+
+      if (categoryId) {
+        onPaperDropOnCategory(dragState.paperId, categoryId);
+      }
+    }
+
+    resetCategoryDrag();
   };
 
   const handleRowKeyDown = (
@@ -322,7 +428,11 @@ export default function LiteraturePaperList({
                     role="button"
                     tabIndex={0}
                     data-paper-row-id={paper.id}
-                    draggable
+                    draggable={false}
+                    onPointerDown={(event) => handleCategoryPointerDown(event, paper)}
+                    onPointerMove={handleCategoryPointerMove}
+                    onPointerUp={handleCategoryPointerUp}
+                    onPointerCancel={resetCategoryDrag}
                     onDragStart={(event) => {
                       setDraggingPaperId(paper.id);
                       onPaperDragStart(event, paper);
@@ -352,9 +462,11 @@ export default function LiteraturePaperList({
                           ? 'border-teal-300 bg-teal-50/60 dark:border-teal-300/40 dark:bg-teal-300/10'
                           : 'border-slate-200 bg-white/82 hover:border-slate-300 hover:bg-white dark:border-white/10 dark:bg-[#1e1e1e] dark:hover:bg-[#242424]',
                       sortDraggingPaperId === paper.id && 'opacity-60 ring-2 ring-teal-300/60',
+                      categoryDraggingPaperId === paper.id && 'opacity-70 ring-2 ring-teal-300/70',
                     )}
                   >
                     <span
+                      data-paper-sort-handle
                       draggable={false}
                       title={l('拖动排序', 'Drag to reorder')}
                       onPointerDown={(event) => handleSortPointerDown(event, paper)}

@@ -13,8 +13,9 @@ import {
   RotateCcw,
 } from 'lucide-react';
 import type { LibraryAgentPlanItem } from '../../services/libraryAgent';
-import { capabilityForTool, durationLabel } from './AgentWorkspace.model';
+import { capabilityForTool, durationLabel, toolLabel } from './AgentWorkspace.model';
 import type { AgentStepStatus, AgentToolCallView, AgentTraceStep } from './AgentWorkspace.types';
+import { useAppLocale, useLocaleText } from '../../i18n/uiLanguage';
 
 function statusTone(status: AgentStepStatus): string {
   switch (status) {
@@ -69,6 +70,8 @@ export function PlanDiffCard({
   onToggle: () => void;
   onInspect: () => void;
 }) {
+  const l = useLocaleText();
+
   return (
     <article
       className={[
@@ -106,7 +109,7 @@ export function PlanDiffCard({
                   Before
                 </div>
                 <div className="line-clamp-3 text-slate-600 dark:text-chrome-300">
-                  {item.before || '空'}
+                  {item.before || l('空', 'Empty')}
                 </div>
               </div>
               <div className="flex justify-center text-teal-600 dark:text-teal-300">
@@ -117,7 +120,7 @@ export function PlanDiffCard({
                   After
                 </div>
                 <div className="line-clamp-3 text-slate-900 dark:text-chrome-100">
-                  {item.after || '空'}
+                  {item.after || l('空', 'Empty')}
                 </div>
               </div>
             </div>
@@ -128,7 +131,7 @@ export function PlanDiffCard({
             onClick={onInspect}
             className="mt-3 text-xs font-bold text-teal-700 opacity-80 transition hover:opacity-100 dark:text-teal-200"
           >
-            查看详情
+            {l('查看详情', 'View Details')}
           </button>
         </div>
       </div>
@@ -147,17 +150,20 @@ export function TraceTimeline({
   expandedStepKeys: Set<string>;
   onToggleStep: (stepKey: string) => void;
 }) {
+  const l = useLocaleText();
+  const locale = useAppLocale();
+
   return (
     <div className="rounded-[26px] border border-slate-200 bg-slate-50/70 p-4 dark:border-white/10 dark:bg-chrome-950/54">
       <div className="mb-4 flex items-center justify-between gap-3">
         <div>
-          <div className="text-sm font-black text-slate-950 dark:text-white">执行轨迹</div>
+          <div className="text-sm font-black text-slate-950 dark:text-white">{l('执行轨迹', 'Execution Trace')}</div>
           <div className="mt-1 text-xs text-slate-500 dark:text-chrome-400">
-            Intent · Plan · Tool call · Result · Final
+            {l('意图 · 计划 · 工具调用 · 结果 · 最终回答', 'Intent · Plan · Tool call · Result · Final')}
           </div>
         </div>
         <div className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-bold text-slate-500 dark:border-white/10 dark:bg-chrome-900 dark:text-chrome-400">
-          {steps.filter((step) => step.status === 'success').length}/{steps.length} completed
+          {steps.filter((step) => step.status === 'success').length}/{steps.length} {l('已完成', 'completed')}
         </div>
       </div>
 
@@ -192,7 +198,7 @@ export function TraceTimeline({
                       {step.durationMs ? (
                         <span className="inline-flex items-center gap-1 text-[11px] text-slate-400 dark:text-chrome-500">
                           <Clock3 className="h-3 w-3" />
-                          {durationLabel(step.durationMs)}
+                          {durationLabel(step.durationMs, locale)}
                         </span>
                       ) : null}
                     </span>
@@ -232,6 +238,8 @@ export function ToolCallCard({
   onCopyParameters: () => void;
   onRetry: () => void;
 }) {
+  const l = useLocaleText();
+  const locale = useAppLocale();
   const capability = capabilityForTool(toolCall.tool);
   const Icon = capability.icon;
 
@@ -245,7 +253,7 @@ export function ToolCallCard({
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <div className="text-sm font-black text-slate-950 dark:text-white">
-                Tool Call · {capability.title}
+                {l('工具调用', 'Tool Call')} · {toolLabel(toolCall.tool, locale)}
               </div>
               <span className={['rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.12em]', statusTone(toolCall.status)].join(' ')}>
                 {statusLabel(toolCall.status)}
@@ -257,14 +265,14 @@ export function ToolCallCard({
           </div>
         </div>
         <div className="shrink-0 rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-bold text-slate-500 dark:border-white/10 dark:bg-chrome-950 dark:text-chrome-400">
-          {durationLabel(toolCall.durationMs)}
+          {durationLabel(toolCall.durationMs, locale)}
         </div>
       </div>
 
       <div className="mt-4 grid gap-3 md:grid-cols-2">
         <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-3 dark:border-white/10 dark:bg-chrome-950/70">
           <div className="mb-1 text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400">
-            参数摘要
+            {l('参数摘要', 'Parameter Summary')}
           </div>
           <div className="text-xs leading-5 text-slate-600 dark:text-chrome-300">
             {toolCall.parameterSummary}
@@ -272,7 +280,7 @@ export function ToolCallCard({
         </div>
         <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-3 dark:border-white/10 dark:bg-chrome-950/70">
           <div className="mb-1 text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400">
-            返回摘要
+            {l('返回摘要', 'Result Summary')}
           </div>
           <div className="text-xs leading-5 text-slate-600 dark:text-chrome-300">
             {toolCall.resultSummary}
@@ -293,7 +301,7 @@ export function ToolCallCard({
           className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-600 transition hover:bg-slate-50 dark:border-white/10 dark:bg-chrome-950 dark:text-chrome-300"
         >
           <Braces className="h-3.5 w-3.5" />
-          {expanded ? '收起详情' : '查看详情'}
+          {expanded ? l('收起详情', 'Collapse Details') : l('查看详情', 'View Details')}
         </button>
         <button
           type="button"
@@ -301,7 +309,7 @@ export function ToolCallCard({
           className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-600 transition hover:bg-slate-50 dark:border-white/10 dark:bg-chrome-950 dark:text-chrome-300"
         >
           <Copy className="h-3.5 w-3.5" />
-          复制参数
+          {l('复制参数', 'Copy Parameters')}
         </button>
         <button
           type="button"
@@ -309,7 +317,7 @@ export function ToolCallCard({
           className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-600 transition hover:bg-slate-50 dark:border-white/10 dark:bg-chrome-950 dark:text-chrome-300"
         >
           <RotateCcw className="h-3.5 w-3.5" />
-          重试工具
+          {l('重试工具', 'Retry Tool')}
         </button>
       </div>
     </section>

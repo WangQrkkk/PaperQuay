@@ -19,8 +19,6 @@ import {
   Library,
   Minus,
   Moon,
-  PanelLeftClose,
-  PanelLeftOpen,
   Settings2,
   Sparkles,
   Square,
@@ -29,11 +27,10 @@ import {
 } from 'lucide-react';
 import TabBar from '../../components/tabs/TabBar';
 import OnboardingGuide from './OnboardingGuide';
-import LibraryPreviewPane from '../library/LibraryPreviewPane';
-import LibraryWorkspace from '../library/LibraryWorkspace';
 import LiteratureLibraryView from '../literature/LiteratureLibraryView';
 import DocumentReaderTab, {
   type LibraryPreviewSyncPayload,
+  type ReaderDocumentTranslationSnapshot,
   type ReaderTabBridgeState,
 } from './DocumentReaderTab';
 import {
@@ -69,9 +66,6 @@ import {
 } from '../../services/summarySource';
 import {
   detectLocalZoteroDataDir,
-  listLocalZoteroCollectionItems,
-  listLocalZoteroCollections,
-  listLocalZoteroLibraryItems,
   selectLocalZoteroDataDir,
 } from '../../services/zotero';
 import {
@@ -82,8 +76,6 @@ import {
 } from '../../stores/useTabsStore';
 import { useThemeStore } from '../../stores/useThemeStore';
 import type {
-  FlatCollection,
-  LibrarySectionKey,
   ModelReasoningEffort,
   ModelRuntimeConfig,
   ModelRuntimeRole,
@@ -99,10 +91,9 @@ import type {
   UiLanguage,
   PositionedMineruBlock,
   WorkspaceItem,
-  ZoteroCollection,
-  ZoteroLibraryItem,
 } from '../../types/reader';
 import type {
+  LiteratureCategory,
   LibrarySettings,
   LiteraturePaper,
   LiteraturePaperTaskKind,
@@ -121,9 +112,9 @@ import {
 import { AppLocaleProvider, useAppLocale } from '../../i18n/uiLanguage';
 import { truncateMiddle, getFileNameFromPath } from '../../utils/text';
 import {
-  buildLegacyMineruCachePaths,
-  buildLegacyMineruSummaryCachePath,
+  buildMineruCachePathCandidates,
   buildMineruCachePaths,
+  buildMineruSummaryCachePathCandidates,
   buildMineruSummaryCachePath,
   buildMineruTranslationCachePath,
   guessSiblingJsonPath,
@@ -133,9 +124,16 @@ import { loadPaperHistory } from '../../utils/paperHistory';
 
 const SETTINGS_STORAGE_KEY = 'paper-reader-settings-v3';
 const SECRETS_STORAGE_KEY = 'paper-reader-secrets-v1';
-const LEFT_SIDEBAR_COLLAPSED_STORAGE_KEY = 'paper-reader-left-sidebar-collapsed-v1';
+const CONFIG_WRITE_DEBOUNCE_MS = 350;
 const ONBOARDING_SEEN_STORAGE_KEY = 'paperquay-onboarding-seen-v1';
 const ONBOARDING_WELCOME_CACHE_DIR = '/onboarding/mineru-cache/welcome-bfc1ec86';
+const ONBOARDING_SETTINGS_STEP = 2;
+const ONBOARDING_LIBRARY_START_STEP = 3;
+const ONBOARDING_LIBRARY_END_STEP = 7;
+const ONBOARDING_READER_READING_START_STEP = 8;
+const ONBOARDING_READER_READING_END_STEP = 9;
+const ONBOARDING_READER_OVERVIEW_STEP = 10;
+const ONBOARDING_AGENT_STEP = 11;
 const ONBOARDING_WELCOME_ITEM: WorkspaceItem = {
   itemKey: 'onboarding:welcome',
   title: 'Welcome to PaperQuay',
@@ -825,9 +823,13 @@ function mergeReaderConfigWithDefaults(
 
   if (!nextSettings.mineruCacheDir.trim()) {
     nextSettings.mineruCacheDir = defaultPaths.mineruCacheDir;
+  } else if (looksLikeCorruptedGeneratedPath(nextSettings.mineruCacheDir)) {
+    nextSettings.mineruCacheDir = defaultPaths.mineruCacheDir;
   }
 
   if (!nextSettings.remotePdfDownloadDir.trim()) {
+    nextSettings.remotePdfDownloadDir = defaultPaths.remotePdfDownloadDir;
+  } else if (looksLikeCorruptedGeneratedPath(nextSettings.remotePdfDownloadDir)) {
     nextSettings.remotePdfDownloadDir = defaultPaths.remotePdfDownloadDir;
   }
 
@@ -840,37 +842,35 @@ function mergeReaderConfigWithDefaults(
   };
 }
 
-function loadStoredBoolean(key: string, fallback = false): boolean {
-  try {
-    const rawValue = localStorage.getItem(key);
+function looksLikeCorruptedGeneratedPath(path: string): boolean {
+  const normalizedPath = path.trim();
 
-    return rawValue === null ? fallback : rawValue === 'true';
-  } catch {
-    return fallback;
+  if (!normalizedPath) {
+    return false;
   }
+
+  const commonMojibakeMarkers = [
+    '\u5bee\u20ac\u934f',
+    '\u95ab',
+    '\u7490',
+    '\u934f',
+    '\u9435',
+    '\ufffd',
+  ];
+  const hasMojibakeMarker =
+    /[\u0000-\u001f]/.test(normalizedPath) ||
+    commonMojibakeMarkers.some((marker) => normalizedPath.includes(marker));
+  const isGeneratedAppPath = /(?:paperdock-data|paperquay-data|\.mineru-cache|\.downloads|mineru-cache|pdfs)/i.test(
+    normalizedPath,
+  );
+
+  return hasMojibakeMarker && isGeneratedAppPath;
 }
 
 function mergeLocalPdfPath<T extends { localPdfPath?: string }>(current: T, incoming: T): string | undefined {
   return Object.prototype.hasOwnProperty.call(incoming, 'localPdfPath')
     ? incoming.localPdfPath
     : current.localPdfPath;
-}
-
-function normalizeWorkspaceItem(
-  item: ZoteroLibraryItem,
-  source: WorkspaceItem['source'] = 'zotero-local',
-): WorkspaceItem {
-  const workspaceId =
-    source === 'standalone'
-      ? item.itemKey
-      : `${item.itemKey}::${item.attachmentKey ?? item.localPdfPath ?? item.attachmentFilename ?? 'default'}`;
-
-  return {
-    ...item,
-    source,
-    workspaceId,
-    groupKey: source === 'standalone' ? workspaceId : `zotero:${item.itemKey}`,
-  };
 }
 
 function createStandaloneItem(path: string, locale: UiLanguage): WorkspaceItem {
@@ -958,66 +958,6 @@ function formatPaperSummaryForLibrary(summary: PaperSummary): string {
     .map(([title, content]) => `## ${title}\n${content}`);
 
   return sections.join('\n\n').trim();
-}
-
-function buildFlatCollections(collections: ZoteroCollection[]): FlatCollection[] {
-  const grouped = new Map<string | null, ZoteroCollection[]>();
-  const collectionMap = new Map(collections.map((collection) => [collection.collectionKey, collection]));
-
-  for (const collection of collections) {
-    const parentKey = collection.parentCollectionKey ?? null;
-    const bucket = grouped.get(parentKey) ?? [];
-    bucket.push(collection);
-    grouped.set(parentKey, bucket);
-  }
-
-  const sortCollections = (items: ZoteroCollection[]) =>
-    [...items].sort((left, right) => left.name.localeCompare(right.name, 'zh-CN'));
-
-  const visited = new Set<string>();
-  const output: FlatCollection[] = [];
-
-  const walk = (parentKey: string | null, depth: number) => {
-    for (const collection of sortCollections(grouped.get(parentKey) ?? [])) {
-      visited.add(collection.collectionKey);
-      output.push({
-        ...collection,
-        depth,
-      });
-      walk(collection.collectionKey, depth + 1);
-    }
-  };
-
-  walk(null, 0);
-
-  for (const collection of sortCollections(collections)) {
-    if (visited.has(collection.collectionKey)) {
-      continue;
-    }
-
-    const parentExists = collection.parentCollectionKey
-      ? collectionMap.has(collection.parentCollectionKey)
-      : false;
-
-    output.push({
-      ...collection,
-      depth: parentExists ? 1 : 0,
-    });
-  }
-
-  return output;
-}
-
-function matchesLibraryQuery(item: WorkspaceItem, query: string): boolean {
-  if (!query.trim()) {
-    return true;
-  }
-
-  const normalizedQuery = query.trim().toLowerCase();
-
-  return [item.title, item.creators, item.year, item.attachmentFilename]
-    .filter(Boolean)
-    .some((value) => value!.toLowerCase().includes(normalizedQuery));
 }
 
 function ToggleRow({
@@ -2634,8 +2574,6 @@ function PreferencesWindow({
 
 function Reader() {
   const appWindow = getCurrentWindow();
-  const librarySearchInputRef = useRef<HTMLInputElement>(null);
-  const libraryItemClickTimerRef = useRef<number | null>(null);
   const libraryPreviewRequestIdRef = useRef<Record<string, number>>({});
   const legacyModelPresetMigrationDoneRef = useRef(false);
   const autoMineruAttemptedRef = useRef<Set<string>>(new Set());
@@ -2665,28 +2603,19 @@ function Reader() {
   );
   const onboardingPreviousThemeModeRef = useRef<'light' | 'dark' | 'system' | null>(null);
   const [zoteroLocalDataDir, setZoteroLocalDataDir] = useState('');
-  const [leftSidebarCollapsed, setLeftSidebarCollapsed] = useState(() =>
-    loadStoredBoolean(LEFT_SIDEBAR_COLLAPSED_STORAGE_KEY),
-  );
   const [appDefaultPaths, setAppDefaultPaths] = useState<AppDefaultPaths | null>(null);
   const [configHydrated, setConfigHydrated] = useState(false);
 
-  const [zoteroCollections, setZoteroCollections] = useState<ZoteroCollection[]>([]);
-  const [zoteroAllItems, setZoteroAllItems] = useState<WorkspaceItem[]>([]);
-  const [collectionItemsCache, setCollectionItemsCache] = useState<Record<string, WorkspaceItem[]>>(
-    {},
-  );
   const [standaloneItems, setStandaloneItems] = useState<WorkspaceItem[]>([]);
   const [nativeLibraryItems, setNativeLibraryItems] = useState<WorkspaceItem[]>([]);
-  const [selectedSectionKey, setSelectedSectionKey] = useState<LibrarySectionKey>('recent');
   const [selectedLibraryItemId, setSelectedLibraryItemId] = useState<string | null>(null);
-  const [librarySearchQuery, setLibrarySearchQuery] = useState('');
-  const [libraryDisplayMode, setLibraryDisplayMode] = useState<'list' | 'card'>('list');
   const [libraryLoading, setLibraryLoading] = useState(false);
-  const [libraryLoadingSection, setLibraryLoadingSection] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState('');
   const [error, setError] = useState('');
   const [readerBridges, setReaderBridges] = useState<Record<string, ReaderTabBridgeState>>({});
+  const [libraryTranslationSnapshots, setLibraryTranslationSnapshots] = useState<
+    Record<string, ReaderDocumentTranslationSnapshot>
+  >({});
   const savedNativeSummaryKeysRef = useRef<Set<string>>(new Set());
   const { mode: themeMode, setMode: setThemeMode } = useThemeStore();
   const [libraryPreviewStates, setLibraryPreviewStates] = useState<
@@ -2876,8 +2805,6 @@ function Reader() {
         setSettings(nextConfig.settings);
         setReaderSecrets(nextConfig.secrets);
         setZoteroLocalDataDir(resolvedZoteroDir);
-        setLeftSidebarCollapsed(nextConfig.leftSidebarCollapsed);
-
         if (nativeLibrarySettings && configZoteroDir && !nativeZoteroDir) {
           const syncedSettings = await updateLibrarySettings({
             ...nativeLibrarySettings,
@@ -2964,7 +2891,6 @@ function Reader() {
 
       return [WELCOME_STANDALONE_ITEM, ...existingItems];
     });
-    setSelectedSectionKey('standalone');
     setSelectedLibraryItemId(WELCOME_STANDALONE_ITEM.workspaceId);
     handleCloseOnboarding();
   }, [handleCloseOnboarding]);
@@ -3135,61 +3061,6 @@ function Reader() {
     [activeTabId, tabs],
   );
 
-  const flattenedCollections = useMemo(
-    () => buildFlatCollections(zoteroCollections),
-    [zoteroCollections],
-  );
-
-  const collectionNameMap = useMemo(
-    () => new Map(flattenedCollections.map((collection) => [collection.collectionKey, collection.name])),
-    [flattenedCollections],
-  );
-
-  const selectedSectionTitle = useMemo(() => {
-    if (selectedSectionKey === 'recent') {
-      return l('最近', 'Recent');
-    }
-
-    if (selectedSectionKey === 'all') {
-      return l('全部 PDF', 'All PDFs');
-    }
-
-    if (selectedSectionKey === 'standalone') {
-      return l('独立 PDF', 'Standalone PDFs');
-    }
-
-    const collectionKey = selectedSectionKey.slice('collection:'.length);
-
-    return collectionNameMap.get(collectionKey) ?? l('未命名分类', 'Untitled Collection');
-  }, [collectionNameMap, l, selectedSectionKey]);
-
-  const currentSectionItems = useMemo(() => {
-    if (onboardingOpen) {
-      return [ONBOARDING_WELCOME_ITEM];
-    }
-
-    if (selectedSectionKey === 'recent') {
-      return zoteroAllItems.slice(0, 30);
-    }
-
-    if (selectedSectionKey === 'all') {
-      return zoteroAllItems;
-    }
-
-    if (selectedSectionKey === 'standalone') {
-      return standaloneItems;
-    }
-
-    const collectionKey = selectedSectionKey.slice('collection:'.length);
-
-    return collectionItemsCache[collectionKey] ?? [];
-  }, [collectionItemsCache, onboardingOpen, selectedSectionKey, standaloneItems, zoteroAllItems]);
-
-  const visibleItems = useMemo(
-    () => currentSectionItems.filter((item) => matchesLibraryQuery(item, librarySearchQuery)),
-    [currentSectionItems, librarySearchQuery],
-  );
-
   const workspaceItemMap = useMemo(() => {
     const itemMap = new Map<string, WorkspaceItem>();
 
@@ -3213,14 +3084,12 @@ function Reader() {
     if (onboardingOpen) {
       applyItems([ONBOARDING_WELCOME_ITEM]);
     } else {
-      applyItems(zoteroAllItems);
       applyItems(standaloneItems);
       applyItems(nativeLibraryItems);
-      Object.values(collectionItemsCache).forEach(applyItems);
     }
 
     return itemMap;
-  }, [collectionItemsCache, nativeLibraryItems, onboardingOpen, standaloneItems, zoteroAllItems]);
+  }, [nativeLibraryItems, onboardingOpen, standaloneItems]);
 
   const allKnownItems = useMemo(
     () => Array.from(workspaceItemMap.values()),
@@ -3243,23 +3112,21 @@ function Reader() {
   const activeReaderBridge =
     activeTab?.type === 'reader' ? readerBridges[activeTab.id] ?? null : null;
 
-  const selectedItemId =
-    activeTab?.type === 'reader' ? activeTab.documentId : selectedLibraryItemId;
-
   const activeLibraryPreviewState = selectedLibraryItem
     ? libraryPreviewStates[selectedLibraryItem.workspaceId] ?? EMPTY_LIBRARY_PREVIEW_STATE
     : EMPTY_LIBRARY_PREVIEW_STATE;
 
   const onboardingDemoItem = onboardingOpen
     ? ONBOARDING_WELCOME_ITEM
-    : selectedLibraryItem ?? visibleItems[0] ?? allKnownItems[0] ?? null;
+    : selectedLibraryItem ?? allKnownItems[0] ?? null;
   const onboardingDemoTabId = onboardingDemoItem
     ? readerTabs.find((tab) => tab.documentId === onboardingDemoItem.workspaceId)?.id ?? null
     : null;
   const onboardingWorkspaceStage = onboardingOpen
-    ? onboardingStepIndex === 11
+    ? onboardingStepIndex === ONBOARDING_READER_OVERVIEW_STEP
       ? 'overview'
-      : onboardingStepIndex >= 7 && onboardingStepIndex <= 10
+      : onboardingStepIndex >= ONBOARDING_READER_READING_START_STEP &&
+          onboardingStepIndex <= ONBOARDING_READER_READING_END_STEP
         ? 'reading'
         : null
     : null;
@@ -3298,6 +3165,142 @@ function Reader() {
         error: '',
       }
     : activeLibraryPreviewState;
+  const onboardingDemoLibrary = useMemo(() => {
+    const demoCategoryId = 'onboarding-demo-category';
+    const summaryText =
+      onboardingDemoReveal.summarized && displayedLibraryPreviewState.summary
+        ? formatPaperSummaryForLibrary(displayedLibraryPreviewState.summary)
+        : null;
+    const demoSettings: LibrarySettings = {
+      storageDir: '',
+      zoteroLocalDataDir: zoteroLocalDataDir,
+      importMode: 'copy',
+      autoRenameFiles: true,
+      fileNamingRule: '{author}_{year}_{title}',
+      createCategoryFolders: false,
+      folderWatchEnabled: false,
+      backupEnabled: false,
+      preserveOriginalPath: true,
+    };
+    const demoCategories: LiteratureCategory[] = [
+      {
+        id: 'onboarding-system-all',
+        name: l('全部文献', 'All Papers'),
+        parentId: null,
+        sortOrder: 0,
+        isSystem: true,
+        systemKey: 'all',
+        createdAt: 0,
+        updatedAt: 0,
+        paperCount: 1,
+      },
+      {
+        id: 'onboarding-system-recent',
+        name: l('最近导入', 'Recently Imported'),
+        parentId: null,
+        sortOrder: 1,
+        isSystem: true,
+        systemKey: 'recent',
+        createdAt: 0,
+        updatedAt: 0,
+        paperCount: 1,
+      },
+      {
+        id: demoCategoryId,
+        name: l('新手引导', 'Onboarding'),
+        parentId: null,
+        sortOrder: 2,
+        isSystem: false,
+        systemKey: null,
+        createdAt: 0,
+        updatedAt: 0,
+        paperCount: 1,
+      },
+    ];
+    const demoPaper: LiteraturePaper = {
+      id: ONBOARDING_WELCOME_ITEM.workspaceId,
+      title: ONBOARDING_WELCOME_ITEM.title,
+      year: '2026',
+      publication: l('PaperQuay 内置文档', 'PaperQuay Built-in Document'),
+      doi: null,
+      url: null,
+      abstractText: l(
+        '这是一篇随软件打包的 Welcome 演示文档，用于展示导入、MinerU 解析、全文翻译、AI 概览和阅读器跳转流程。',
+        'This bundled Welcome document demonstrates import, MinerU parsing, full translation, AI overview, and reader navigation.',
+      ),
+      keywords: ['PaperQuay', 'Onboarding', 'AI Reading'],
+      importedAt: 0,
+      updatedAt: 0,
+      lastReadAt: null,
+      readingProgress: 0,
+      isFavorite: false,
+      userNote: null,
+      aiSummary: summaryText,
+      citation: null,
+      source: 'onboarding',
+      sortOrder: 0,
+      authors: [
+        {
+          id: 'onboarding-author',
+          name: 'PaperQuay',
+          givenName: null,
+          familyName: null,
+          sortOrder: 0,
+        },
+      ],
+      tags: [
+        {
+          id: 'onboarding-tag-demo',
+          name: l('演示', 'Demo'),
+          color: '#2dd4bf',
+        },
+      ],
+      categoryIds: [demoCategoryId],
+      attachments: [
+        {
+          id: 'onboarding-welcome-pdf',
+          paperId: ONBOARDING_WELCOME_ITEM.workspaceId,
+          kind: 'pdf',
+          originalPath: null,
+          storedPath: ONBOARDING_WELCOME_ITEM.localPdfPath ?? '/onboarding/welcome.pdf',
+          relativePath: null,
+          fileName: 'welcome.pdf',
+          mimeType: 'application/pdf',
+          fileSize: 0,
+          contentHash: null,
+          createdAt: 0,
+          missing: false,
+        },
+      ],
+    };
+
+    return {
+      settings: demoSettings,
+      categories: demoCategories,
+      papers: [demoPaper],
+      statusMessage: displayedLibraryPreviewState.statusMessage,
+      paperStatuses: {
+        [demoPaper.id]: {
+          mineruParsed: onboardingDemoReveal.parsed,
+          overviewGenerated: onboardingDemoReveal.summarized,
+          checkingMineru: false,
+        },
+      },
+    };
+  }, [
+    displayedLibraryPreviewState.statusMessage,
+    displayedLibraryPreviewState.summary,
+    l,
+    onboardingDemoReveal.parsed,
+    onboardingDemoReveal.summarized,
+    zoteroLocalDataDir,
+  ]);
+  const onboardingPaperActionStates = useMemo(
+    () => ({
+      [ONBOARDING_WELCOME_ITEM.workspaceId]: displayedLibraryPreviewState.operation,
+    }),
+    [displayedLibraryPreviewState.operation],
+  );
   const nativePaperActionStates = useMemo(() => {
     const nextStates: Record<string, LiteraturePaperTaskState | null | undefined> = {};
 
@@ -3325,29 +3328,35 @@ function Reader() {
       setSelectedLibraryItemId(ONBOARDING_WELCOME_ITEM.workspaceId);
     }
 
-    if (onboardingStepIndex === 0) {
+    if (onboardingStepIndex < ONBOARDING_SETTINGS_STEP) {
       setPreferencesOpen(false);
       setActiveTab(HOME_TAB_ID);
       return;
     }
 
-    if (onboardingStepIndex === 1) {
+    if (onboardingStepIndex === ONBOARDING_SETTINGS_STEP) {
       setActiveTab(HOME_TAB_ID);
       setPreferredPreferencesSection('library');
       setPreferencesOpen(true);
       return;
     }
 
-    if (onboardingStepIndex >= 2 && onboardingStepIndex <= 6) {
+    if (
+      onboardingStepIndex >= ONBOARDING_LIBRARY_START_STEP &&
+      onboardingStepIndex <= ONBOARDING_LIBRARY_END_STEP
+    ) {
       setPreferencesOpen(false);
       setActiveTab(HOME_TAB_ID);
-      if (onboardingStepIndex >= 3 && !selectedLibraryItemId && onboardingDemoItemId) {
+      if (!selectedLibraryItemId && onboardingDemoItemId) {
         setSelectedLibraryItemId(onboardingDemoItemId);
       }
       return;
     }
 
-    if (onboardingStepIndex >= 7 && onboardingStepIndex <= 10) {
+    if (
+      onboardingStepIndex >= ONBOARDING_READER_READING_START_STEP &&
+      onboardingStepIndex <= ONBOARDING_READER_OVERVIEW_STEP
+    ) {
       setPreferencesOpen(false);
       if (!onboardingDemoItemId) {
         setActiveTab(HOME_TAB_ID);
@@ -3363,7 +3372,7 @@ function Reader() {
       return;
     }
 
-    if (onboardingStepIndex >= 11) {
+    if (onboardingStepIndex >= ONBOARDING_AGENT_STEP) {
       setPreferencesOpen(false);
       setActiveTab(HOME_TAB_ID);
     }
@@ -3378,9 +3387,6 @@ function Reader() {
     setActiveTab,
   ]);
 
-  const mapZoteroItems = (items: ZoteroLibraryItem[]): WorkspaceItem[] =>
-    items.map((item) => normalizeWorkspaceItem(item, 'zotero-local'));
-
   const handleWorkspaceItemResolved = useCallback((resolvedItem: WorkspaceItem) => {
     const mergeItem = (item: WorkspaceItem) =>
       item.workspaceId === resolvedItem.workspaceId
@@ -3391,16 +3397,8 @@ function Reader() {
           }
         : item;
 
-    setZoteroAllItems((current) => current.map(mergeItem));
     setStandaloneItems((current) => current.map(mergeItem));
-    setCollectionItemsCache((current) =>
-      Object.fromEntries(
-        Object.entries(current).map(([collectionKey, items]) => [
-          collectionKey,
-          items.map(mergeItem),
-        ]),
-      ),
-    );
+    setNativeLibraryItems((current) => current.map(mergeItem));
     setLibraryPreviewStates((current) => {
       const existingState = current[resolvedItem.workspaceId];
 
@@ -3537,10 +3535,7 @@ function Reader() {
     const candidates = new Set<string>();
 
     if (settings.mineruCacheDir.trim()) {
-      for (const cachePaths of [
-        buildMineruCachePaths(settings.mineruCacheDir.trim(), item),
-        buildLegacyMineruCachePaths(settings.mineruCacheDir.trim(), item),
-      ]) {
+      for (const cachePaths of buildMineruCachePathCandidates(settings.mineruCacheDir.trim(), item)) {
         candidates.add(cachePaths.contentJsonPath);
         candidates.add(cachePaths.middleJsonPath);
       }
@@ -3716,97 +3711,33 @@ function Reader() {
     [noPdfLoadedText],
   );
 
-  const loadLocalLibrary = async (preferredDataDir?: string, silent = false) => {
-    setLibraryLoading(true);
-    setError('');
+  const syncAndQueueZoteroImport = useCallback(
+    async (dataDir: string, source: string) => {
+      const normalizedDataDir = dataDir.trim();
 
-    try {
-      const resolvedDataDir =
-        preferredDataDir?.trim() ||
-        zoteroLocalDataDir.trim() ||
-        (await detectLocalZoteroDataDir()) ||
-        '';
-
-        if (!resolvedDataDir) {
-          setZoteroCollections([]);
-          setZoteroAllItems([]);
-          setCollectionItemsCache({});
-
-          if (!silent) {
-            setStatusMessage(l('未找到 Zotero 本地目录', 'No Zotero local directory found'));
-          }
-
-          return;
-      }
-
-      const [collections, items] = await Promise.all([
-        listLocalZoteroCollections({ dataDir: resolvedDataDir }),
-        listLocalZoteroLibraryItems({ dataDir: resolvedDataDir, limit: 400 }),
-      ]);
-
-      setZoteroLocalDataDir(resolvedDataDir);
-      setZoteroCollections(collections);
-      setZoteroAllItems(mapZoteroItems(items));
-      setCollectionItemsCache({});
-      await syncNativeLibraryZoteroDir(resolvedDataDir, 'reader-zotero-loader');
-      setStatusMessage(
-        l(
-          `已加载 Zotero 本地文库，共发现 ${items.length} 篇 PDF 记录`,
-          `Loaded the local Zotero library with ${items.length} PDF records`,
-        ),
-      );
-    } catch (nextError) {
-      if (!silent) {
-        setError(
-          nextError instanceof Error
-            ? nextError.message
-            : l('读取 Zotero 文库失败', 'Failed to load the Zotero library'),
+      if (!normalizedDataDir) {
+        setStatusMessage(
+          l(
+            '未找到 Zotero 本地目录，请先自动查找或手动选择包含 zotero.sqlite 的目录。',
+            'No Zotero local directory was found. Detect or choose the folder containing zotero.sqlite first.',
+          ),
         );
+        return false;
       }
 
-      setStatusMessage(l('读取 Zotero 文库失败', 'Failed to load the Zotero library'));
-    } finally {
-      setLibraryLoading(false);
-    }
-  };
-
-  const ensureCollectionItems = async (collectionKey: string) => {
-    if (!zoteroLocalDataDir.trim() || collectionItemsCache[collectionKey]) {
-      return;
-    }
-
-    setLibraryLoadingSection(collectionKey);
-
-    try {
-      const items = await listLocalZoteroCollectionItems({
-        dataDir: zoteroLocalDataDir.trim(),
-        collectionKey,
-        limit: 400,
-      });
-
-      setCollectionItemsCache((current) => ({
-        ...current,
-        [collectionKey]: mapZoteroItems(items),
-      }));
+      setZoteroLocalDataDir(normalizedDataDir);
+      await syncNativeLibraryZoteroDir(normalizedDataDir, source);
+      emitZoteroImportRequest(normalizedDataDir, source);
       setStatusMessage(
         l(
-          `已加载分类：${collectionNameMap.get(collectionKey) ?? l('未命名分类', 'Untitled Collection')}`,
-          `Loaded collection: ${
-            collectionNameMap.get(collectionKey) ?? l('Untitled Collection', 'Untitled Collection')
-          }`,
+          '已提交 Zotero 导入任务，分类、标签和 PDF 将导入当前文库。',
+          'Zotero import has been submitted. Collections, tags, and PDFs will be imported into the current library.',
         ),
       );
-    } catch (nextError) {
-      setError(
-        nextError instanceof Error
-          ? nextError.message
-          : l('读取分类文献失败', 'Failed to load collection items'),
-      );
-      setStatusMessage(l('读取分类文献失败', 'Failed to load collection items'));
-    } finally {
-      setLibraryLoadingSection((current) => (current === collectionKey ? null : current));
-    }
-  };
+      return true;
+    },
+    [l, syncNativeLibraryZoteroDir],
+  );
 
   const handleDetectLocalZotero = async () => {
     setLibraryLoading(true);
@@ -3820,7 +3751,21 @@ function Reader() {
         return;
       }
 
-      await loadLocalLibrary(dataDir);
+      setZoteroLocalDataDir(dataDir);
+      await syncNativeLibraryZoteroDir(dataDir, 'reader-zotero-detect');
+      setStatusMessage(
+        l(
+          '已找到 Zotero 本地目录。点击“读取并导入本地文库”即可导入分类和 PDF。',
+          'Zotero local directory found. Click "Read and Import to Library" to import collections and PDFs.',
+        ),
+      );
+    } catch (nextError) {
+      const message =
+        nextError instanceof Error
+          ? nextError.message
+          : l('自动查找 Zotero 目录失败', 'Failed to auto-detect the Zotero directory');
+      setError(message);
+      setStatusMessage(message);
     } finally {
       setLibraryLoading(false);
     }
@@ -3837,7 +3782,14 @@ function Reader() {
         return;
       }
 
-      await loadLocalLibrary(dataDir);
+      setZoteroLocalDataDir(dataDir);
+      await syncNativeLibraryZoteroDir(dataDir, 'reader-zotero-select');
+      setStatusMessage(
+        l(
+          '已选择 Zotero 本地目录。点击“读取并导入本地文库”即可导入分类和 PDF。',
+          'Zotero local directory selected. Click "Read and Import to Library" to import collections and PDFs.',
+        ),
+      );
     } catch (nextError) {
       setError(
         nextError instanceof Error
@@ -3849,10 +3801,26 @@ function Reader() {
   };
 
   const handleReloadLocalZotero = async () => {
-    await loadLocalLibrary();
+    setLibraryLoading(true);
+    setError('');
+
+    try {
+      const dataDir = zoteroLocalDataDir.trim() || (await detectLocalZoteroDataDir()) || '';
+      await syncAndQueueZoteroImport(dataDir, 'reader-zotero-reload');
+    } catch (nextError) {
+      const message =
+        nextError instanceof Error
+          ? nextError.message
+          : l('重新读取 Zotero 文库失败', 'Failed to reload the Zotero library');
+      setError(message);
+      setStatusMessage(message);
+    } finally {
+      setLibraryLoading(false);
+    }
   };
 
   const handleImportLocalZoteroToNativeLibrary = async () => {
+    setLibraryLoading(true);
     setError('');
 
     try {
@@ -3861,26 +3829,7 @@ function Reader() {
         (await detectLocalZoteroDataDir()) ||
         '';
 
-      if (!dataDir) {
-        setStatusMessage(
-          l(
-            '未找到 Zotero 本地目录，请先自动查找或手动选择包含 zotero.sqlite 的目录。',
-            'No Zotero local directory was found. Detect or choose the folder containing zotero.sqlite first.',
-          ),
-        );
-        return;
-      }
-
-      setZoteroLocalDataDir(dataDir);
-      await syncNativeLibraryZoteroDir(dataDir, 'reader-zotero-import-request');
-      await loadLocalLibrary(dataDir, true);
-      emitZoteroImportRequest(dataDir, 'reader-preferences');
-      setStatusMessage(
-        l(
-          '已提交 Zotero 导入任务，正在把 Zotero 分类和 PDF 导入本地文库。',
-          'Zotero import has been submitted. Collections and PDFs are being imported into the native library.',
-        ),
-      );
+      await syncAndQueueZoteroImport(dataDir, 'reader-preferences');
     } catch (nextError) {
       const message =
         nextError instanceof Error
@@ -3889,6 +3838,8 @@ function Reader() {
 
       setError(message);
       setStatusMessage(message);
+    } finally {
+      setLibraryLoading(false);
     }
   };
 
@@ -3902,10 +3853,6 @@ function Reader() {
 
       const nextDataDir = detail.settings.zoteroLocalDataDir.trim();
       setZoteroLocalDataDir(nextDataDir);
-
-      if (nextDataDir) {
-        void loadLocalLibrary(nextDataDir, true);
-      }
     };
 
     window.addEventListener(LIBRARY_SETTINGS_UPDATED_EVENT, handleLibrarySettingsUpdated);
@@ -3913,17 +3860,7 @@ function Reader() {
     return () => {
       window.removeEventListener(LIBRARY_SETTINGS_UPDATED_EVENT, handleLibrarySettingsUpdated);
     };
-  }, [loadLocalLibrary]);
-
-  const handleSelectLibrarySection = async (sectionKey: LibrarySectionKey) => {
-    setSelectedSectionKey(sectionKey);
-    setLibrarySearchQuery('');
-
-    if (sectionKey.startsWith('collection:')) {
-      const collectionKey = sectionKey.slice('collection:'.length);
-      await ensureCollectionItems(collectionKey);
-    }
-  };
+  }, []);
 
   const loadLibraryPreviewBlocks = async (
     item: WorkspaceItem,
@@ -3948,25 +3885,25 @@ function Reader() {
     }
 
     if (settings.mineruCacheDir.trim()) {
-      const cachePaths = buildMineruCachePaths(settings.mineruCacheDir.trim(), item);
+      for (const cachePaths of buildMineruCachePathCandidates(settings.mineruCacheDir.trim(), item)) {
+        for (const candidatePath of [cachePaths.contentJsonPath, cachePaths.middleJsonPath]) {
+          try {
+            const jsonText = await readLocalTextFile(candidatePath);
+            const pages = parseMineruPages(jsonText);
+            const blocks = flattenMineruPages(pages);
 
-      for (const candidatePath of [cachePaths.contentJsonPath, cachePaths.middleJsonPath]) {
-        try {
-          const jsonText = await readLocalTextFile(candidatePath);
-          const pages = parseMineruPages(jsonText);
-          const blocks = flattenMineruPages(pages);
-
-          return {
-            blocks,
-            currentPdfName: pdfName,
-            currentJsonName: getFileNameFromPath(candidatePath),
-            statusMessage: l(
-              `已从缓存加载 ${blocks.length} 个结构块`,
-              `Loaded ${blocks.length} structured blocks from cache`,
-            ),
-          };
-        } catch {
-          continue;
+            return {
+              blocks,
+              currentPdfName: pdfName,
+              currentJsonName: getFileNameFromPath(candidatePath),
+              statusMessage: l(
+                `已从缓存加载 ${blocks.length} 个结构块`,
+                `Loaded ${blocks.length} structured blocks from cache`,
+              ),
+            };
+          } catch {
+            continue;
+          }
         }
       }
     }
@@ -4090,10 +4027,7 @@ function Reader() {
     const candidateMarkdownPaths = new Set<string>();
 
     if (settings.mineruCacheDir.trim()) {
-      for (const cachePaths of [
-        buildMineruCachePaths(settings.mineruCacheDir.trim(), item),
-        buildLegacyMineruCachePaths(settings.mineruCacheDir.trim(), item),
-      ]) {
+      for (const cachePaths of buildMineruCachePathCandidates(settings.mineruCacheDir.trim(), item)) {
         candidateMarkdownPaths.add(cachePaths.markdownPath);
       }
     }
@@ -4157,10 +4091,11 @@ function Reader() {
       return null;
     }
 
-    const candidatePaths = [
-      buildMineruSummaryCachePath(settings.mineruCacheDir.trim(), item, sourceKey),
-      buildLegacyMineruSummaryCachePath(settings.mineruCacheDir.trim(), item, sourceKey),
-    ];
+    const candidatePaths = buildMineruSummaryCachePathCandidates(
+      settings.mineruCacheDir.trim(),
+      item,
+      sourceKey,
+    );
 
     for (const candidatePath of candidatePaths) {
       try {
@@ -4543,7 +4478,7 @@ function Reader() {
   const saveLibraryTranslationCache = useCallback(
     async (item: WorkspaceItem, translations: TranslationMap) => {
       if (!settings.mineruCacheDir.trim()) {
-        return;
+        return null;
       }
 
       const cachePath = buildMineruTranslationCachePath(
@@ -4560,6 +4495,7 @@ function Reader() {
       };
 
       await writeLocalTextFile(cachePath, JSON.stringify(payload, null, 2));
+      return cachePath;
     },
     [
       settings.mineruCacheDir,
@@ -4928,7 +4864,31 @@ function Reader() {
           translations[blockId] = translatedText;
         }
 
-        await saveLibraryTranslationCache(item, translations).catch(() => undefined);
+        setLibraryTranslationSnapshots((current) => ({
+          ...current,
+          [item.workspaceId]: {
+            targetLanguage: settings.translationTargetLanguage,
+            translations,
+            updatedAt: Date.now(),
+          },
+        }));
+
+        let cacheStatusSuffix = '';
+
+        try {
+          const savedCachePath = await saveLibraryTranslationCache(item, translations);
+
+          if (!savedCachePath) {
+            cacheStatusSuffix = l('，仅保存在当前会话', ', kept in the current session only');
+          }
+        } catch (cacheError) {
+          cacheStatusSuffix = l(
+            '，缓存写入失败，已保存在当前会话',
+            ', cache write failed and the result is kept in the current session',
+          );
+          console.warn('Failed to save library translation cache', cacheError);
+        }
+
         setLibraryPreviewStates((current) => ({
           ...current,
           [item.workspaceId]: {
@@ -4939,8 +4899,8 @@ function Reader() {
               'translation',
               'success',
               l(
-                `全文翻译完成，已生成 ${Object.keys(translations).length} 段译文`,
-                `Full translation complete. Generated ${Object.keys(translations).length} translated blocks`,
+                `全文翻译完成，已生成 ${Object.keys(translations).length} 段译文${cacheStatusSuffix}`,
+                `Full translation complete. Generated ${Object.keys(translations).length} translated blocks${cacheStatusSuffix}`,
               ),
               blocksToTranslate.length,
               blocksToTranslate.length,
@@ -4950,15 +4910,15 @@ function Reader() {
             currentPdfName: previewContext.currentPdfName,
             currentJsonName: previewContext.currentJsonName,
             statusMessage: l(
-              `全文翻译完成，已生成 ${Object.keys(translations).length} 段译文`,
-              `Full translation complete. Generated ${Object.keys(translations).length} translated blocks`,
+              `全文翻译完成，已生成 ${Object.keys(translations).length} 段译文${cacheStatusSuffix}`,
+              `Full translation complete. Generated ${Object.keys(translations).length} translated blocks${cacheStatusSuffix}`,
             ),
           },
         }));
         setStatusMessage(
           l(
-            `全文翻译完成：${Object.keys(translations).length} 段`,
-            `Full translation complete: ${Object.keys(translations).length} blocks`,
+            `全文翻译完成：${Object.keys(translations).length} 段${cacheStatusSuffix}`,
+            `Full translation complete: ${Object.keys(translations).length} blocks${cacheStatusSuffix}`,
           ),
         );
       } catch (nextError) {
@@ -5502,7 +5462,6 @@ function Reader() {
         );
         return [standaloneItem, ...existingItems];
       });
-      setSelectedSectionKey('standalone');
       setSelectedLibraryItemId(standaloneItem.workspaceId);
       openTab(standaloneItem.workspaceId, standaloneItem.title);
     } catch (nextError) {
@@ -5597,28 +5556,6 @@ function Reader() {
     },
     [generateLibraryPreview, l, registerNativeLibraryWorkspace],
   );
-
-  const handleLibraryItemClick = (item: WorkspaceItem) => {
-    if (libraryItemClickTimerRef.current) {
-      window.clearTimeout(libraryItemClickTimerRef.current);
-    }
-
-    libraryItemClickTimerRef.current = window.setTimeout(() => {
-      libraryItemClickTimerRef.current = null;
-      setSelectedLibraryItemId(item.workspaceId);
-      setStatusMessage(l(`已选择文献：${item.title}`, `Selected document: ${item.title}`));
-    }, 220);
-  };
-
-  const handleLibraryItemDoubleClick = (item: WorkspaceItem) => {
-    if (libraryItemClickTimerRef.current) {
-      window.clearTimeout(libraryItemClickTimerRef.current);
-      libraryItemClickTimerRef.current = null;
-    }
-
-    setSelectedLibraryItemId(item.workspaceId);
-    openTab(item.workspaceId, item.title);
-  };
 
   const handleWindowMinimize = () => {
     void appWindow.minimize().catch((nextError) => {
@@ -5786,43 +5723,59 @@ function Reader() {
     });
   }, []);
 
-  const handlePreviewCloudParse = useCallback(() => {
-    if (!selectedLibraryItem) {
-      return;
-    }
+  const revealOnboardingWelcomeParse = useCallback(() => {
+    setSelectedLibraryItemId(ONBOARDING_WELCOME_ITEM.workspaceId);
+    setOnboardingDemoReveal((current) => ({ ...current, parsed: true }));
+    setLibraryPreviewStates((current) => ({
+      ...current,
+      [ONBOARDING_WELCOME_ITEM.workspaceId]: {
+        ...(current[ONBOARDING_WELCOME_ITEM.workspaceId] ?? EMPTY_LIBRARY_PREVIEW_STATE),
+        loading: false,
+        error: '',
+        operation: createPaperTaskState(
+          'mineru',
+          'success',
+          l('已显示内置 MinerU 解析结果', 'Displayed the built-in MinerU parse result'),
+          100,
+          100,
+        ),
+        currentPdfName: 'welcome.pdf',
+        currentJsonName: 'content_list_v2.json',
+        statusMessage: l(
+          '已显示内置 MinerU 解析结果。这个演示没有调用 API。',
+          'Displayed the built-in MinerU parse result without calling an API.',
+        ),
+      },
+    }));
+    void generateLibraryPreview(ONBOARDING_WELCOME_ITEM, false, { allowGenerate: false });
+  }, [createPaperTaskState, generateLibraryPreview, l]);
 
-    if (onboardingOpen && isOnboardingWelcomeItem(selectedLibraryItem)) {
-      setOnboardingDemoReveal((current) => ({ ...current, parsed: true }));
-      void generateLibraryPreview(selectedLibraryItem, false, { allowGenerate: false });
-      return;
-    }
-
-    void runLibraryItemMineruParse(selectedLibraryItem);
-  }, [
-    generateLibraryPreview,
-    onboardingOpen,
-    runLibraryItemMineruParse,
-    selectedLibraryItem,
-  ]);
-
-  const handlePreviewTranslateDocument = useCallback(() => {
-    if (!selectedLibraryItem) {
-      return;
-    }
-
-    if (onboardingOpen && isOnboardingWelcomeItem(selectedLibraryItem)) {
-      setOnboardingDemoReveal((current) => ({ ...current, parsed: true, translated: true }));
-      void generateLibraryPreview(selectedLibraryItem, false, { allowGenerate: false });
-      return;
-    }
-
-    void runLibraryItemTranslation(selectedLibraryItem);
-  }, [
-    generateLibraryPreview,
-    onboardingOpen,
-    runLibraryItemTranslation,
-    selectedLibraryItem,
-  ]);
+  const revealOnboardingWelcomeTranslation = useCallback(() => {
+    setSelectedLibraryItemId(ONBOARDING_WELCOME_ITEM.workspaceId);
+    setOnboardingDemoReveal((current) => ({ ...current, parsed: true, translated: true }));
+    setLibraryPreviewStates((current) => ({
+      ...current,
+      [ONBOARDING_WELCOME_ITEM.workspaceId]: {
+        ...(current[ONBOARDING_WELCOME_ITEM.workspaceId] ?? EMPTY_LIBRARY_PREVIEW_STATE),
+        loading: false,
+        error: '',
+        operation: createPaperTaskState(
+          'translation',
+          'success',
+          l('已显示内置全文翻译', 'Displayed the built-in full translation'),
+          100,
+          100,
+        ),
+        currentPdfName: 'welcome.pdf',
+        currentJsonName: 'content_list_v2.json',
+        statusMessage: l(
+          '已显示 Welcome 内置全文翻译。这个演示没有调用 API。',
+          'Displayed the built-in Welcome full translation without calling an API.',
+        ),
+      },
+    }));
+    void generateLibraryPreview(ONBOARDING_WELCOME_ITEM, false, { allowGenerate: false });
+  }, [createPaperTaskState, generateLibraryPreview, l]);
 
   const revealOnboardingWelcomeSummary = useCallback(async () => {
     setOnboardingDemoReveal((current) => ({ ...current, parsed: true, summarized: true }));
@@ -5840,6 +5793,13 @@ function Reader() {
           summary,
           loading: false,
           error: '',
+          operation: createPaperTaskState(
+            'overview',
+            'success',
+            l('已显示内置 AI 概览', 'Displayed the built-in AI overview'),
+            100,
+            100,
+          ),
           hasBlocks: true,
           blockCount: previewContext.blocks.length,
           currentPdfName: 'welcome.pdf',
@@ -5862,7 +5822,16 @@ function Reader() {
         },
       }));
     }
-  }, [l]);
+  }, [createPaperTaskState, l]);
+
+  const handleOpenOnboardingDemoPaper = useCallback(() => {
+    setSelectedLibraryItemId(ONBOARDING_WELCOME_ITEM.workspaceId);
+    openTab(ONBOARDING_WELCOME_ITEM.workspaceId, ONBOARDING_WELCOME_ITEM.title);
+  }, [openTab]);
+
+  const handleOnboardingDemoGenerateSummary = useCallback(() => {
+    void revealOnboardingWelcomeSummary();
+  }, [revealOnboardingWelcomeSummary]);
 
   const handleToggleBatchMineruPause = useCallback(() => {
     if (!batchMineruRunningRef.current) {
@@ -5972,12 +5941,20 @@ function Reader() {
     key: Key,
     value: ReaderSettings[Key],
   ) => {
-    setSettings((current) =>
-      normalizeReaderSettings({
+    const nextValue = (key === 'translationDisplayMode' ? 'translated' : value) as ReaderSettings[Key];
+
+    setSettings((current) => {
+      if (Object.is(current[key], nextValue)) {
+        return current;
+      }
+
+      const nextSettings = normalizeReaderSettings({
         ...current,
-        [key]: key === 'translationDisplayMode' ? 'translated' : value,
-      }),
-    );
+        [key]: nextValue,
+      });
+
+      return Object.is(current[key], nextSettings[key]) ? current : nextSettings;
+    });
   }, []);
 
   const updateReaderSecret = useCallback(<Key extends keyof ReaderSecrets>(
@@ -6104,10 +6081,6 @@ function Reader() {
   }, [qaModelPresets, settings.qaActivePresetId]);
 
   useEffect(() => {
-    localStorage.setItem(LEFT_SIDEBAR_COLLAPSED_STORAGE_KEY, String(leftSidebarCollapsed));
-  }, [leftSidebarCollapsed]);
-
-  useEffect(() => {
     if (!configHydrated) {
       return undefined;
     }
@@ -6123,24 +6096,29 @@ function Reader() {
 
   useEffect(() => {
     if (!configHydrated || !appDefaultPaths) {
-      return;
+      return undefined;
     }
 
-    const nextConfig: ReaderConfigFile = {
-      version: READER_CONFIG_VERSION,
-      settings,
-      secrets: readerSecrets,
-      zoteroLocalDataDir,
-      leftSidebarCollapsed,
-    };
+    const timer = window.setTimeout(() => {
+      const nextConfig: ReaderConfigFile = {
+        version: READER_CONFIG_VERSION,
+        settings,
+        secrets: readerSecrets,
+        zoteroLocalDataDir,
+        leftSidebarCollapsed: false,
+      };
 
-    void writeLocalTextFile(appDefaultPaths.configPath, JSON.stringify(nextConfig, null, 2)).catch(
-      () => undefined,
-    );
+      void writeLocalTextFile(appDefaultPaths.configPath, JSON.stringify(nextConfig, null, 2)).catch(
+        () => undefined,
+      );
+    }, CONFIG_WRITE_DEBOUNCE_MS);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
   }, [
     appDefaultPaths,
     configHydrated,
-    leftSidebarCollapsed,
     readerSecrets,
     settings,
     zoteroLocalDataDir,
@@ -6190,14 +6168,6 @@ function Reader() {
     bridge.onGenerateSummary();
     setPendingSummaryTabId(null);
   }, [pendingSummaryTabId, readerBridges]);
-
-  useEffect(() => {
-    if (!configHydrated) {
-      return;
-    }
-
-    void loadLocalLibrary(undefined, true);
-  }, [configHydrated]);
 
   useEffect(() => {
     autoMineruAttemptedRef.current.clear();
@@ -6276,26 +6246,7 @@ function Reader() {
   ]);
 
   useEffect(() => {
-    if (!selectedSectionKey.startsWith('collection:')) {
-      return;
-    }
-
-    const collectionKey = selectedSectionKey.slice('collection:'.length);
-    void ensureCollectionItems(collectionKey);
-  }, [selectedSectionKey, zoteroLocalDataDir]);
-
-  useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f') {
-        if (activeTab?.type !== 'library') {
-          return;
-        }
-
-        event.preventDefault();
-        librarySearchInputRef.current?.focus();
-        return;
-      }
-
       if (event.key === 'Escape' && preferencesOpen) {
         setPreferencesOpen(false);
       }
@@ -6304,15 +6255,7 @@ function Reader() {
     window.addEventListener('keydown', handleKeyDown);
 
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [activeTab?.type, preferencesOpen]);
-
-  useEffect(() => {
-    return () => {
-      if (libraryItemClickTimerRef.current) {
-        window.clearTimeout(libraryItemClickTimerRef.current);
-      }
-    };
-  }, []);
+  }, [preferencesOpen]);
 
   return (
     <AppLocaleProvider value={settings.uiLanguage}>
@@ -6350,18 +6293,6 @@ function Reader() {
           />
 
           <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setLeftSidebarCollapsed((current) => !current)}
-              className="inline-flex items-center rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition-all duration-200 hover:border-slate-300 hover:bg-slate-50 dark:border-chrome-700 dark:bg-chrome-800 dark:text-chrome-200 dark:hover:border-chrome-600 dark:hover:bg-chrome-700"
-            >
-              {leftSidebarCollapsed ? (
-                <PanelLeftOpen className="mr-2 h-4 w-4" strokeWidth={1.8} />
-              ) : (
-                <PanelLeftClose className="mr-2 h-4 w-4" strokeWidth={1.8} />
-              )}
-              {leftSidebarCollapsed ? l('展开文库', 'Expand Library') : l('折叠文库', 'Collapse Library')}
-            </button>
             <button
               type="button"
               onClick={handleOpenStandalonePdf}
@@ -6460,86 +6391,17 @@ function Reader() {
 
         <main className="relative min-h-0 flex-1 overflow-hidden">
           <div className="h-full min-h-0" hidden={activeTabId !== HOME_TAB_ID}>
-            {onboardingOpen ? (
-              <LibraryWorkspace
-                leftSidebarCollapsed={leftSidebarCollapsed}
-                zoteroLocalDataDir={zoteroLocalDataDir}
-                zoteroAllItemsCount={0}
-                standaloneItemsCount={1}
-                flattenedCollections={[]}
-                selectedSectionKey={selectedSectionKey}
-                selectedSectionTitle={l('新手引导演示文档', 'Onboarding Demo')}
-                visibleItems={visibleItems}
-                itemParseStatusMap={itemParseStatusMap}
-                selectedItemId={selectedItemId}
-                librarySearchQuery=""
-                libraryDisplayMode={libraryDisplayMode}
-                libraryLoading={false}
-                libraryLoadingSection={libraryLoadingSection}
-                statusMessage={l('新手引导模式：当前只显示 Welcome 演示文档。', 'Onboarding mode: only the Welcome demo document is shown.')}
-                error={error}
-                librarySearchInputRef={librarySearchInputRef}
-                onToggleLeftSidebar={() => setLeftSidebarCollapsed((current) => !current)}
-                onSelectSection={(sectionKey) => void handleSelectLibrarySection(sectionKey)}
-                onSearchQueryChange={setLibrarySearchQuery}
-                onDisplayModeChange={setLibraryDisplayMode}
-                onOpenStandalonePdf={() => void handleOpenStandalonePdf()}
-                onReloadLocalZotero={() => void handleReloadLocalZotero()}
-                onOpenPreferences={handleOpenPreferences}
-                onItemClick={handleLibraryItemClick}
-                onItemDoubleClick={handleLibraryItemDoubleClick}
-                previewPane={
-                  <LibraryPreviewPane
-                    selectedItem={selectedLibraryItem}
-                    currentPdfName={displayedLibraryPreviewState.currentPdfName}
-                    currentJsonName={displayedLibraryPreviewState.currentJsonName}
-                    hasBlocks={displayedLibraryPreviewState.hasBlocks}
-                    blockCount={displayedLibraryPreviewState.blockCount}
-                    statusMessage={displayedLibraryPreviewState.statusMessage}
-                    summary={displayedLibraryPreviewState.summary}
-                    operation={displayedLibraryPreviewState.operation}
-                    loading={displayedLibraryPreviewState.loading}
-                    error={displayedLibraryPreviewState.error}
-                    demoMode={selectedItemIsOnboardingWelcome}
-                    translationReady={selectedItemIsOnboardingWelcome ? onboardingDemoReveal.translated : undefined}
-                    aiConfigured={Boolean(
-                      summaryModelPreset &&
-                        summaryModelPreset.apiKey.trim() &&
-                        summaryModelPreset.baseUrl.trim() &&
-                        summaryModelPreset.model.trim(),
-                    )}
-                    onOpenReader={() => {
-                      if (selectedLibraryItem) {
-                        openTab(selectedLibraryItem.workspaceId, selectedLibraryItem.title);
-                      }
-                    }}
-                    onTranslateDocument={handlePreviewTranslateDocument}
-                    onCloudParse={handlePreviewCloudParse}
-                    onGenerateSummary={() => {
-                      if (selectedLibraryItem) {
-                        if (isOnboardingWelcomeItem(selectedLibraryItem)) {
-                          void revealOnboardingWelcomeSummary();
-                          return;
-                        }
-
-                        void generateLibraryPreview(selectedLibraryItem, true, { allowGenerate: true });
-                      }
-                    }}
-                  />
-                }
-              />
-            ) : (
-              <LiteratureLibraryView
-                onOpenPaper={handleOpenNativeLibraryPaper}
-                onOpenSettings={handleOpenPreferences}
-                mineruCacheDir={settings.mineruCacheDir}
-                autoLoadSiblingJson={settings.autoLoadSiblingJson}
-                onRunMineruParse={handleNativeLibraryMineruParse}
-                onTranslatePaper={handleNativeLibraryTranslate}
-                onGenerateSummary={handleNativeLibraryGenerateSummary}
-                paperActionStates={nativePaperActionStates}
-              />
-            )}
+            <LiteratureLibraryView
+              onOpenPaper={onboardingOpen ? handleOpenOnboardingDemoPaper : handleOpenNativeLibraryPaper}
+              onOpenSettings={handleOpenPreferences}
+              mineruCacheDir={settings.mineruCacheDir}
+              autoLoadSiblingJson={settings.autoLoadSiblingJson}
+              demoLibrary={onboardingOpen ? onboardingDemoLibrary : null}
+              onRunMineruParse={onboardingOpen ? revealOnboardingWelcomeParse : handleNativeLibraryMineruParse}
+              onTranslatePaper={onboardingOpen ? revealOnboardingWelcomeTranslation : handleNativeLibraryTranslate}
+              onGenerateSummary={onboardingOpen ? handleOnboardingDemoGenerateSummary : handleNativeLibraryGenerateSummary}
+              paperActionStates={onboardingOpen ? onboardingPaperActionStates : nativePaperActionStates}
+            />
           </div>
 
           {readerTabs.map((tab) => {
@@ -6570,6 +6432,7 @@ function Reader() {
                   onOpenPreferences={handleOpenPreferences}
                   onOpenStandalonePdf={() => void handleOpenStandalonePdf()}
                   onBridgeStateChange={handleBridgeStateChange}
+                  translationSnapshot={libraryTranslationSnapshots[item.workspaceId] ?? null}
                   onboardingWorkspaceStage={
                     tab.id === activeTabId && tab.id === onboardingDemoTabId
                       ? onboardingWorkspaceStage

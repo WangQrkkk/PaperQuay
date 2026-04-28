@@ -63,11 +63,11 @@ import type {
 } from '../../types/reader';
 import { bytesToDataUrl, decodeUtf8, formatFileSize, guessMimeTypeFromPath, isImagePath, isTextLikePath } from '../../utils/files';
 import {
-  buildLegacyMineruCachePaths,
-  buildLegacyMineruSummaryCachePath,
+  buildMineruCachePathCandidates,
   buildMineruCachePaths,
+  buildMineruSummaryCachePathCandidates,
   buildMineruSummaryCachePath,
-  buildLegacyMineruTranslationCachePath,
+  buildMineruTranslationCachePathCandidates,
   buildMineruTranslationCachePath,
   guessSiblingJsonPath,
   guessSiblingMarkdownPath,
@@ -159,6 +159,12 @@ export interface ReaderTabBridgeState {
   onGenerateSummary: () => void;
 }
 
+export interface ReaderDocumentTranslationSnapshot {
+  targetLanguage: string;
+  translations: TranslationMap;
+  updatedAt: number;
+}
+
 export interface LibraryPreviewSyncPayload {
   item: WorkspaceItem;
   hasBlocks: boolean;
@@ -192,6 +198,7 @@ interface DocumentReaderTabProps {
   onOpenPreferences: () => void;
   onOpenStandalonePdf: () => void;
   onBridgeStateChange: (tabId: string, bridge: ReaderTabBridgeState | null) => void;
+  translationSnapshot?: ReaderDocumentTranslationSnapshot | null;
   onboardingWorkspaceStage?: WorkspaceStage | null;
   onboardingDemoReveal?: {
     parsed: boolean;
@@ -603,6 +610,7 @@ function DocumentReaderTab({
   onOpenPreferences,
   onOpenStandalonePdf,
   onBridgeStateChange,
+  translationSnapshot = null,
   onboardingWorkspaceStage = null,
   onboardingDemoReveal,
 }: DocumentReaderTabProps) {
@@ -701,7 +709,7 @@ function DocumentReaderTab({
   }, [isActive, onboardingWorkspaceStage]);
 
   const hasDocument = Boolean(currentDocument && pdfSource);
-  const translatedCount = Object.keys(blockTranslations).length;
+  const translatedCount = useMemo(() => Object.keys(blockTranslations).length, [blockTranslations]);
   const translationModelPreset =
     resolveModelPreset(qaModelPresets, settings.translationModelPresetId) ?? qaModelPresets[0] ?? null;
   const selectionTranslationModelPreset =
@@ -925,6 +933,38 @@ function DocumentReaderTab({
     paperSummaryNextSourceKey ||
     `${currentDocument.workspaceId}::preview::${currentJsonName}::${flatBlocks.length}`;
 
+  const tryLoadSavedTranslations = useCallback(
+    async (item: WorkspaceItem) => {
+      if (!settings.mineruCacheDir.trim()) {
+        return null;
+      }
+
+      const candidatePaths = buildMineruTranslationCachePathCandidates(
+        settings.mineruCacheDir.trim(),
+        item,
+        settings.translationTargetLanguage,
+      );
+
+      for (const candidatePath of candidatePaths) {
+        try {
+          const raw = await readLocalTextFile(candidatePath);
+          const parsed = JSON.parse(raw) as Partial<TranslationCacheEnvelope>;
+
+          if (!parsed || typeof parsed !== 'object' || !parsed.translations) {
+            continue;
+          }
+
+          return parsed.translations as TranslationMap;
+        } catch {
+          continue;
+        }
+      }
+
+      return null;
+    },
+    [settings.mineruCacheDir, settings.translationTargetLanguage],
+  );
+
   useEffect(() => {
     if (
       blockTranslationTargetLanguage &&
@@ -936,46 +976,90 @@ function DocumentReaderTab({
   }, [blockTranslationTargetLanguage, settings.translationTargetLanguage]);
 
   useEffect(() => {
+    if (
+      !currentDocument ||
+      !translationSnapshot ||
+      translationSnapshot.targetLanguage !== settings.translationTargetLanguage
+    ) {
+      return;
+    }
+
+    const incomingCount = Object.keys(translationSnapshot.translations).length;
+
+    if (incomingCount === 0) {
+      return;
+    }
+
+    if (
+      blockTranslationTargetLanguage === translationSnapshot.targetLanguage &&
+      translatedCount >= incomingCount
+    ) {
+      return;
+    }
+
+    setBlockTranslations(translationSnapshot.translations);
+    setBlockTranslationTargetLanguage(translationSnapshot.targetLanguage);
+    setStatusMessage(
+      lRef.current(
+        `已加载文库页刚生成的全文翻译 ${incomingCount} 条`,
+        `Loaded ${incomingCount} translations generated from the library page`,
+      ),
+    );
+  }, [
+    blockTranslationTargetLanguage,
+    currentDocument,
+    settings.translationTargetLanguage,
+    translatedCount,
+    translationSnapshot,
+  ]);
+
+  useEffect(() => {
     if (!currentDocument || flatBlocks.length === 0 || !settings.mineruCacheDir.trim()) {
       return;
     }
 
     if (
       blockTranslationTargetLanguage === settings.translationTargetLanguage &&
-      Object.keys(blockTranslations).length > 0
+      translatedCount > 0
     ) {
       return;
     }
 
     let cancelled = false;
 
-    void tryLoadSavedTranslations(currentDocument)
-      .then((cachedTranslations) => {
-        if (cancelled || !cachedTranslations) {
-          return;
-        }
+    void (async () => {
+      await waitForNextPaint();
 
-        setBlockTranslations(cachedTranslations);
-        setBlockTranslationTargetLanguage(settings.translationTargetLanguage);
-        setStatusMessage(
-          lRef.current(
-            `已恢复历史翻译 ${Object.keys(cachedTranslations).length} 条（${settings.translationTargetLanguage}）`,
-            `Restored ${Object.keys(cachedTranslations).length} saved translations (${settings.translationTargetLanguage})`,
-          ),
-        );
-      })
-      .catch(() => undefined);
+      if (cancelled) {
+        return;
+      }
+
+      const cachedTranslations = await tryLoadSavedTranslations(currentDocument);
+
+      if (cancelled || !cachedTranslations) {
+        return;
+      }
+
+      setBlockTranslations(cachedTranslations);
+      setBlockTranslationTargetLanguage(settings.translationTargetLanguage);
+      setStatusMessage(
+        lRef.current(
+          `已恢复历史翻译 ${Object.keys(cachedTranslations).length} 条（${settings.translationTargetLanguage}）`,
+          `Restored ${Object.keys(cachedTranslations).length} saved translations (${settings.translationTargetLanguage})`,
+        ),
+      );
+    })().catch(() => undefined);
 
     return () => {
       cancelled = true;
     };
   }, [
     blockTranslationTargetLanguage,
-    blockTranslations,
     currentDocument,
     flatBlocks.length,
     settings.mineruCacheDir,
     settings.translationTargetLanguage,
+    translatedCount,
     tryLoadSavedTranslations,
   ]);
 
@@ -990,7 +1074,7 @@ function DocumentReaderTab({
 
     if (
       blockTranslationTargetLanguage === settings.translationTargetLanguage &&
-      Object.keys(blockTranslations).length > 0
+      translatedCount > 0
     ) {
       return;
     }
@@ -1017,11 +1101,11 @@ function DocumentReaderTab({
     };
   }, [
     blockTranslationTargetLanguage,
-    blockTranslations,
     currentDocument,
     flatBlocks.length,
     onboardingDemoReveal?.translated,
     settings.translationTargetLanguage,
+    translatedCount,
   ]);
 
   useEffect(() => {
@@ -1295,74 +1379,42 @@ function DocumentReaderTab({
     [settings.mineruCacheDir],
   );
 
-  async function tryLoadSavedTranslations(item: WorkspaceItem) {
-    if (!settings.mineruCacheDir.trim()) {
-      return null;
-    }
+  const tryLoadSavedSummary = useCallback(
+    async (item: WorkspaceItem, sourceKey: string) => {
+      if (!settings.mineruCacheDir.trim() || !sourceKey.trim()) {
+        return null;
+      }
 
-    const candidatePaths = [
-      buildMineruTranslationCachePath(
+      const candidatePaths = buildMineruSummaryCachePathCandidates(
         settings.mineruCacheDir.trim(),
         item,
-        settings.translationTargetLanguage,
-      ),
-      buildLegacyMineruTranslationCachePath(
-        settings.mineruCacheDir.trim(),
-        item,
-        settings.translationTargetLanguage,
-      ),
-    ];
+        sourceKey,
+      );
 
-    for (const candidatePath of candidatePaths) {
-      try {
-        const raw = await readLocalTextFile(candidatePath);
-        const parsed = JSON.parse(raw) as Partial<TranslationCacheEnvelope>;
+      for (const candidatePath of candidatePaths) {
+        try {
+          const raw = await readLocalTextFile(candidatePath);
+          const parsed = JSON.parse(raw) as Partial<SummaryCacheEnvelope>;
 
-        if (!parsed || typeof parsed !== 'object' || !parsed.translations) {
+          if (
+            !parsed ||
+            typeof parsed !== 'object' ||
+            parsed.sourceKey !== sourceKey ||
+            !parsed.summary
+          ) {
+            continue;
+          }
+
+          return parsed.summary as PaperSummary;
+        } catch {
           continue;
         }
-
-        return parsed.translations as TranslationMap;
-      } catch {
-        continue;
       }
-    }
 
-    return null;
-  }
-
-  async function tryLoadSavedSummary(item: WorkspaceItem, sourceKey: string) {
-    if (!settings.mineruCacheDir.trim() || !sourceKey.trim()) {
       return null;
-    }
-
-    const candidatePaths = [
-      buildMineruSummaryCachePath(settings.mineruCacheDir.trim(), item, sourceKey),
-      buildLegacyMineruSummaryCachePath(settings.mineruCacheDir.trim(), item, sourceKey),
-    ];
-
-    for (const candidatePath of candidatePaths) {
-      try {
-        const raw = await readLocalTextFile(candidatePath);
-        const parsed = JSON.parse(raw) as Partial<SummaryCacheEnvelope>;
-
-        if (
-          !parsed ||
-          typeof parsed !== 'object' ||
-          parsed.sourceKey !== sourceKey ||
-          !parsed.summary
-        ) {
-          continue;
-        }
-
-        return parsed.summary as PaperSummary;
-      } catch {
-        continue;
-      }
-    }
-
-    return null;
-  }
+    },
+    [settings.mineruCacheDir],
+  );
 
   const tryLoadSavedMineruPages = useCallback(
     async (item: WorkspaceItem) => {
@@ -1393,10 +1445,7 @@ function DocumentReaderTab({
         return null;
       }
 
-      const candidateCaches = [
-        buildMineruCachePaths(settings.mineruCacheDir.trim(), item),
-        buildLegacyMineruCachePaths(settings.mineruCacheDir.trim(), item),
-      ];
+      const candidateCaches = buildMineruCachePathCandidates(settings.mineruCacheDir.trim(), item);
 
       for (const cachePaths of candidateCaches) {
         for (const candidatePath of [cachePaths.contentJsonPath, cachePaths.middleJsonPath]) {
@@ -1428,10 +1477,7 @@ function DocumentReaderTab({
         return null;
       }
 
-      const candidateCaches = [
-        buildMineruCachePaths(settings.mineruCacheDir.trim(), item),
-        buildLegacyMineruCachePaths(settings.mineruCacheDir.trim(), item),
-      ];
+      const candidateCaches = buildMineruCachePathCandidates(settings.mineruCacheDir.trim(), item);
 
       for (const cachePaths of candidateCaches) {
         try {
@@ -2141,10 +2187,10 @@ function DocumentReaderTab({
     }
 
     if (settings.mineruCacheDir.trim()) {
-      for (const cachePaths of [
-        buildMineruCachePaths(settings.mineruCacheDir.trim(), currentDocument),
-        buildLegacyMineruCachePaths(settings.mineruCacheDir.trim(), currentDocument),
-      ]) {
+      for (const cachePaths of buildMineruCachePathCandidates(
+        settings.mineruCacheDir.trim(),
+        currentDocument,
+      )) {
         candidatePaths.add(cachePaths.markdownPath);
       }
     }
@@ -3370,13 +3416,14 @@ function DocumentReaderTab({
           model: activeQaPreset.model,
           temperature: getDocumentModelRuntimeConfig(settings, 'qa').temperature,
           reasoningEffort: getDocumentModelRuntimeConfig(settings, 'qa').reasoningEffort,
+          responseLanguage: settings.uiLanguage === 'en-US' ? 'English' : 'Simplified Chinese',
           title: currentDocument.title,
           authors: currentDocument.creators || undefined,
           year: currentDocument.year || undefined,
           excerptText: selectedExcerpt?.text || undefined,
           documentText: qaRequest.documentText,
           blocks: qaRequest.blocks,
-          messages: nextMessages.slice(-8),
+          messages: nextMessages.slice(-12),
         },
         {
           onDelta: (_delta, fullText) => updateStreamingAnswer(fullText),

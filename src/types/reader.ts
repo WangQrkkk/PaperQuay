@@ -265,6 +265,7 @@ export interface OpenAICompatibleSummaryOptions {
   model: string;
   temperature?: number;
   reasoningEffort?: ModelReasoningEffort;
+  responseLanguage?: string;
   title: string;
   authors?: string;
   year?: string;
@@ -279,6 +280,7 @@ export interface OpenAICompatibleQaOptions {
   model: string;
   temperature?: number;
   reasoningEffort?: ModelReasoningEffort;
+  responseLanguage?: string;
   title: string;
   authors?: string;
   year?: string;
@@ -324,12 +326,6 @@ export interface WorkspaceItem extends ZoteroLibraryItem {
   workspaceId: string;
   groupKey: string;
 }
-
-export interface FlatCollection extends ZoteroCollection {
-  depth: number;
-}
-
-export type LibrarySectionKey = 'recent' | 'all' | 'standalone' | `collection:${string}`;
 
 export interface ReaderSettings {
   uiLanguage: UiLanguage;

@@ -743,6 +743,7 @@ function CompactOverviewStage(props: ReaderWorkspaceProps) {
                 </button>
                 <button
                   type="button"
+                  data-tour="overview-mineru-parse"
                   onClick={onCloudParse}
                   disabled={loading}
                   className="inline-flex items-center rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition-all duration-200 hover:border-slate-300 hover:bg-slate-50 disabled:opacity-60"
@@ -752,6 +753,7 @@ function CompactOverviewStage(props: ReaderWorkspaceProps) {
                 </button>
                 <button
                   type="button"
+                  data-tour="overview-translate-document"
                   onClick={onTranslateDocument}
                   disabled={loading || translating || blocks.length === 0}
                   className="inline-flex items-center rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition-all duration-200 hover:border-slate-300 hover:bg-slate-50 disabled:opacity-60"

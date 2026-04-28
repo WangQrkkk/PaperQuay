@@ -50,8 +50,7 @@ import type {
   WorkspaceItem,
 } from '../../types/reader';
 import {
-  buildLegacyMineruCachePaths,
-  buildMineruCachePaths,
+  buildMineruCachePathCandidates,
   guessSiblingJsonPath,
   guessSiblingMarkdownPath,
 } from '../../utils/mineruCache';
@@ -82,10 +81,19 @@ interface LiteratureLibraryViewProps {
   onOpenSettings: () => void;
   mineruCacheDir?: string;
   autoLoadSiblingJson?: boolean;
+  demoLibrary?: LiteratureLibraryDemoState | null;
   paperActionStates?: Record<string, LiteraturePaperTaskState | null | undefined>;
   onRunMineruParse?: (paper: LiteraturePaper) => void;
   onTranslatePaper?: (paper: LiteraturePaper) => void;
   onGenerateSummary?: (paper: LiteraturePaper) => void;
+}
+
+interface LiteratureLibraryDemoState {
+  settings: LibrarySettings;
+  categories: LiteratureCategory[];
+  papers: LiteraturePaper[];
+  statusMessage: string;
+  paperStatuses?: Record<string, LiteraturePaperListStatus>;
 }
 
 interface NativeSummaryUpdatedEventDetail {
@@ -96,6 +104,42 @@ interface NativeSummaryUpdatedEventDetail {
 interface NativeMineruStatusUpdatedEventDetail {
   paperId: string;
   mineruParsed: boolean;
+}
+
+function filterDemoPapers(
+  demoLibrary: LiteratureLibraryDemoState,
+  categoryId: string | null,
+  searchQuery: string,
+): LiteraturePaper[] {
+  const category = demoLibrary.categories.find((item) => item.id === categoryId);
+  const query = searchQuery.trim().toLocaleLowerCase();
+
+  return demoLibrary.papers.filter((paper) => {
+    if (category?.systemKey === 'favorites' && !paper.isFavorite) {
+      return false;
+    }
+
+    if (category?.systemKey === 'uncategorized' && paper.categoryIds.length > 0) {
+      return false;
+    }
+
+    if (category && !category.isSystem && !paper.categoryIds.includes(category.id)) {
+      return false;
+    }
+
+    if (!query) {
+      return true;
+    }
+
+    return [
+      paper.title,
+      paper.publication ?? '',
+      paper.abstractText ?? '',
+      paper.authors.map((author) => author.name).join(' '),
+      paper.keywords.join(' '),
+      paper.tags.map((tag) => tag.name).join(' '),
+    ].some((value) => value.toLocaleLowerCase().includes(query));
+  });
 }
 
 interface PaperContextMenuState {
@@ -291,10 +335,7 @@ async function hasMineruOutputForPaper(
   const cacheRoot = mineruCacheDir.trim();
 
   if (workspaceItem && cacheRoot) {
-    for (const cachePaths of [
-      buildMineruCachePaths(cacheRoot, workspaceItem),
-      buildLegacyMineruCachePaths(cacheRoot, workspaceItem),
-    ]) {
+    for (const cachePaths of buildMineruCachePathCandidates(cacheRoot, workspaceItem)) {
       candidates.add(cachePaths.contentJsonPath);
       candidates.add(cachePaths.middleJsonPath);
       candidates.add(cachePaths.markdownPath);
@@ -322,12 +363,14 @@ export default function LiteratureLibraryView({
   onOpenSettings,
   mineruCacheDir = '',
   autoLoadSiblingJson = true,
+  demoLibrary = null,
   paperActionStates = {},
   onRunMineruParse,
   onTranslatePaper,
   onGenerateSummary,
 }: LiteratureLibraryViewProps) {
   const l = useLocaleText();
+  const demoMode = Boolean(demoLibrary);
   const [settings, setSettings] = useState<LibrarySettings | null>(null);
   const [categories, setCategories] = useState<LiteratureCategory[]>([]);
   const [papers, setPapers] = useState<LiteraturePaper[]>([]);
@@ -358,6 +401,7 @@ export default function LiteratureLibraryView({
     useState<LibraryConfirmDialogState | null>(null);
   const [paperContextMenu, setPaperContextMenu] =
     useState<PaperContextMenuState | null>(null);
+  const [paperDragOverCategoryId, setPaperDragOverCategoryId] = useState<string | null>(null);
   const [tagDialogPaper, setTagDialogPaper] = useState<LiteraturePaper | null>(null);
   const [detailsPanelWidth, setDetailsPanelWidth] = useState(loadDetailsPanelWidth);
   const [detailsPanelResizing, setDetailsPanelResizing] = useState(false);
@@ -365,6 +409,7 @@ export default function LiteratureLibraryView({
     clientX: 0,
     width: DETAILS_PANEL_DEFAULT_WIDTH,
   });
+  const selectedCategoryIdRef = useRef<string | null>(null);
 
   const flatCategories = useMemo(() => flattenCategories(categories), [categories]);
   const selectedCategory = useMemo(
@@ -376,8 +421,40 @@ export default function LiteratureLibraryView({
     [papers, selectedPaperId],
   );
 
+  const resolveDemoPapers = useCallback(
+    (nextCategoryId = selectedCategoryId) => {
+      if (!demoLibrary) {
+        return [];
+      }
+
+      return filterDemoPapers(demoLibrary, nextCategoryId, searchQuery);
+    },
+    [demoLibrary, searchQuery, selectedCategoryId],
+  );
+
+  const showDemoLockedMessage = useCallback(() => {
+    setStatusMessage(
+      l(
+        '新手引导模式只展示 Welcome 演示文档。完成或退出引导后即可管理真实文库。',
+        'Onboarding mode only shows the Welcome demo. Finish or exit onboarding to manage the real library.',
+      ),
+    );
+  }, [l]);
+
   const refreshPapers = useCallback(
     async (nextCategoryId = selectedCategoryId) => {
+      if (demoLibrary) {
+        const nextPapers = resolveDemoPapers(nextCategoryId);
+
+        setPapers(nextPapers);
+        setSelectedPaperId((current) =>
+          current && nextPapers.some((paper) => paper.id === current)
+            ? current
+            : nextPapers[0]?.id ?? null,
+        );
+        return;
+      }
+
       const nextPapers = await listLibraryPapers({
         categoryId: nextCategoryId,
         search: searchQuery,
@@ -393,20 +470,40 @@ export default function LiteratureLibraryView({
           : nextPapers[0]?.id ?? null,
       );
     },
-    [searchQuery, selectedCategoryId],
+    [demoLibrary, resolveDemoPapers, searchQuery, selectedCategoryId],
   );
 
   const refreshAll = useCallback(async () => {
+    if (demoLibrary) {
+      const nextPapers = resolveDemoPapers();
+
+      setSettings(demoLibrary.settings);
+      setCategories(demoLibrary.categories);
+      setPapers(nextPapers);
+      setSelectedPaperId((current) =>
+        current && nextPapers.some((paper) => paper.id === current)
+          ? current
+          : nextPapers[0]?.id ?? null,
+      );
+      setStatusMessage(demoLibrary.statusMessage);
+      return;
+    }
+
     const [nextCategories] = await Promise.all([
       listLibraryCategories(),
       refreshPapers(),
     ]);
 
     setCategories(nextCategories);
-  }, [refreshPapers]);
+  }, [demoLibrary, refreshPapers, resolveDemoPapers]);
 
   const beginImportDrafts = useCallback(
     (paths: string[]) => {
+      if (demoMode) {
+        showDemoLockedMessage();
+        return;
+      }
+
       const pdfPaths = Array.from(
         new Set(paths.filter((path) => path.trim().toLowerCase().endsWith('.pdf'))),
       );
@@ -443,7 +540,7 @@ export default function LiteratureLibraryView({
         ),
       );
     },
-    [categories, l, selectedCategoryId],
+    [categories, demoMode, l, selectedCategoryId, showDemoLockedMessage],
   );
 
   useTauriPdfDrop({
@@ -457,6 +554,10 @@ export default function LiteratureLibraryView({
     } catch {
     }
   }, [detailsPanelWidth]);
+
+  useEffect(() => {
+    selectedCategoryIdRef.current = selectedCategoryId;
+  }, [selectedCategoryId]);
 
   useEffect(() => {
     if (!detailsPanelResizing) {
@@ -506,6 +607,29 @@ export default function LiteratureLibraryView({
       setError('');
 
       try {
+        if (demoLibrary) {
+          const allCategory = demoLibrary.categories.find((category) => category.systemKey === 'all');
+          const currentCategoryId = selectedCategoryIdRef.current;
+          const nextSelectedCategoryId =
+            currentCategoryId &&
+            demoLibrary.categories.some((category) => category.id === currentCategoryId)
+              ? currentCategoryId
+              : allCategory?.id ?? demoLibrary.categories[0]?.id ?? null;
+          const nextPapers = filterDemoPapers(demoLibrary, nextSelectedCategoryId, searchQuery);
+
+          if (cancelled) {
+            return;
+          }
+
+          setSettings(demoLibrary.settings);
+          setCategories(demoLibrary.categories);
+          setSelectedCategoryId(nextSelectedCategoryId);
+          setPapers(nextPapers);
+          setSelectedPaperId(nextPapers[0]?.id ?? null);
+          setStatusMessage(demoLibrary.statusMessage);
+          return;
+        }
+
         const snapshot = await initializeLiteratureLibrary();
 
         if (cancelled) {
@@ -539,7 +663,7 @@ export default function LiteratureLibraryView({
     return () => {
       cancelled = true;
     };
-  }, [l]);
+  }, [demoLibrary]);
 
   useEffect(() => {
     const handleNativeSummaryUpdated = (event: Event) => {
@@ -601,6 +725,23 @@ export default function LiteratureLibraryView({
       return;
     }
 
+    if (demoLibrary) {
+      setPaperStatuses(
+        demoLibrary.paperStatuses ??
+          Object.fromEntries(
+            papers.map((paper) => [
+              paper.id,
+              {
+                mineruParsed: false,
+                overviewGenerated: Boolean(paper.aiSummary?.trim()),
+                checkingMineru: false,
+              },
+            ]),
+          ),
+      );
+      return;
+    }
+
     let cancelled = false;
 
     setPaperStatuses((current) => {
@@ -641,7 +782,7 @@ export default function LiteratureLibraryView({
     return () => {
       cancelled = true;
     };
-  }, [autoLoadSiblingJson, mineruCacheDir, papers]);
+  }, [autoLoadSiblingJson, demoLibrary, mineruCacheDir, papers]);
 
   useEffect(() => {
     if (loading) {
@@ -673,6 +814,11 @@ export default function LiteratureLibraryView({
   };
 
   const handleSelectStorageDir = async () => {
+    if (demoMode) {
+      showDemoLockedMessage();
+      return;
+    }
+
     if (!settings) {
       return;
     }
@@ -704,6 +850,11 @@ export default function LiteratureLibraryView({
   };
 
   const handleOpenLibrarySettings = () => {
+    if (demoMode) {
+      onOpenSettings();
+      return;
+    }
+
     setLibrarySettingsOpen(true);
 
     void (async () => {
@@ -842,6 +993,11 @@ export default function LiteratureLibraryView({
   };
 
   const handleImportZoteroLibrary = async (preferredDataDir?: string) => {
+    if (demoMode) {
+      showDemoLockedMessage();
+      return;
+    }
+
     setWorking(true);
     setError('');
 
@@ -1023,6 +1179,11 @@ export default function LiteratureLibraryView({
   }, [handleImportZoteroLibrary]);
 
   const handleImportPdfs = async () => {
+    if (demoMode) {
+      showDemoLockedMessage();
+      return;
+    }
+
     setError('');
 
     try {
@@ -1054,6 +1215,11 @@ export default function LiteratureLibraryView({
 
   const handleAutoFillImportMetadata = useCallback(
     async (targetDrafts = importDrafts, silent = false) => {
+      if (demoMode) {
+        showDemoLockedMessage();
+        return;
+      }
+
       const draftsToLookup = targetDrafts.filter((draft) => draft.path.trim());
 
       if (draftsToLookup.length === 0) {
@@ -1108,7 +1274,7 @@ export default function LiteratureLibraryView({
         setMetadataWorking(false);
       }
     },
-    [importDrafts, l],
+    [demoMode, importDrafts, l, showDemoLockedMessage],
   );
 
   useEffect(() => {
@@ -1132,7 +1298,9 @@ export default function LiteratureLibraryView({
   }, [
     handleAutoFillImportMetadata,
     importDialogOpen,
+    demoMode,
     importDrafts,
+    showDemoLockedMessage,
     metadataAttemptedPaths,
     metadataWorking,
   ]);
@@ -1148,6 +1316,11 @@ export default function LiteratureLibraryView({
   };
 
   const handleConfirmImportDrafts = async () => {
+    if (demoMode) {
+      showDemoLockedMessage();
+      return;
+    }
+
     if (importDrafts.length === 0) {
       return;
     }
@@ -1202,6 +1375,11 @@ export default function LiteratureLibraryView({
   };
 
   const handleEnrichAllMetadata = async () => {
+    if (demoMode) {
+      showDemoLockedMessage();
+      return;
+    }
+
     if (bulkMetadataWorking) {
       return;
     }
@@ -1285,6 +1463,11 @@ export default function LiteratureLibraryView({
   };
 
   const handleCreateCategory = (parentCategory?: LiteratureCategory | null) => {
+    if (demoMode) {
+      showDemoLockedMessage();
+      return;
+    }
+
     setCategoryNameDialog({
       mode: 'create',
       parentCategory: parentCategory && !parentCategory.isSystem ? parentCategory : null,
@@ -1292,6 +1475,11 @@ export default function LiteratureLibraryView({
   };
 
   const handleRenameCategory = (category: LiteratureCategory) => {
+    if (demoMode) {
+      showDemoLockedMessage();
+      return;
+    }
+
     if (category.isSystem) {
       return;
     }
@@ -1303,6 +1491,12 @@ export default function LiteratureLibraryView({
   };
 
   const handleSubmitCategoryName = async (name: string) => {
+    if (demoMode) {
+      showDemoLockedMessage();
+      setCategoryNameDialog(null);
+      return;
+    }
+
     if (!categoryNameDialog) {
       return;
     }
@@ -1354,6 +1548,11 @@ export default function LiteratureLibraryView({
   };
 
   const handleDeleteCategory = (category: LiteratureCategory) => {
+    if (demoMode) {
+      showDemoLockedMessage();
+      return;
+    }
+
     if (category.isSystem) {
       return;
     }
@@ -1389,6 +1588,11 @@ export default function LiteratureLibraryView({
   };
 
   const handleMoveCategory = async (categoryId: string, parentId: string | null) => {
+    if (demoMode) {
+      showDemoLockedMessage();
+      return;
+    }
+
     setError('');
 
     try {
@@ -1434,6 +1638,11 @@ export default function LiteratureLibraryView({
   };
 
   const handleSavePaper = async (request: UpdatePaperRequest) => {
+    if (demoMode) {
+      showDemoLockedMessage();
+      return;
+    }
+
     setPaperSaving(true);
     setError('');
 
@@ -1452,6 +1661,11 @@ export default function LiteratureLibraryView({
   };
 
   const handleDeletePaper = (paper: LiteraturePaper) => {
+    if (demoMode) {
+      showDemoLockedMessage();
+      return;
+    }
+
     setConfirmDialog({
       kind: 'delete-paper',
       paper,
@@ -1489,7 +1703,51 @@ export default function LiteratureLibraryView({
     paper: LiteraturePaper,
   ) => {
     event.dataTransfer.setData('application/x-paperquay-paper-id', paper.id);
+    event.dataTransfer.setData('text/plain', paper.id);
     event.dataTransfer.effectAllowed = 'move';
+  };
+
+  const assignPaperToCategory = async (paperId: string, category: LiteratureCategory) => {
+    if (demoMode) {
+      showDemoLockedMessage();
+      return;
+    }
+
+    if (category.isSystem) {
+      return;
+    }
+
+    try {
+      await assignPaperToLibraryCategory({
+        paperId,
+        categoryId: category.id,
+      });
+      const nextCategories = await listLibraryCategories();
+
+      setCategories(nextCategories);
+      setSelectedCategoryId(category.id);
+      await refreshPapers(category.id);
+      setSelectedPaperId(paperId);
+      setStatusMessage(l(`已添加到分类：${category.name}`, `Added to category: ${category.name}`));
+    } catch (nextError) {
+      const message =
+        nextError instanceof Error ? nextError.message : l('移动文献失败', 'Failed to move paper');
+      setError(message);
+      setStatusMessage(message);
+    } finally {
+      setPaperDragOverCategoryId(null);
+    }
+  };
+
+  const handlePaperDropOnCategory = (paperId: string, categoryId: string) => {
+    const category = categories.find((item) => item.id === categoryId);
+
+    if (!category) {
+      setPaperDragOverCategoryId(null);
+      return;
+    }
+
+    void assignPaperToCategory(paperId, category);
   };
 
   const handlePaperReorder = async (
@@ -1497,6 +1755,11 @@ export default function LiteratureLibraryView({
     targetPaperId: string,
     placement: 'before' | 'after',
   ) => {
+    if (demoMode) {
+      showDemoLockedMessage();
+      return;
+    }
+
     const nextPapers = reorderPaperList(papers, draggedPaperId, targetPaperId, placement);
 
     if (nextPapers === papers) {
@@ -1535,6 +1798,12 @@ export default function LiteratureLibraryView({
   };
 
   const handleOpenTagDialogFromContextMenu = () => {
+    if (demoMode) {
+      showDemoLockedMessage();
+      setPaperContextMenu(null);
+      return;
+    }
+
     const paper = paperContextMenu?.paper;
 
     setPaperContextMenu(null);
@@ -1545,6 +1814,12 @@ export default function LiteratureLibraryView({
   };
 
   const handleToggleFavoriteFromContextMenu = async () => {
+    if (demoMode) {
+      showDemoLockedMessage();
+      setPaperContextMenu(null);
+      return;
+    }
+
     const paper = paperContextMenu?.paper;
 
     setPaperContextMenu(null);
@@ -1590,6 +1865,12 @@ export default function LiteratureLibraryView({
   };
 
   const handleSubmitPaperTag = async (tagName: string) => {
+    if (demoMode) {
+      showDemoLockedMessage();
+      setTagDialogPaper(null);
+      return;
+    }
+
     if (!tagDialogPaper) {
       return;
     }
@@ -1654,30 +1935,26 @@ export default function LiteratureLibraryView({
     category: LiteratureCategory,
   ) => {
     event.preventDefault();
+    event.stopPropagation();
+
+    if (demoMode) {
+      showDemoLockedMessage();
+      return;
+    }
 
     if (category.isSystem) {
       return;
     }
 
-    const paperId = event.dataTransfer.getData('application/x-paperquay-paper-id');
+    const paperId =
+      event.dataTransfer.getData('application/x-paperquay-paper-id') ||
+      event.dataTransfer.getData('text/plain');
 
     if (!paperId) {
       return;
     }
 
-    try {
-      await assignPaperToLibraryCategory({
-        paperId,
-        categoryId: category.id,
-      });
-      await refreshAll();
-      setStatusMessage(l(`已添加到分类：${category.name}`, `Added to category: ${category.name}`));
-    } catch (nextError) {
-      const message =
-        nextError instanceof Error ? nextError.message : l('移动文献失败', 'Failed to move paper');
-      setError(message);
-      setStatusMessage(message);
-    }
+    await assignPaperToCategory(paperId, category);
   };
 
   return (
@@ -1687,51 +1964,60 @@ export default function LiteratureLibraryView({
         gridTemplateColumns: `280px minmax(360px,1fr) ${detailsPanelWidth}px`,
       }}
     >
-      <LiteratureCategorySidebar
-        settings={settings}
-        categories={flatCategories}
-        selectedCategoryId={selectedCategoryId}
-        onCreateCategory={handleCreateCategory}
-        onSelectCategory={handleSelectCategory}
-        onSelectStorageDir={() => void handleSelectStorageDir()}
-        onRenameCategory={handleRenameCategory}
-        onDeleteCategory={handleDeleteCategory}
-        onCategoryMove={(categoryId, parentId) => void handleMoveCategory(categoryId, parentId)}
-        onCategoryDrop={(event, category) => void handleCategoryDrop(event, category)}
-      />
+      <div data-tour="library-sidebar" className="min-h-0">
+        <LiteratureCategorySidebar
+          settings={settings}
+          categories={flatCategories}
+          selectedCategoryId={selectedCategoryId}
+          onCreateCategory={handleCreateCategory}
+          onSelectCategory={handleSelectCategory}
+          onSelectStorageDir={() => void handleSelectStorageDir()}
+          onRenameCategory={handleRenameCategory}
+          onDeleteCategory={handleDeleteCategory}
+          onCategoryMove={(categoryId, parentId) => void handleMoveCategory(categoryId, parentId)}
+          externalDragOverCategoryId={paperDragOverCategoryId}
+          onCategoryDrop={(event, category) => void handleCategoryDrop(event, category)}
+        />
+      </div>
 
-      <LiteraturePaperList
-        loading={loading}
-        working={working}
-        papers={papers}
-        paperStatuses={paperStatuses}
-        selectedPaper={selectedPaper}
-        searchQuery={searchQuery}
-        statusMessage={statusMessage}
-        error={error}
-        onSearchQueryChange={setSearchQuery}
-        onImportPdfs={() => void handleImportPdfs()}
-        onRefresh={() => void refreshAll()}
-        onSelectPaper={setSelectedPaperId}
-        onOpenPaper={onOpenPaper}
-        onPaperDragStart={handlePaperDragStart}
-        onPaperReorder={(draggedPaperId, targetPaperId, placement) =>
+      <div data-tour="paper-list" className="min-h-0">
+        <LiteraturePaperList
+          loading={loading}
+          working={working}
+          papers={papers}
+          paperStatuses={paperStatuses}
+          selectedPaper={selectedPaper}
+          searchQuery={searchQuery}
+          statusMessage={statusMessage}
+          error={error}
+          onSearchQueryChange={setSearchQuery}
+          onImportPdfs={() => void handleImportPdfs()}
+          onRefresh={() => void refreshAll()}
+          onSelectPaper={setSelectedPaperId}
+          onOpenPaper={onOpenPaper}
+          onPaperDragStart={handlePaperDragStart}
+          onPaperReorder={(draggedPaperId, targetPaperId, placement) =>
           void handlePaperReorder(draggedPaperId, targetPaperId, placement)
         }
+        onPaperDropOnCategory={handlePaperDropOnCategory}
+        onPaperPointerDragOverCategory={setPaperDragOverCategoryId}
         onPaperContextMenu={handlePaperContextMenu}
       />
+      </div>
 
-      <LiteraturePaperDetails
-        selectedPaper={selectedPaper}
-        saving={paperSaving}
-        onOpenPaper={onOpenPaper}
-        onOpenSettings={handleOpenLibrarySettings}
-        onSavePaper={(request) => void handleSavePaper(request)}
-        actionState={selectedPaper ? paperActionStates[selectedPaper.id] ?? null : null}
-        onRunMineruParse={onRunMineruParse}
-        onTranslatePaper={onTranslatePaper}
-        onGenerateSummary={onGenerateSummary}
-      />
+      <div data-tour="ai-summary" className="min-h-0">
+        <LiteraturePaperDetails
+          selectedPaper={selectedPaper}
+          saving={paperSaving}
+          onOpenPaper={onOpenPaper}
+          onOpenSettings={handleOpenLibrarySettings}
+          onSavePaper={(request) => void handleSavePaper(request)}
+          actionState={selectedPaper ? paperActionStates[selectedPaper.id] ?? null : null}
+          onRunMineruParse={onRunMineruParse}
+          onTranslatePaper={onTranslatePaper}
+          onGenerateSummary={onGenerateSummary}
+        />
+      </div>
 
       <div
         role="separator"

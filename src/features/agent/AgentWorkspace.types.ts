@@ -1,5 +1,5 @@
 import type { LucideIcon } from 'lucide-react';
-import type { LibraryAgentPlan, LibraryAgentTool } from '../../services/libraryAgent';
+import type { LibraryAgentPlan, LibraryAgentTool, LibraryAgentUserChoice } from '../../services/libraryAgent';
 
 export type AgentStepStatus = 'waiting' | 'running' | 'success' | 'error';
 
@@ -15,7 +15,9 @@ export interface AgentCapability {
   key: LibraryAgentTool;
   functionName: string;
   title: string;
+  titleEn: string;
   description: string;
+  descriptionEn: string;
   icon: LucideIcon;
 }
 
@@ -49,6 +51,7 @@ export interface AgentChatMessage {
   trace?: AgentTraceStep[];
   toolCall?: AgentToolCallView;
   plan?: LibraryAgentPlan;
+  choices?: LibraryAgentUserChoice[];
   error?: string;
 }
 

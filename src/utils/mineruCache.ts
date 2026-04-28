@@ -63,8 +63,7 @@ function hashString(value: string): string {
   return (hash >>> 0).toString(16).padStart(8, '0');
 }
 
-export function buildMineruCachePaths(rootDir: string, item: WorkspaceItem): MineruCachePaths {
-  const directoryName = `${sanitizePathSegment(item.title)}-${hashString(item.workspaceId)}`;
+function buildCachePaths(rootDir: string, directoryName: string): MineruCachePaths {
   const directory = joinPath(rootDir, directoryName);
   const translationsDir = joinPath(directory, 'translations');
   const summariesDir = joinPath(directory, 'summaries');
@@ -80,21 +79,44 @@ export function buildMineruCachePaths(rootDir: string, item: WorkspaceItem): Min
   };
 }
 
+function stableDocumentKey(item: WorkspaceItem): string {
+  return item.workspaceId || item.itemKey || item.localPdfPath || item.title || 'document';
+}
+
+export function buildMineruCachePaths(rootDir: string, item: WorkspaceItem): MineruCachePaths {
+  const directoryName = `document-${hashString(stableDocumentKey(item))}`;
+
+  return buildCachePaths(rootDir, directoryName);
+}
+
+export function buildTitleMineruCachePaths(rootDir: string, item: WorkspaceItem): MineruCachePaths {
+  const directoryName = `${sanitizePathSegment(item.title)}-${hashString(item.workspaceId)}`;
+
+  return buildCachePaths(rootDir, directoryName);
+}
+
 export function buildLegacyMineruCachePaths(rootDir: string, item: WorkspaceItem): MineruCachePaths {
   const directoryName = `${sanitizePathSegment(item.title)}-${hashString(item.itemKey)}`;
-  const directory = joinPath(rootDir, directoryName);
-  const translationsDir = joinPath(directory, 'translations');
-  const summariesDir = joinPath(directory, 'summaries');
 
-  return {
-    directory,
-    manifestPath: joinPath(directory, 'paper_reader_manifest.json'),
-    contentJsonPath: joinPath(directory, 'content_list_v2.json'),
-    middleJsonPath: joinPath(directory, 'middle.json'),
-    markdownPath: joinPath(directory, 'full.md'),
-    translationsDir,
-    summariesDir,
-  };
+  return buildCachePaths(rootDir, directoryName);
+}
+
+export function buildMineruCachePathCandidates(rootDir: string, item: WorkspaceItem): MineruCachePaths[] {
+  const candidates = [
+    buildMineruCachePaths(rootDir, item),
+    buildTitleMineruCachePaths(rootDir, item),
+    buildLegacyMineruCachePaths(rootDir, item),
+  ];
+  const seenDirectories = new Set<string>();
+
+  return candidates.filter((candidate) => {
+    if (seenDirectories.has(candidate.directory)) {
+      return false;
+    }
+
+    seenDirectories.add(candidate.directory);
+    return true;
+  });
 }
 
 export function buildMineruTranslationCachePath(
@@ -119,6 +141,18 @@ export function buildLegacyMineruTranslationCachePath(
   return joinPath(cachePaths.translationsDir, `${languageSegment}.json`);
 }
 
+export function buildMineruTranslationCachePathCandidates(
+  rootDir: string,
+  item: WorkspaceItem,
+  targetLanguage: string,
+): string[] {
+  const languageSegment = sanitizePathSegment(targetLanguage || 'default');
+
+  return buildMineruCachePathCandidates(rootDir, item).map((cachePaths) =>
+    joinPath(cachePaths.translationsDir, `${languageSegment}.json`)
+  );
+}
+
 export function buildMineruSummaryCachePath(
   rootDir: string,
   item: WorkspaceItem,
@@ -139,6 +173,18 @@ export function buildLegacyMineruSummaryCachePath(
   const fileName = `${hashString(sourceKey || 'summary')}.json`;
 
   return joinPath(cachePaths.summariesDir, fileName);
+}
+
+export function buildMineruSummaryCachePathCandidates(
+  rootDir: string,
+  item: WorkspaceItem,
+  sourceKey: string,
+): string[] {
+  const fileName = `${hashString(sourceKey || 'summary')}.json`;
+
+  return buildMineruCachePathCandidates(rootDir, item).map((cachePaths) =>
+    joinPath(cachePaths.summariesDir, fileName)
+  );
 }
 
 export function buildSiblingPath(path: string, fileName: string): string {

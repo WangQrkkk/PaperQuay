@@ -37,7 +37,6 @@ pub fn run() {
             commands::library::library_relocate_attachment,
             commands::metadata::lookup_literature_metadata,
             commands::mineru::run_mineru_cloud_parse,
-            commands::mineru::run_mineru_placeholder,
             commands::llm::test_openai_compatible_chat,
             commands::translation::translate_blocks_openai_compatible,
             commands::summary::summarize_document_openai_compatible,

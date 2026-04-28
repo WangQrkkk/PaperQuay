@@ -7,7 +7,7 @@ import {
   Pencil,
   Trash2,
 } from 'lucide-react';
-import { useLocaleText } from '../../../i18n/uiLanguage';
+import { useAppLocale, useLocaleText } from '../../../i18n/uiLanguage';
 import type {
   LibrarySettings,
   LiteratureCategory,
@@ -15,6 +15,7 @@ import type {
 import { truncateMiddle } from '../../../utils/text';
 import {
   categoryIcon,
+  categoryDisplayName,
   type FlatLiteratureCategory,
 } from '../literatureUi';
 
@@ -28,6 +29,7 @@ interface LiteratureCategorySidebarProps {
   onRenameCategory: (category: LiteratureCategory) => void;
   onDeleteCategory: (category: LiteratureCategory) => void;
   onCategoryMove: (categoryId: string, parentId: string | null) => void;
+  externalDragOverCategoryId?: string | null;
   onCategoryDrop: (
     event: DragEvent<HTMLButtonElement>,
     category: LiteratureCategory,
@@ -50,11 +52,14 @@ export default function LiteratureCategorySidebar({
   onRenameCategory,
   onDeleteCategory,
   onCategoryMove,
+  externalDragOverCategoryId = null,
   onCategoryDrop,
 }: LiteratureCategorySidebarProps) {
   const l = useLocaleText();
+  const locale = useAppLocale();
   const [contextMenu, setContextMenu] = useState<CategoryContextMenuState | null>(null);
   const [collapsedCategoryIds, setCollapsedCategoryIds] = useState<Set<string>>(() => new Set());
+  const [dragOverCategoryId, setDragOverCategoryId] = useState<string | null>(null);
   const categoryIdsWithChildren = new Set(
     categories
       .filter((category) => category.parentId)
@@ -148,6 +153,7 @@ export default function LiteratureCategorySidebar({
     category: LiteratureCategory,
   ) => {
     event.preventDefault();
+    setDragOverCategoryId(null);
 
     const draggedCategoryId = event.dataTransfer.getData('application/x-paperquay-category-id');
 
@@ -163,6 +169,7 @@ export default function LiteratureCategorySidebar({
 
   const handleRootDrop = (event: DragEvent<HTMLDivElement>) => {
     event.preventDefault();
+    setDragOverCategoryId(null);
 
     const draggedCategoryId = event.dataTransfer.getData('application/x-paperquay-category-id');
 
@@ -171,14 +178,20 @@ export default function LiteratureCategorySidebar({
     }
   };
 
+  const hasDragType = (event: DragEvent, type: string) =>
+    Array.from(event.dataTransfer.types).includes(type);
+
   const renderCategoryRow = (category: FlatLiteratureCategory) => {
     const hasChildren = categoryIdsWithChildren.has(category.id);
     const collapsed = hasChildren && collapsedCategoryIds.has(category.id);
+    const canDropOnCategory = !category.isSystem;
+    const dragOver = dragOverCategoryId === category.id || externalDragOverCategoryId === category.id;
 
     return (
       <div key={category.id} className="group flex items-center gap-1">
         <button
           type="button"
+          data-paperquay-category-drop-id={!category.isSystem ? category.id : undefined}
           draggable={!category.isSystem}
           onDragStart={(event) => handleCategoryDragStart(event, category)}
           onClick={() => onSelectCategory(category.id)}
@@ -190,16 +203,29 @@ export default function LiteratureCategorySidebar({
           }}
           onDragOver={(event) => {
             if (
-              (!category.isSystem && event.dataTransfer.types.includes('application/x-paperquay-category-id')) ||
-              (!category.isSystem && event.dataTransfer.types.includes('application/x-paperquay-paper-id'))
+              canDropOnCategory &&
+              (hasDragType(event, 'application/x-paperquay-category-id') ||
+                hasDragType(event, 'application/x-paperquay-paper-id') ||
+                hasDragType(event, 'text/plain'))
             ) {
               event.preventDefault();
+              event.dataTransfer.dropEffect = 'move';
+              setDragOverCategoryId(category.id);
+            }
+          }}
+          onDragLeave={(event) => {
+            const nextTarget = event.relatedTarget;
+
+            if (!(nextTarget instanceof Node) || !event.currentTarget.contains(nextTarget)) {
+              setDragOverCategoryId((current) => (current === category.id ? null : current));
             }
           }}
           onDrop={(event) => handleCategoryRowDrop(event, category)}
           className={clsx(
             'flex min-w-0 flex-1 items-center justify-between rounded-2xl px-3 py-2.5 text-left text-sm transition',
-            selectedCategoryId === category.id
+            dragOver
+              ? 'bg-teal-50 text-teal-800 shadow-[0_14px_30px_rgba(20,184,166,0.14)] ring-1 ring-teal-300 dark:bg-teal-300/12 dark:text-teal-100 dark:ring-teal-300/30'
+              : selectedCategoryId === category.id
               ? 'bg-slate-900 text-white dark:bg-[#275b5f] dark:text-white'
               : category.isSystem
                 ? 'text-slate-700 hover:bg-white dark:text-[#d7d7d7] dark:hover:bg-[#242424]'
@@ -224,7 +250,7 @@ export default function LiteratureCategorySidebar({
                     toggleCategoryCollapse(category.id);
                   }
                 }}
-                title={collapsed ? l('灞曞紑鍒嗙被', 'Expand category') : l('鎶樺彔鍒嗙被', 'Collapse category')}
+                title={collapsed ? l('展开分类', 'Expand category') : l('折叠分类', 'Collapse category')}
                 className={clsx(
                   'inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-lg transition hover:bg-black/5 dark:hover:bg-white/10',
                   selectedCategoryId === category.id ? 'text-white' : 'text-slate-400 dark:text-[#8d8d8d]',
@@ -239,7 +265,7 @@ export default function LiteratureCategorySidebar({
               <span className="h-5 w-5 shrink-0" />
             )}
             <span className="shrink-0">{categoryIcon(category)}</span>
-            <span className="truncate">{category.name}</span>
+            <span className="truncate">{categoryDisplayName(category, locale)}</span>
           </span>
           <span
             className={clsx(

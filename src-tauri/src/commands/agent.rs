@@ -15,6 +15,10 @@ pub struct LibraryAgentPaperInput {
     doi: Option<String>,
     url: Option<String>,
     abstract_text: Option<String>,
+    ai_summary: Option<String>,
+    user_note: Option<String>,
+    context_source: Option<String>,
+    context_text: Option<String>,
     keywords: Vec<String>,
     tags: Vec<String>,
 }
@@ -27,6 +31,8 @@ pub struct OpenAICompatibleLibraryAgentOptions {
     model: String,
     temperature: Option<f32>,
     reasoning_effort: Option<String>,
+    response_language: Option<String>,
+    allow_context_request: Option<bool>,
     tool: String,
     instruction: Option<String>,
     papers: Vec<LibraryAgentPaperInput>,
@@ -69,10 +75,38 @@ pub struct LibraryAgentGeneratedPlan {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct LibraryAgentContextRequest {
+    summary: String,
+    mode: String,
+    paper_ids: Vec<String>,
+    reason: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LibraryAgentChoiceOption {
+    id: String,
+    label: String,
+    description: String,
+    instruction: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LibraryAgentUserChoiceRequest {
+    summary: String,
+    reason: String,
+    options: Vec<LibraryAgentChoiceOption>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct LibraryAgentGeneratedResponse {
     kind: String,
     answer: Option<String>,
     plan: Option<LibraryAgentGeneratedPlan>,
+    context_request: Option<LibraryAgentContextRequest>,
+    user_choices: Option<LibraryAgentUserChoiceRequest>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -175,26 +209,59 @@ fn extract_message_text(content: Option<Value>) -> Option<String> {
     }
 }
 
-fn build_agent_prompt(tool: &str, instruction: Option<&str>, papers_json: &str) -> String {
+fn build_agent_prompt(
+    tool: &str,
+    instruction: Option<&str>,
+    papers_json: &str,
+    allow_context_request: bool,
+    response_language: &str,
+) -> String {
     let tool_mode = if tool == "auto" {
-        "Auto decide whether the request needs a library-editing tool. If it does, select the single best function tool. If it is only a question, explanation, comparison, or reading-assistant request, answer directly without calling any tool."
+        if allow_context_request {
+            "Auto decide whether the request needs a library-editing tool, more paper context, or only a direct answer. If it needs a local library change, select the single best editing function tool. If it is a reading-assistant request and the current metadata is insufficient, call request_paper_context first. If the provided metadata or contextText is enough, answer directly."
+        } else {
+            "Auto decide whether the request needs a library-editing tool or only a direct answer. The app has already loaded any requested reading context, so answer directly when this is ordinary Q&A."
+        }
     } else {
         "A preferred tool is provided. Use that function unless the user instruction clearly requires a safer matching tool."
     };
     let response_rule = if tool == "auto" {
-        "Use a function tool only when the user asks to change, organize, rename, tag, classify, or update library records. For ordinary Q&A that does not require a local library change, answer directly in Simplified Chinese and do not call tools."
+        if allow_context_request {
+            "Use editing tools only when the user asks to change, organize, rename, tag, classify, or update library records. For ordinary Q&A, answer directly in the configured response language when the provided fields are enough. If the user asks to explain, compare, summarize, or analyze papers and metadata is not enough, call request_paper_context instead of guessing."
+        } else {
+            "Use editing tools only when the user asks to change, organize, rename, tag, classify, or update library records. For ordinary Q&A, answer directly in the configured response language using the provided contextText, aiSummary, abstract, and metadata."
+        }
     } else {
         "Use tool/function calling. Do not answer with plain text unless tool calling is unavailable."
+    };
+    let context_tool_line = if allow_context_request {
+        "- request_paper_context: ask the desktop app to load local paper context before answering. Use mode \"pdf-text\" by default so the app sends full extracted PDF text. Use mode \"summary\" only when the user asks for a lightweight answer, when many papers may exceed the model context, or after presenting summary-only as a user option.\n"
+    } else {
+        ""
+    };
+    let context_rules = if allow_context_request {
+        "11. Do not call request_paper_context when contextText is already present for the papers you need, unless all loaded contextText values are empty."
+    } else {
+        "11. request_paper_context is unavailable in this pass because the app has already loaded the requested context. Answer with the available context instead of asking for it again."
+    };
+
+    let insufficient_context_rule = if allow_context_request {
+        "13. Do not output a metadata-only disclaimer as the final answer. If you cannot safely answer because the current context is insufficient, either call request_paper_context with mode=\"pdf-text\" when one clear full-text context source is appropriate, or call present_user_options with 2 to 5 dynamic choices. If many papers are selected or full PDF text may exceed the model context, prefer present_user_options before loading context. The choices must fit the user's request and can include actions such as metadata completion, loading full PDF text, using summaries only, narrowing the selected papers, or answering roughly from metadata. Do not use a fixed option list."
+    } else {
+        "13. If the loaded context is still empty or insufficient, call present_user_options with 2 to 5 dynamic next-step choices. Do not use a fixed option list; tailor the choices to the current papers and user request."
     };
 
     format!(
         r#"Task mode: {tool_mode}
 Preferred tool: {tool}
+Response language: {response_language}
 User instruction: {instruction}
 
 You are the PaperQuay literature-library agent. Decide whether this request needs a local library action or only a direct answer.
 
 Available tools:
+{context_tool_line}
+- present_user_options: ask the user to choose the next step when multiple safe paths are possible. Generate 2 to 5 dynamic options, each with a label, description, and executable instruction for the app to run if clicked.
 - rename_papers: add, remove, replace, normalize, or rewrite paper titles.
 - update_paper_metadata: fill or correct title, authors, year, venue, DOI, URL, abstract, or keywords when supported by the provided context.
 - update_paper_tags: add concise academic tags to selected papers.
@@ -203,7 +270,7 @@ Available tools:
 
 Rules:
 1. {response_rule}
-2. Do not execute anything. You only propose tool arguments. The app will show your tool call to the user for approval.
+2. Do not claim that local library edits were executed. Editing tools only propose reviewable arguments; the app applies them after user approval. request_paper_context only asks the app to load local reading context.
 3. Use the exact paper ids from the input.
 4. For rename, call rename_papers and set newTitle according to the user instruction.
 5. For metadata, call update_paper_metadata and only fill fields strongly supported by the input. Do not invent DOI, year, publication, or authors.
@@ -211,20 +278,84 @@ Rules:
 7. For clean-tags, call clean_paper_tags and merge synonyms, case variants, punctuation variants, and duplicates.
 8. For classify, call classify_papers. Create dynamic Collection names from the selected papers. Do not use a fixed taxonomy. Collection names should be short topic phrases.
 9. Keep titles and tags readable for an academic literature manager.
+10. Paper fields may include aiSummary, userNote, contextSource, and contextText. If contextText is present, use it as the primary evidence for direct reading answers.
+{context_rules}
+12. For direct answers, write clean Markdown in the configured response language with headings, bullets, and comparison tables when useful. State briefly if your answer is based only on metadata/summary rather than full PDF text.
+{insufficient_context_rule}
 
 Input papers:
 {papers_json}
 "#,
         tool_mode = tool_mode,
         tool = tool,
+        response_language = response_language,
         response_rule = response_rule,
+        context_tool_line = context_tool_line,
+        context_rules = context_rules,
+        insufficient_context_rule = insufficient_context_rule,
         instruction = instruction.unwrap_or(""),
         papers_json = papers_json
     )
 }
 
-fn build_agent_tools() -> Value {
-    json!([
+fn build_agent_tools(include_context_request: bool) -> Value {
+    let tools = json!([
+      {
+        "type": "function",
+        "function": {
+          "name": "request_paper_context",
+          "description": "Ask the desktop app to load more local paper context before answering. Use this for reading, explaining, comparing, or analyzing selected papers when metadata alone is not enough. Prefer mode='pdf-text' by default so the app sends full extracted PDF text. Use mode='summary' only for lightweight answers, many selected papers, or when the user chooses summary-only context.",
+          "parameters": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "summary": { "type": "string" },
+              "mode": {
+                "type": "string",
+                "enum": ["summary", "pdf-text"]
+              },
+              "paperIds": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "reason": { "type": "string" }
+            },
+            "required": ["summary", "mode", "paperIds", "reason"]
+          }
+        }
+      },
+      {
+        "type": "function",
+        "function": {
+          "name": "present_user_options",
+          "description": "Present dynamic next-step options to the user when the agent cannot safely choose one path. Use this instead of a metadata-only disclaimer. Options must be tailored to the current request and selected papers.",
+          "parameters": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "summary": { "type": "string" },
+              "reason": { "type": "string" },
+              "options": {
+                "type": "array",
+                "minItems": 2,
+                "maxItems": 5,
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": { "type": "string" },
+                    "label": { "type": "string" },
+                    "description": { "type": "string" },
+                    "instruction": { "type": "string" }
+                  },
+                  "required": ["id", "label", "description", "instruction"]
+                }
+              }
+            },
+            "required": ["summary", "reason", "options"]
+          }
+        }
+      },
       {
         "type": "function",
         "function": {
@@ -373,7 +504,29 @@ fn build_agent_tools() -> Value {
           }
         }
       }
-    ])
+    ]);
+
+    if include_context_request {
+        return tools;
+    }
+
+    Value::Array(
+        tools
+            .as_array()
+            .map(|items| {
+                items
+                    .iter()
+                    .filter(|tool| {
+                        tool.get("function")
+                            .and_then(|function| function.get("name"))
+                            .and_then(Value::as_str)
+                            != Some("request_paper_context")
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default(),
+    )
 }
 
 fn preferred_tool_name(tool: &str) -> Option<&'static str> {
@@ -424,18 +577,93 @@ fn json_string_array(value: &Value, key: &str) -> Option<Vec<String>> {
     }
 }
 
+fn parse_context_request_tool_call(
+    tool_call: &ChatCompletionToolCall,
+) -> Result<LibraryAgentContextRequest, String> {
+    let arguments =
+        serde_json::from_str::<Value>(&tool_call.function.arguments).map_err(|error| {
+            format!(
+                "Failed to parse Agent context tool arguments: {}; function: {}; arguments: {}",
+                error, tool_call.function.name, tool_call.function.arguments
+            )
+        })?;
+    let mut mode = json_string(&arguments, "mode").unwrap_or_else(|| "summary".to_string());
+
+    if mode != "summary" && mode != "pdf-text" {
+        mode = "summary".to_string();
+    }
+
+    Ok(LibraryAgentContextRequest {
+        summary: json_string(&arguments, "summary")
+            .unwrap_or_else(|| "Load more paper context before answering.".to_string()),
+        mode,
+        paper_ids: json_string_array(&arguments, "paperIds").unwrap_or_default(),
+        reason: json_string(&arguments, "reason")
+            .unwrap_or_else(|| "The question needs more paper context.".to_string()),
+    })
+}
+
+fn parse_user_choice_tool_call(
+    tool_call: &ChatCompletionToolCall,
+) -> Result<LibraryAgentUserChoiceRequest, String> {
+    let arguments =
+        serde_json::from_str::<Value>(&tool_call.function.arguments).map_err(|error| {
+            format!(
+                "Failed to parse Agent user-choice tool arguments: {}; function: {}; arguments: {}",
+                error, tool_call.function.name, tool_call.function.arguments
+            )
+        })?;
+    let raw_options = arguments
+        .get("options")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "Agent user-choice tool call is missing the options array".to_string())?;
+    let options = raw_options
+        .iter()
+        .filter_map(|raw_option| {
+            let label = json_string(raw_option, "label")?;
+            let instruction = json_string(raw_option, "instruction")?;
+            let id = json_string(raw_option, "id").unwrap_or_else(|| {
+                label
+                    .chars()
+                    .filter(|character| character.is_ascii_alphanumeric() || *character == '-')
+                    .collect::<String>()
+            });
+
+            Some(LibraryAgentChoiceOption {
+                id: if id.is_empty() { format!("option-{}", label.len()) } else { id },
+                label,
+                description: json_string(raw_option, "description").unwrap_or_default(),
+                instruction,
+            })
+        })
+        .take(5)
+        .collect::<Vec<_>>();
+
+    if options.is_empty() {
+        return Err("Agent user options contain no executable option.".to_string());
+    }
+
+    Ok(LibraryAgentUserChoiceRequest {
+        summary: json_string(&arguments, "summary")
+            .unwrap_or_else(|| "Choose the next step.".to_string()),
+        reason: json_string(&arguments, "reason")
+            .unwrap_or_else(|| "The request has multiple safe paths.".to_string()),
+        options,
+    })
+}
+
 fn parse_tool_call_plan(
     tool_call: &ChatCompletionToolCall,
     fallback_summary: &str,
 ) -> Result<LibraryAgentGeneratedPlan, String> {
     let function_name = tool_call.function.name.trim();
     let tool = tool_key_from_function_name(function_name)
-        .ok_or_else(|| format!("Agent 返回了未知工具调用: {}", function_name))?
+        .ok_or_else(|| format!("Agent returned an unknown tool call: {}", function_name))?
         .to_string();
     let arguments =
         serde_json::from_str::<Value>(&tool_call.function.arguments).map_err(|error| {
             format!(
-                "解析 Agent tool call 参数失败: {}；函数: {}；参数: {}",
+                "Failed to parse Agent tool call arguments: {}; function: {}; arguments: {}",
                 error, function_name, tool_call.function.arguments
             )
         })?;
@@ -444,21 +672,21 @@ fn parse_tool_call_plan(
     let raw_items = arguments
         .get("items")
         .and_then(Value::as_array)
-        .ok_or_else(|| format!("Agent tool call 缺少 items 数组: {}", function_name))?;
+        .ok_or_else(|| format!("Agent tool call is missing the items array: {}", function_name))?;
     let mut items = Vec::new();
 
     for raw_item in raw_items {
         let Some(paper_id) = json_string(raw_item, "paperId") else {
             continue;
         };
-        let reason = json_string(raw_item, "reason").unwrap_or_else(|| "模型建议".to_string());
+        let reason = json_string(raw_item, "reason").unwrap_or_else(|| "Model suggestion".to_string());
 
         match function_name {
             "rename_papers" => {
                 if let Some(new_title) = json_string(raw_item, "newTitle") {
                     items.push(LibraryAgentGeneratedItem {
                         paper_id,
-                        title: Some("重命名论文标题".to_string()),
+                        title: Some("Rename paper title".to_string()),
                         description: Some(reason),
                         before: None,
                         after: Some(new_title.clone()),
@@ -481,7 +709,7 @@ fn parse_tool_call_plan(
             "update_paper_metadata" => {
                 items.push(LibraryAgentGeneratedItem {
                     paper_id,
-                    title: Some("补全文献元数据".to_string()),
+                    title: Some("Update paper metadata".to_string()),
                     description: Some(reason),
                     before: None,
                     after: None,
@@ -505,13 +733,13 @@ fn parse_tool_call_plan(
                     items.push(LibraryAgentGeneratedItem {
                         paper_id,
                         title: Some(if function_name == "clean_paper_tags" {
-                            "标签清洗 / 合并".to_string()
+                            "Clean and merge tags".to_string()
                         } else {
-                            "智能标签建议".to_string()
+                            "Smart tag suggestions".to_string()
                         }),
                         description: Some(reason),
                         before: None,
-                        after: Some(tags.join("、")),
+                        after: Some(tags.join(", ")),
                         update: Some(LibraryAgentPaperUpdate {
                             title: None,
                             year: None,
@@ -531,10 +759,10 @@ fn parse_tool_call_plan(
             "classify_papers" => {
                 if let Some(collection) = json_string(raw_item, "collection") {
                     let parent = json_string(raw_item, "parentCollection")
-                        .unwrap_or_else(|| "Agent 自动归类".to_string());
+                        .unwrap_or_else(|| "Agent Auto Collection".to_string());
                     items.push(LibraryAgentGeneratedItem {
                         paper_id,
-                        title: Some("自动归类 Collection".to_string()),
+                        title: Some("Auto classify collection".to_string()),
                         description: Some(reason),
                         before: None,
                         after: Some(format!("{}/{}", parent, collection)),
@@ -565,38 +793,51 @@ pub async fn generate_library_agent_plan_openai_compatible(
     let tool = options.tool.trim();
 
     if base_url.is_empty() {
-        return Err("Agent 模型 Base URL 不能为空".to_string());
+        return Err("Agent model Base URL cannot be empty".to_string());
     }
 
     if api_key.is_empty() {
-        return Err("Agent 模型 API Key 不能为空".to_string());
+        return Err("Agent model API key cannot be empty".to_string());
     }
 
     if model.is_empty() {
-        return Err("Agent 模型名称不能为空".to_string());
+        return Err("Agent model name cannot be empty".to_string());
     }
 
     if tool.is_empty() {
-        return Err("Agent 工具类型不能为空".to_string());
+        return Err("Agent tool type cannot be empty".to_string());
     }
 
     if options.papers.is_empty() {
-        return Err("请先选择至少一篇文献".to_string());
+        return Err("Select at least one paper first.".to_string());
     }
 
     let endpoint = build_chat_completions_url(base_url);
     let papers_json = serde_json::to_string(&options.papers)
-        .map_err(|error| format!("序列化文献上下文失败: {}", error))?;
-    let prompt = build_agent_prompt(tool, options.instruction.as_deref(), &papers_json);
+        .map_err(|error| format!("Failed to serialize paper context: {}", error))?;
+    let allow_context_request = options.allow_context_request.unwrap_or(tool == "auto");
+    let response_language = options
+        .response_language
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("Simplified Chinese");
+    let prompt = build_agent_prompt(
+        tool,
+        options.instruction.as_deref(),
+        &papers_json,
+        allow_context_request,
+        response_language,
+    );
     let forced_tool_name = if tool == "auto" {
         None
     } else {
-        Some(preferred_tool_name(tool).ok_or_else(|| format!("Agent 工具类型不支持: {}", tool))?)
+        Some(preferred_tool_name(tool).ok_or_else(|| format!("Unsupported Agent tool type: {}", tool))?)
     };
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(120))
         .build()
-        .map_err(|error| format!("创建 Agent HTTP 客户端失败: {}", error))?;
+        .map_err(|error| format!("Failed to create Agent HTTP client: {}", error))?;
     let tool_choice = match forced_tool_name {
         Some(tool_name) => json!({
             "type": "function",
@@ -606,15 +847,20 @@ pub async fn generate_library_agent_plan_openai_compatible(
         }),
         None => json!("auto"),
     };
+    let system_content = if allow_context_request {
+        format!("You are a precise literature-library agent for a desktop literature manager. Use editing function tools only for reviewable local library actions. Use request_paper_context when a reading answer needs local summaries or PDF text that is not yet present. For ordinary questions with enough context, answer directly in {}. Never claim that local edits were executed.", response_language)
+    } else {
+        format!("You are a precise literature-library agent for a desktop literature manager. The app has already loaded the available reading context for this request. Do not ask for more context; answer directly in {} for ordinary Q&A, or use editing tools only for reviewable local library actions. Never claim that local edits were executed.", response_language)
+    };
     let mut body = json!({
       "model": model,
       "temperature": model_temperature(options.temperature, 0.1),
-      "tools": build_agent_tools(),
+      "tools": build_agent_tools(allow_context_request),
       "tool_choice": tool_choice,
       "messages": [
         {
           "role": "system",
-          "content": "You are a precise literature-library agent for a desktop literature manager. Use function tools only for reviewable local library actions. For ordinary questions that do not require changing library records, answer directly. Never claim that actions were executed."
+          "content": system_content
         },
         {
           "role": "user",
@@ -631,16 +877,16 @@ pub async fn generate_library_agent_plan_openai_compatible(
         .json(&body)
         .send()
         .await
-        .map_err(|error| format!("请求 Agent 模型失败: {}", error))?;
+        .map_err(|error| format!("Failed to request Agent model: {}", error))?;
     let status = response.status();
     let response_text = response
         .text()
         .await
-        .map_err(|error| format!("读取 Agent 模型响应失败: {}", error))?;
+        .map_err(|error| format!("Failed to read Agent model response: {}", error))?;
 
     if !status.is_success() {
         return Err(format!(
-            "Agent 模型 HTTP 状态异常: {}，{}",
+            "Agent model HTTP status error {}: {}",
             status,
             truncate_for_display(response_text.trim(), 700)
         ));
@@ -649,7 +895,7 @@ pub async fn generate_library_agent_plan_openai_compatible(
     let completion =
         serde_json::from_str::<ChatCompletionResponse>(&response_text).map_err(|error| {
             format!(
-                "解析 Agent chat/completions 响应失败: {}；原始响应: {}",
+                "Failed to parse Agent chat/completions response: {}; raw response: {}",
                 error,
                 truncate_for_display(response_text.trim(), 700)
             )
@@ -658,10 +904,10 @@ pub async fn generate_library_agent_plan_openai_compatible(
         .choices
         .first()
         .map(|choice| &choice.message)
-        .ok_or_else(|| "Agent 响应缺少 choices[0]".to_string())?;
+        .ok_or_else(|| "Agent response is missing choices[0]".to_string())?;
 
     if let Some(refusal) = message.refusal.as_deref() {
-        return Err(format!("Agent 模型拒绝执行: {}", refusal));
+        return Err(format!("Agent model refused the request: {}", refusal));
     }
 
     let tool_calls = message.tool_calls.as_ref().filter(|items| !items.is_empty());
@@ -675,11 +921,13 @@ pub async fn generate_library_agent_plan_openai_compatible(
                 kind: "answer".to_string(),
                 answer: Some(answer.to_string()),
                 plan: None,
+                context_request: None,
+                user_choices: None,
             });
         }
 
         return Err(format!(
-            "Agent 模型没有返回 tool call。请确认当前模型支持 OpenAI-compatible tools/function calling。模型文本响应: {}",
+            "Agent model did not return a tool call. Make sure the configured model supports OpenAI-compatible tools/function calling. Model text response: {}",
             truncate_for_display(answer, 700)
         ));
     }
@@ -694,10 +942,42 @@ pub async fn generate_library_agent_plan_openai_compatible(
         &tool_calls[0]
     };
 
+    if selected_tool_call.function.name == "request_paper_context" {
+        if tool != "auto" {
+            return Err("This tool mode cannot request paper context.".to_string());
+        }
+
+        let context_request = parse_context_request_tool_call(selected_tool_call)?;
+
+        return Ok(LibraryAgentGeneratedResponse {
+            kind: "context-request".to_string(),
+            answer: None,
+            plan: None,
+            context_request: Some(context_request),
+            user_choices: None,
+        });
+    }
+
+    if selected_tool_call.function.name == "present_user_options" {
+        if tool != "auto" {
+            return Err("This tool mode cannot request user choices.".to_string());
+        }
+
+        let user_choices = parse_user_choice_tool_call(selected_tool_call)?;
+
+        return Ok(LibraryAgentGeneratedResponse {
+            kind: "choice-request".to_string(),
+            answer: None,
+            plan: None,
+            context_request: None,
+            user_choices: Some(user_choices),
+        });
+    }
+
     let plan = parse_tool_call_plan(
         selected_tool_call,
         &format!(
-            "模型调用工具 {} 生成了文库整理计划",
+            "Model called tool {} and generated a reviewable library plan",
             selected_tool_call.function.name
         ),
     )?;
@@ -706,5 +986,42 @@ pub async fn generate_library_agent_plan_openai_compatible(
         kind: "plan".to_string(),
         answer: None,
         plan: Some(plan),
+        context_request: None,
+        user_choices: None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn can_disable_context_request_tool_after_context_is_loaded() {
+        let tools = build_agent_tools(false);
+        let tool_names = tools
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|tool| tool.get("function")?.get("name")?.as_str())
+            .collect::<Vec<_>>();
+
+        assert!(!tool_names.contains(&"request_paper_context"));
+        assert!(tool_names.contains(&"rename_papers"));
+    }
+
+    #[test]
+    fn prompt_allows_model_generated_dynamic_user_options() {
+        let prompt = build_agent_prompt(
+            "auto",
+            Some("explain these papers"),
+            "[]",
+            true,
+            "English",
+        );
+
+        assert!(prompt.contains("present_user_options"));
+        assert!(prompt.contains("Do not use a fixed option list"));
+        assert!(prompt.contains("Response language: English"));
+        assert!(prompt.contains("mode \"pdf-text\" by default"));
+    }
 }

@@ -6,6 +6,8 @@ import {
 } from './library';
 import { invoke } from '@tauri-apps/api/core';
 import { lookupLiteratureMetadata } from './metadata';
+import { readLocalBinaryFile } from './desktop';
+import { extractPdfTextByPdfJs } from './summarySource';
 import type {
   CreateCategoryRequest,
   LiteratureCategory,
@@ -74,6 +76,10 @@ interface LibraryAgentPaperInput {
   doi?: string | null;
   url?: string | null;
   abstractText?: string | null;
+  aiSummary?: string | null;
+  userNote?: string | null;
+  contextSource?: string | null;
+  contextText?: string | null;
   keywords: string[];
   tags: string[];
 }
@@ -84,6 +90,8 @@ interface OpenAICompatibleLibraryAgentOptions {
   model: string;
   temperature?: number;
   reasoningEffort?: ModelReasoningEffort;
+  responseLanguage?: string;
+  allowContextRequest?: boolean;
   tool: LibraryAgentToolChoice;
   instruction?: string | null;
   papers: LibraryAgentPaperInput[];
@@ -124,14 +132,47 @@ interface LibraryAgentGeneratedPlan {
 }
 
 interface LibraryAgentGeneratedResponse {
-  kind: 'answer' | 'plan';
+  kind: 'answer' | 'plan' | 'context-request' | 'choice-request';
   answer?: string | null;
   plan?: LibraryAgentGeneratedPlan | null;
+  contextRequest?: LibraryAgentContextRequest | null;
+  userChoices?: LibraryAgentUserChoiceRequest | null;
 }
 
 export type LibraryAgentRunResult =
-  | { kind: 'answer'; answer: string }
+  | { kind: 'answer'; answer: string; contextLabel: string }
+  | { kind: 'choice'; answer: string; choices: LibraryAgentUserChoice[] }
   | { kind: 'plan'; plan: LibraryAgentPlan };
+
+interface LibraryAgentContextRequest {
+  summary: string;
+  mode: 'summary' | 'pdf-text';
+  paperIds: string[];
+  reason: string;
+}
+
+interface PaperContextPayload {
+  source: string;
+  text: string;
+}
+
+export interface LibraryAgentUserChoice {
+  id: string;
+  label: string;
+  description: string;
+  instruction: string;
+}
+
+interface LibraryAgentUserChoiceRequest {
+  summary: string;
+  reason: string;
+  options: LibraryAgentUserChoice[];
+}
+
+export interface LibraryAgentConversationMessage {
+  role: 'assistant' | 'user';
+  content: string;
+}
 
 const SETTINGS_STORAGE_KEY = 'paper-reader-settings-v3';
 const SECRETS_STORAGE_KEY = 'paper-reader-secrets-v1';
@@ -369,14 +410,214 @@ function uniqueTags(tags: string[]): string[] {
 }
 
 function paperPdfPath(paper: LiteraturePaper): string | null {
-  return paper.attachments.find((attachment) => attachment.kind === 'pdf')?.storedPath ?? null;
+  const storedPath = paper.attachments
+    .find((attachment) => attachment.kind === 'pdf' && attachment.storedPath.trim())
+    ?.storedPath
+    .trim();
+
+  return storedPath || null;
 }
 
 function paperAuthors(paper: LiteraturePaper): string[] {
   return paper.authors.map((author) => author.name.trim()).filter(Boolean);
 }
 
-function paperToAgentInput(paper: LiteraturePaper): LibraryAgentPaperInput {
+function normalizeAgentContext(value: string): string {
+  return value.replace(/\s+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+function buildAgentInstructionWithHistory(
+  instruction: string,
+  historyMessages: LibraryAgentConversationMessage[] = [],
+): string {
+  const history = historyMessages
+    .filter((message) => message.content.trim())
+    .slice(-12)
+    .map((message) => `${message.role === 'assistant' ? 'Assistant' : 'User'}: ${message.content.trim()}`)
+    .join('\n\n');
+
+  if (!history) {
+    return instruction;
+  }
+
+  return [
+    'Recent conversation in the current Agent window:',
+    history,
+    '',
+    'Current user request. This request has priority over the history above:',
+    instruction,
+  ].join('\n');
+}
+
+function fallbackSummaryContext(paper: LiteraturePaper): PaperContextPayload {
+  const sections = [
+    paper.aiSummary?.trim() ? `AI overview:\n${paper.aiSummary.trim()}` : '',
+    paper.abstractText?.trim() ? `Abstract:\n${paper.abstractText.trim()}` : '',
+    paper.userNote?.trim() ? `User note:\n${paper.userNote.trim()}` : '',
+  ].filter(Boolean);
+
+  return {
+    source: sections.length > 0 ? 'summary' : 'metadata',
+    text: sections.join('\n\n'),
+  };
+}
+
+async function loadPaperContext(
+  paper: LiteraturePaper,
+  mode: LibraryAgentContextRequest['mode'],
+): Promise<PaperContextPayload> {
+  if (mode === 'summary') {
+    const context = fallbackSummaryContext(paper);
+
+    return {
+      ...context,
+      text: normalizeAgentContext(context.text),
+    };
+  }
+
+  const pdfPath = paperPdfPath(paper);
+
+  if (!pdfPath) {
+    const fallback = fallbackSummaryContext(paper);
+
+    return {
+      source: `${fallback.source}-fallback-no-pdf`,
+      text: normalizeAgentContext(fallback.text),
+    };
+  }
+
+  try {
+    const pdfData = await readLocalBinaryFile(pdfPath);
+    const pdfText = await extractPdfTextByPdfJs(pdfData);
+    const normalizedPdfText = normalizeAgentContext(pdfText);
+
+    if (normalizedPdfText) {
+      return {
+        source: 'pdf-text',
+        text: normalizedPdfText,
+      };
+    }
+  } catch (error) {
+    console.warn('Failed to load Agent PDF context', error);
+  }
+
+  const fallback = fallbackSummaryContext(paper);
+
+  return {
+    source: `${fallback.source}-fallback-pdf-error`,
+    text: normalizeAgentContext(fallback.text),
+  };
+}
+
+async function buildPapersWithRequestedContext(
+  papers: LiteraturePaper[],
+  request: LibraryAgentContextRequest,
+): Promise<{ inputs: LibraryAgentPaperInput[]; label: string }> {
+  const requestedIds = new Set(request.paperIds.filter(Boolean));
+  const targetPapers = requestedIds.size > 0
+    ? papers.filter((paper) => requestedIds.has(paper.id))
+    : papers;
+  const targetIds = new Set(targetPapers.map((paper) => paper.id));
+  const contextByPaperId = new Map<string, PaperContextPayload>();
+
+  for (const paper of targetPapers) {
+    contextByPaperId.set(paper.id, await loadPaperContext(paper, request.mode));
+  }
+
+  const sourceCounts = new Map<string, number>();
+
+  for (const context of contextByPaperId.values()) {
+    sourceCounts.set(context.source, (sourceCounts.get(context.source) ?? 0) + 1);
+  }
+
+  const label = [...sourceCounts.entries()]
+    .map(([source, count]) => `${source} x${count}`)
+    .join(', ') || 'metadata only';
+
+  return {
+    inputs: papers.map((paper) => paperToAgentInput(
+      paper,
+      targetIds.has(paper.id) ? contextByPaperId.get(paper.id) : undefined,
+    )),
+    label,
+  };
+}
+
+function isInsufficientMetadataOnlyAnswer(answer: string): boolean {
+  const normalized = answer.toLocaleLowerCase();
+  const metadataOnlySignals = [
+    '仅基于论文标题',
+    '仅基于标题',
+    '仅基于元数据',
+    '基于论文标题、标签和元数据',
+    '未读取到全文',
+    '未读取全文',
+    '未读取到摘要',
+    '未读取摘要',
+    '建议加载',
+    '仅基于论文标题',
+    '仅基于标题',
+    '仅基于元数据',
+    '基于论文标题、标签和元数据',
+    '未读取到全文',
+    '未读取全文',
+    '未读取到摘要',
+    '未读取摘要',
+    '建议加载',
+    'load the abstract',
+    'load abstracts',
+    'load the pdf',
+    'load pdf',
+    'metadata only',
+    'titles and metadata',
+  ];
+
+  return metadataOnlySignals.filter((signal) => normalized.includes(signal.toLocaleLowerCase())).length >= 2;
+}
+
+function isLikelyContextSizeError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error ?? '');
+  const normalized = message.toLocaleLowerCase();
+
+  return [
+    'context length',
+    'maximum context',
+    'too many tokens',
+    'token limit',
+    'request too large',
+    'payload too large',
+    '413',
+    'rate limit',
+    'timeout',
+    'network',
+    'failed to fetch',
+  ].some((signal) => normalized.includes(signal));
+}
+
+function choiceResultFromRequest(request: LibraryAgentUserChoiceRequest): LibraryAgentRunResult {
+  const choices = request.options
+    .map((option, index) => ({
+      id: option.id?.trim() || `option-${index + 1}`,
+      label: option.label?.trim() || `选项 ${index + 1}`,
+      description: option.description?.trim() || '',
+      instruction: option.instruction?.trim() || option.label?.trim() || '',
+    }))
+    .filter((option) => option.instruction);
+
+  return {
+    kind: 'choice',
+    answer: [
+      request.summary?.trim() || '当前请求存在多个可行路径，请选择下一步。',
+      request.reason?.trim() ? `\n${request.reason.trim()}` : '',
+    ].filter(Boolean).join('\n'),
+    choices,
+  };
+}
+
+function paperToAgentInput(
+  paper: LiteraturePaper,
+  context?: PaperContextPayload,
+): LibraryAgentPaperInput {
   return {
     id: paper.id,
     title: paper.title,
@@ -386,6 +627,10 @@ function paperToAgentInput(paper: LiteraturePaper): LibraryAgentPaperInput {
     doi: paper.doi,
     url: paper.url,
     abstractText: paper.abstractText,
+    aiSummary: paper.aiSummary,
+    userNote: paper.userNote,
+    contextSource: context?.source ?? null,
+    contextText: context?.text ?? null,
     keywords: paper.keywords,
     tags: paper.tags.map((tag) => tag.name).filter(Boolean),
   };
@@ -536,6 +781,64 @@ async function generateLibraryAgentPlanOpenAICompatible(
   }
 }
 
+async function requestDynamicUserChoices({
+  papers,
+  instruction,
+  previousAnswer,
+  preset,
+  responseLanguage,
+}: {
+  papers: LiteraturePaper[];
+  instruction: string;
+  previousAnswer: string;
+  preset: LibraryAgentModelPreset;
+  responseLanguage?: string;
+}): Promise<LibraryAgentRunResult> {
+  const response = await generateLibraryAgentPlanOpenAICompatible({
+    baseUrl: preset.baseUrl,
+    apiKey: preset.apiKey.trim(),
+    model: preset.model,
+    temperature: preset.temperature,
+    reasoningEffort: preset.reasoningEffort,
+    responseLanguage,
+    allowContextRequest: true,
+    tool: 'auto',
+    instruction: [
+      instruction,
+      '',
+      'Your previous draft was not actionable enough because it only said the answer was based on metadata or suggested loading more content.',
+      `Previous draft: ${previousAnswer}`,
+      'Do not answer directly. Call present_user_options and generate 2 to 5 dynamic next-step choices tailored to this request and these papers. Each option must include an executable instruction for the app to run if the user clicks it.',
+    ].join('\n'),
+    papers: papers.map((paper) => paperToAgentInput(paper)),
+  });
+
+  if (response.kind === 'choice-request' && response.userChoices) {
+    return choiceResultFromRequest(response.userChoices);
+  }
+
+  if (response.kind === 'answer') {
+    return {
+      kind: 'answer',
+      answer: response.answer?.trim() || previousAnswer,
+      contextLabel: 'metadata only',
+    };
+  }
+
+  if (response.plan) {
+    return {
+      kind: 'plan',
+      plan: convertGeneratedAgentPlan(response.plan.tool ?? 'classify', papers, response.plan),
+    };
+  }
+
+  return {
+    kind: 'choice',
+    answer: previousAnswer,
+    choices: [],
+  };
+}
+
 export async function buildToolUseLibraryAgentPlan({
   tool,
   papers,
@@ -559,7 +862,7 @@ export async function buildToolUseLibraryAgentPlan({
     reasoningEffort: preset.reasoningEffort,
     tool,
     instruction,
-    papers: papers.map(paperToAgentInput),
+    papers: papers.map((paper) => paperToAgentInput(paper)),
   });
   const generatedPlan = generatedResponse.plan;
 
@@ -574,16 +877,21 @@ export async function runConversationalLibraryAgent({
   papers,
   instruction,
   preset,
+  historyMessages = [],
+  responseLanguage,
 }: {
   papers: LiteraturePaper[];
   instruction: string;
   preset: LibraryAgentModelPreset;
+  historyMessages?: LibraryAgentConversationMessage[];
+  responseLanguage?: string;
 }): Promise<LibraryAgentRunResult> {
   if (!preset.baseUrl.trim() || !preset.apiKey.trim() || !preset.model.trim()) {
     throw new Error('请先在设置里配置支持 tool/function calling 的 OpenAI-compatible 模型。');
   }
 
   const normalizedInstruction = instruction.trim();
+  const instructionForModel = buildAgentInstructionWithHistory(normalizedInstruction, historyMessages);
 
   if (!normalizedInstruction) {
     throw new Error('请输入要让 Agent 执行的文库整理指令。');
@@ -595,15 +903,117 @@ export async function runConversationalLibraryAgent({
     model: preset.model,
     temperature: preset.temperature,
     reasoningEffort: preset.reasoningEffort,
+    responseLanguage,
+    allowContextRequest: true,
     tool: 'auto',
-    instruction: normalizedInstruction,
-    papers: papers.map(paperToAgentInput),
+    instruction: instructionForModel,
+    papers: papers.map((paper) => paperToAgentInput(paper)),
   });
 
   if (generatedResponse.kind === 'answer') {
+    const answer = generatedResponse.answer?.trim() || '模型没有返回有效回答。';
+
+    if (isInsufficientMetadataOnlyAnswer(answer)) {
+      return requestDynamicUserChoices({
+        papers,
+        instruction: instructionForModel,
+        previousAnswer: answer,
+        preset,
+        responseLanguage,
+      });
+    }
+
     return {
       kind: 'answer',
+      contextLabel: 'metadata only',
       answer: generatedResponse.answer?.trim() || '模型没有返回有效回答。',
+    };
+  }
+
+  if (generatedResponse.kind === 'choice-request') {
+    if (!generatedResponse.userChoices) {
+      throw new Error('模型请求用户选择，但没有返回有效选项。');
+    }
+
+    return choiceResultFromRequest(generatedResponse.userChoices);
+  }
+
+  if (generatedResponse.kind === 'context-request') {
+    const contextRequest = generatedResponse.contextRequest;
+
+    if (!contextRequest) {
+      throw new Error('模型请求了文献上下文，但没有返回有效的上下文参数。');
+    }
+
+    const enrichedContext = await buildPapersWithRequestedContext(papers, contextRequest);
+    let enrichedResponse: LibraryAgentGeneratedResponse;
+
+    try {
+      enrichedResponse = await generateLibraryAgentPlanOpenAICompatible({
+        baseUrl: preset.baseUrl,
+        apiKey: preset.apiKey.trim(),
+        model: preset.model,
+        temperature: preset.temperature,
+        reasoningEffort: preset.reasoningEffort,
+        responseLanguage,
+        allowContextRequest: false,
+        tool: 'auto',
+        instruction: [
+          instructionForModel,
+          '',
+          'The app has loaded the paper context requested by the previous tool call.',
+          `Context mode: ${contextRequest.mode}.`,
+          `Context reason: ${contextRequest.reason}.`,
+          'Use the provided contextText fields when answering. Do not call request_paper_context again unless the loaded context is empty for all target papers.',
+        ].join('\n'),
+        papers: enrichedContext.inputs,
+      });
+    } catch (contextError) {
+      if (!isLikelyContextSizeError(contextError)) {
+        throw contextError;
+      }
+
+      return requestDynamicUserChoices({
+        papers,
+        instruction: [
+          instructionForModel,
+          '',
+          `The app tried to send ${enrichedContext.label}, but the model request failed, likely because the context was too large or the network rejected the large payload.`,
+          'Offer dynamic next-step choices such as summary-only context, narrowing the selected papers, metadata-only answer, or metadata completion when appropriate.',
+        ].join('\n'),
+        previousAnswer: contextError instanceof Error ? contextError.message : String(contextError),
+        preset,
+        responseLanguage,
+      });
+    }
+
+    if (enrichedResponse.kind === 'answer') {
+      return {
+        kind: 'answer',
+        answer: enrichedResponse.answer?.trim() || '模型没有返回有效回答。',
+        contextLabel: enrichedContext.label,
+      };
+    }
+
+    if (enrichedResponse.kind === 'choice-request') {
+      if (!enrichedResponse.userChoices) {
+        throw new Error('模型请求用户选择，但没有返回有效选项。');
+      }
+
+      return choiceResultFromRequest(enrichedResponse.userChoices);
+    }
+
+    if (enrichedResponse.kind === 'context-request') {
+      throw new Error('模型已经读取过一次文献上下文，但仍继续请求上下文。请减少选中的论文数量，或直接指定要分析的文献。');
+    }
+
+    if (!enrichedResponse.plan) {
+      throw new Error('模型没有返回可审查的工具计划。');
+    }
+
+    return {
+      kind: 'plan',
+      plan: convertGeneratedAgentPlan(enrichedResponse.plan.tool ?? 'classify', papers, enrichedResponse.plan),
     };
   }
 

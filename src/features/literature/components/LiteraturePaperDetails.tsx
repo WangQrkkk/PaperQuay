@@ -328,6 +328,7 @@ function ProcessingActionTile({
   title,
   description,
   icon,
+  dataTour,
   disabled,
   active,
   busy,
@@ -336,6 +337,7 @@ function ProcessingActionTile({
   title: ReactNode;
   description: ReactNode;
   icon: ReactNode;
+  dataTour?: string;
   disabled?: boolean;
   active?: boolean;
   busy?: boolean;
@@ -344,6 +346,7 @@ function ProcessingActionTile({
   return (
     <button
       type="button"
+      data-tour={dataTour}
       onClick={onClick}
       disabled={disabled}
       className={[
@@ -610,6 +613,7 @@ export default function LiteraturePaperDetails({
 
                 <div className="space-y-2">
                   <ProcessingActionTile
+                    dataTour="overview-mineru-parse"
                     disabled={!hasPdf || !onRunMineruParse}
                     active={activeTaskKind === 'mineru'}
                     busy={activeTaskKind === 'mineru'}
@@ -619,6 +623,7 @@ export default function LiteraturePaperDetails({
                     description={l('提取结构化正文和版面块', 'Extract structured text and layout blocks')}
                   />
                   <ProcessingActionTile
+                    dataTour="overview-translate-document"
                     disabled={!hasPdf || !onTranslatePaper}
                     active={activeTaskKind === 'translation'}
                     busy={activeTaskKind === 'translation'}
@@ -628,6 +633,7 @@ export default function LiteraturePaperDetails({
                     description={l('基于结构块生成双语译文', 'Translate structured blocks into bilingual text')}
                   />
                   <ProcessingActionTile
+                    dataTour="generate-summary"
                     disabled={!hasPdf || !onGenerateSummary}
                     active={activeTaskKind === 'overview'}
                     busy={activeTaskKind === 'overview'}

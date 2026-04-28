@@ -1,7 +1,8 @@
 import { RefreshCw, X } from 'lucide-react';
-import { useLocaleText } from '../../../i18n/uiLanguage';
+import { useAppLocale, useLocaleText } from '../../../i18n/uiLanguage';
 import type { LiteratureCategory } from '../../../types/library';
 import { getFileNameFromPath, truncateMiddle } from '../../../utils/text';
+import { categoryDisplayName } from '../literatureUi';
 
 export interface ImportDraftItem {
   path: string;
@@ -70,6 +71,7 @@ export default function ImportConfirmationDialog({
   onConfirm,
 }: ImportConfirmationDialogProps) {
   const l = useLocaleText();
+  const locale = useAppLocale();
   const editableCategories = userCategories(categories);
 
   if (!open) {
@@ -190,7 +192,7 @@ export default function ImportConfirmationDialog({
                       <option value="">{l('不指定分类', 'No Category')}</option>
                       {editableCategories.map((category) => (
                         <option key={category.id} value={category.id}>
-                          {category.name}
+                          {categoryDisplayName(category, locale)}
                         </option>
                       ))}
                     </select>

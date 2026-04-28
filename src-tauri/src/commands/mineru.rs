@@ -599,15 +599,3 @@ pub async fn run_mineru_cloud_parse(
         zip_entries: zip_texts.zip_entries,
     })
 }
-
-#[tauri::command]
-pub fn run_mineru_placeholder(pdf_path: String) -> Result<String, String> {
-    if pdf_path.trim().is_empty() {
-        return Err("PDF ??????".to_string());
-    }
-
-    Ok(format!(
-        "MinerU ???????????? Rust ??? Python???????? API??? PDF?{}",
-        pdf_path
-    ))
-}

@@ -43,6 +43,7 @@ pub struct OpenAICompatibleQaOptions {
     model: String,
     temperature: Option<f32>,
     reasoning_effort: Option<String>,
+    response_language: Option<String>,
     title: String,
     authors: Option<String>,
     year: Option<String>,
@@ -256,7 +257,7 @@ fn build_attachment_text(attachment: &DocumentChatAttachment) -> Option<String> 
 
     attachment.summary.as_ref().map(|summary| {
         format!(
-            "??????{}????{}??MIME={}??????{} ???",
+            "附件《{}》摘要：{}；MIME={}；大小约 {} 字节。",
             attachment.name, summary, attachment.mime_type, attachment.size
         )
     })
@@ -424,6 +425,13 @@ fn build_qa_payload(options: OpenAICompatibleQaOptions) -> Result<Value, String>
     let title = options.title.trim();
     let temperature = options.temperature;
     let reasoning_effort = options.reasoning_effort.clone();
+    let response_language = options
+        .response_language
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("Simplified Chinese")
+        .to_string();
     let blocks = options
         .blocks
         .into_iter()
@@ -490,7 +498,8 @@ fn build_qa_payload(options: OpenAICompatibleQaOptions) -> Result<Value, String>
     let mut payload_messages = vec![json!({
       "role": "system",
       "content": format!(
-        "You are an academic reading assistant inside a desktop paper reader. Answer in Simplified Chinese. Use the provided paper context first, prefer MinerU structured content when available, and be explicit when the evidence is insufficient. User messages may include screenshots, images, or extracted file text. Quote short phrases from the paper when helpful, but do not fabricate details.\n\nPaper context:\n{}",
+        "You are an academic reading assistant inside a desktop paper reader. Answer in {}. Use the provided paper context first, prefer MinerU structured content when available, and be explicit when the evidence is insufficient. Use the current chat history to resolve references like previous question, this paper, or the earlier answer. User messages may include screenshots, images, or extracted file text. Quote short phrases from the paper when helpful, but do not fabricate details.\n\nPaper context:\n{}",
+        response_language,
         document_context
       )
     })];
@@ -535,6 +544,13 @@ pub async fn ask_document_openai_compatible(
     let title = options.title.trim();
     let temperature = options.temperature;
     let reasoning_effort = options.reasoning_effort.clone();
+    let response_language = options
+        .response_language
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("Simplified Chinese")
+        .to_string();
     let blocks = options
         .blocks
         .into_iter()
@@ -606,7 +622,8 @@ pub async fn ask_document_openai_compatible(
     let mut payload_messages = vec![json!({
       "role": "system",
       "content": format!(
-        "You are an academic reading assistant inside a desktop paper reader. Answer in Simplified Chinese. Use the provided paper context first, prefer MinerU structured content when available, and be explicit when the evidence is insufficient. User messages may include screenshots, images, or extracted file text. Quote short phrases from the paper when helpful, but do not fabricate details.\n\nPaper context:\n{}",
+        "You are an academic reading assistant inside a desktop paper reader. Answer in {}. Use the provided paper context first, prefer MinerU structured content when available, and be explicit when the evidence is insufficient. Use the current chat history to resolve references like previous question, this paper, or the earlier answer. User messages may include screenshots, images, or extracted file text. Quote short phrases from the paper when helpful, but do not fabricate details.\n\nPaper context:\n{}",
+        response_language,
         document_context
       )
     })];

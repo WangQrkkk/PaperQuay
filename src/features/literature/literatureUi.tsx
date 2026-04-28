@@ -3,6 +3,7 @@ import type {
   LiteratureCategory,
   LiteraturePaper,
 } from '../../types/library';
+import type { UiLanguage } from '../../types/reader';
 
 export interface FlatLiteratureCategory extends LiteratureCategory {
   depth: number;
@@ -62,6 +63,25 @@ export function categoryIcon(category: LiteratureCategory) {
   ) : (
     <FolderOpen className="h-4 w-4" strokeWidth={1.8} />
   );
+}
+
+export function categoryDisplayName(category: LiteratureCategory, locale: UiLanguage): string {
+  if (locale !== 'en-US') {
+    return category.name;
+  }
+
+  switch (category.systemKey) {
+    case 'all':
+      return 'All Papers';
+    case 'recent':
+      return 'Recently Imported';
+    case 'uncategorized':
+      return 'Uncategorized';
+    case 'favorites':
+      return 'Favorites';
+    default:
+      return category.name;
+  }
 }
 
 export function paperAuthors(paper: LiteraturePaper): string {
