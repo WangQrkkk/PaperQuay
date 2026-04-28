@@ -373,7 +373,7 @@ export interface ReaderSecrets {
 export interface ReaderConfigFile {
   version: number;
   settings: ReaderSettings;
-  secrets: ReaderSecrets;
+  secrets?: ReaderSecrets;
   zoteroLocalDataDir: string;
   leftSidebarCollapsed: boolean;
 }

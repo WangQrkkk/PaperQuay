@@ -19,7 +19,7 @@ import {
 import 'pdfjs-dist/web/pdf_viewer.css';
 import EmptyState from '../../components/EmptyState';
 import { useLocaleText } from '../../i18n/uiLanguage';
-import { selectSavePdfPath, writeLocalBinaryFile } from '../../services/desktop';
+import { approveWritePath, selectSavePdfPath, writeLocalBinaryFile } from '../../services/desktop';
 import type { PdfSource, TextSelectionPayload } from '../../types/reader';
 import { cn } from '../../utils/cn';
 import { buildSiblingPath } from '../../utils/mineruCache';
@@ -581,6 +581,7 @@ function PdfAnnotationWorkspace({
       }
 
       const nextBytes = await pdfDocumentRef.current.saveDocument();
+      await approveWritePath(targetPath);
       await writeLocalBinaryFile(targetPath, new Uint8Array(nextBytes));
       setSaveMessage(
         sourcePath

@@ -35,6 +35,10 @@ import {
 } from '../../services/zotero';
 import { useAppLocale, useLocaleText } from '../../i18n/uiLanguage';
 import type { LiteraturePaperTaskState } from '../../types/library';
+import {
+  buildPaperTaskState as buildLocalizedPaperTaskState,
+  isPaperTaskRunning,
+} from './paperTaskState';
 import type {
   AssistantPanelKey,
   DocumentChatAttachment,
@@ -664,6 +668,7 @@ function DocumentReaderTab({
   const [paperSummaryLoading, setPaperSummaryLoading] = useState(false);
   const [paperSummaryError, setPaperSummaryError] = useState('');
   const [paperSummarySourceKey, setPaperSummarySourceKey] = useState('');
+  const [libraryOperation, setLibraryOperation] = useState<LiteraturePaperTaskState | null>(null);
   const [qaSessions, setQaSessions] = useState<DocumentChatSession[]>(() => {
     const initialSession = createQaSession(locale);
 
@@ -684,6 +689,27 @@ function DocumentReaderTab({
   const [selectedExcerptTranslating, setSelectedExcerptTranslating] = useState(false);
   const [selectedExcerptError, setSelectedExcerptError] = useState('');
   const [assistantDetached, setAssistantDetached] = useState(false);
+  const updateLibraryOperation = useCallback(
+    (
+      kind: LiteraturePaperTaskState['kind'],
+      status: LiteraturePaperTaskState['status'],
+      message: string,
+      completed?: number | null,
+      total?: number | null,
+    ) => {
+      setLibraryOperation(
+        buildLocalizedPaperTaskState({
+          locale: localeRef.current,
+          kind,
+          status,
+          message,
+          completed,
+          total,
+        }),
+      );
+    },
+    [],
+  );
   const [workspaceNoteMarkdown, setWorkspaceNoteMarkdown] = useState('');
   const [annotations, setAnnotations] = useState<PaperAnnotation[]>([]);
   const [selectedAnnotationId, setSelectedAnnotationId] = useState<string | null>(null);
@@ -1113,7 +1139,7 @@ function DocumentReaderTab({
       return;
     }
 
-    onLibraryPreviewSync({
+    const previewPayload: LibraryPreviewSyncPayload = {
       item: currentDocument,
       hasBlocks: flatBlocks.length > 0,
       blockCount: flatBlocks.length,
@@ -1122,14 +1148,24 @@ function DocumentReaderTab({
       statusMessage,
       sourceKey: libraryPreviewSourceKey,
       summary: paperSummary,
-      loading: paperSummaryLoading,
-      error: paperSummaryError,
-    });
+    };
+
+    if (libraryOperation) {
+      previewPayload.loading = paperSummaryLoading || libraryOperation.status === 'running';
+      previewPayload.error = libraryOperation.status === 'error' ? libraryOperation.message : '';
+      previewPayload.operation = libraryOperation;
+    } else if (paperSummaryLoading || paperSummaryError) {
+      previewPayload.loading = paperSummaryLoading;
+      previewPayload.error = paperSummaryError;
+    }
+
+    onLibraryPreviewSync(previewPayload);
   }, [
     currentDocument,
     currentJsonName,
     currentPdfName,
     flatBlocks.length,
+    libraryOperation,
     libraryPreviewSourceKey,
     onLibraryPreviewSync,
     paperSummary,
@@ -1182,6 +1218,7 @@ function DocumentReaderTab({
     setPaperSummaryLoading(false);
     setPaperSummaryError('');
     setPaperSummarySourceKey('');
+    setLibraryOperation(null);
     autoSummarySourceKeyRef.current = '';
     setSelectedAnnotationId(null);
     setQaSessions([initialSession]);
@@ -1897,47 +1934,81 @@ function DocumentReaderTab({
   );
 
   const handleCloudParse = useCallback(async () => {
+    if (isPaperTaskRunning(libraryOperation, 'mineru')) {
+      return;
+    }
+
     if (isOnboardingWelcomeItem(currentDocument)) {
-      const response = await fetch(`${ONBOARDING_WELCOME_CACHE_DIR}/content_list_v2.json`);
+      try {
+        updateLibraryOperation(
+          'mineru',
+          'running',
+          lRef.current('正在加载 Welcome 内置解析结果...', 'Loading the built-in Welcome parse result...'),
+          10,
+          100,
+        );
 
-      if (!response.ok) {
-        setError(lRef.current('加载 Welcome 内置解析结果失败', 'Failed to load the built-in Welcome parse result'));
-        return;
+        const response = await fetch(`${ONBOARDING_WELCOME_CACHE_DIR}/content_list_v2.json`);
+
+        if (!response.ok) {
+          const message = lRef.current('加载 Welcome 内置解析结果失败', 'Failed to load the built-in Welcome parse result');
+          setError(message);
+          setStatusMessage(message);
+          updateLibraryOperation('mineru', 'error', message, 100, 100);
+          return;
+        }
+
+        const jsonText = await response.text();
+        const pages = parseMineruPages(jsonText);
+        const nextPath = `${ONBOARDING_WELCOME_CACHE_DIR}/content_list_v2.json`;
+        const nextStatusMessage = lRef.current(
+          '已显示 Welcome 内置 MinerU 解析结果，没有调用 API。',
+          'Displayed the built-in Welcome MinerU parse result without calling any API.',
+        );
+
+        applyMineruPages(pages, nextPath, {
+          item: currentDocument,
+          pdfPath,
+          pdfSource,
+          statusMessage: nextStatusMessage,
+        });
+        setStatusMessage(nextStatusMessage);
+        setError('');
+        const blockCount = flattenMineruPages(pages).length;
+        updateLibraryOperation('mineru', 'success', nextStatusMessage, blockCount, blockCount || null);
+      } catch (nextError) {
+        const message =
+          nextError instanceof Error
+            ? nextError.message
+            : lRef.current('加载 Welcome 内置解析结果失败', 'Failed to load the built-in Welcome parse result');
+        setError(message);
+        setStatusMessage(message);
+        updateLibraryOperation('mineru', 'error', message, 100, 100);
       }
-
-      const jsonText = await response.text();
-      const pages = parseMineruPages(jsonText);
-      const nextPath = `${ONBOARDING_WELCOME_CACHE_DIR}/content_list_v2.json`;
-      const nextStatusMessage = lRef.current(
-        '已显示 Welcome 内置 MinerU 解析结果，没有调用 API。',
-        'Displayed the built-in Welcome MinerU parse result without calling any API.',
-      );
-
-      applyMineruPages(pages, nextPath, {
-        item: currentDocument,
-        pdfPath,
-        pdfSource,
-        statusMessage: nextStatusMessage,
-      });
-      setStatusMessage(nextStatusMessage);
-      setError('');
       return;
     }
 
     if (!pdfPath) {
-      setStatusMessage(lRef.current('请先打开 PDF，再调用云端解析', 'Open a PDF before starting cloud parsing'));
+      const message = lRef.current('请先打开 PDF，再调用云端解析', 'Open a PDF before starting cloud parsing');
+      setStatusMessage(message);
+      updateLibraryOperation('mineru', 'error', message, 100, 100);
       return;
     }
 
     if (!mineruApiToken.trim()) {
       onOpenPreferences();
-      setError(lRef.current('请先在设置中填写 MinerU API Token', 'Configure the MinerU API token in Settings first'));
+      const message = lRef.current('请先在设置中填写 MinerU API Token', 'Configure the MinerU API token in Settings first');
+      setError(message);
+      setStatusMessage(message);
+      updateLibraryOperation('mineru', 'error', message, 100, 100);
       return;
     }
 
     setLoading(true);
     setError('');
-    setStatusMessage(lRef.current('正在将 PDF 发送到 MinerU 云端解析…', 'Sending the PDF to MinerU cloud parsing...'));
+    const runningMessage = lRef.current('正在将 PDF 发送到 MinerU 云端解析…', 'Sending the PDF to MinerU cloud parsing...');
+    setStatusMessage(runningMessage);
+    updateLibraryOperation('mineru', 'running', runningMessage, 20, 100);
 
     try {
       const cachePaths =
@@ -2008,23 +2079,34 @@ function DocumentReaderTab({
         statusMessage: nextStatusMessage,
       });
       setStatusMessage(nextStatusMessage);
+      const blockCount = flattenMineruPages(pages).length;
+      updateLibraryOperation('mineru', 'success', nextStatusMessage, blockCount, blockCount || null);
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : lRef.current('云端解析失败', 'Cloud parsing failed'));
+      const message =
+        nextError instanceof Error ? nextError.message : lRef.current('云端解析失败', 'Cloud parsing failed');
+      setError(message);
       setStatusMessage(lRef.current('云端解析失败', 'Cloud parsing failed'));
+      updateLibraryOperation('mineru', 'error', message, 100, 100);
     } finally {
       setLoading(false);
     }
   }, [
     applyMineruPages,
     currentDocument,
+    libraryOperation,
     mineruApiToken,
     onOpenPreferences,
     pdfPath,
     saveMineruParseCache,
     settings.mineruCacheDir,
+    updateLibraryOperation,
   ]);
 
   const handleTranslateDocument = useCallback(async () => {
+    if (translating || isPaperTaskRunning(libraryOperation, 'translation')) {
+      return;
+    }
+
     const blocksToTranslate = flatBlocks
       .map((block) => ({
         blockId: block.blockId,
@@ -2033,7 +2115,9 @@ function DocumentReaderTab({
       .filter((block) => block.text.trim().length > 0);
 
     if (blocksToTranslate.length === 0) {
-      setStatusMessage(lRef.current('当前没有可翻译的结构化文本', 'There is no structured text available to translate'));
+      const message = lRef.current('当前没有可翻译的结构化文本', 'There is no structured text available to translate');
+      setStatusMessage(message);
+      updateLibraryOperation('translation', 'error', message, 100, 100);
       return;
     }
 
@@ -2041,6 +2125,13 @@ function DocumentReaderTab({
       try {
         setTranslating(true);
         setError('');
+        updateLibraryOperation(
+          'translation',
+          'running',
+          lRef.current('正在加载 Welcome 内置全文翻译...', 'Loading the built-in Welcome translation...'),
+          0,
+          blocksToTranslate.length,
+        );
         const response = await fetch(`${ONBOARDING_WELCOME_CACHE_DIR}/translations/chinese.json`);
         const parsed = response.ok ? (await response.json()) as Partial<TranslationCacheEnvelope> : null;
 
@@ -2051,15 +2142,24 @@ function DocumentReaderTab({
         setBlockTranslations(parsed.translations);
         setBlockTranslationTargetLanguage(settings.translationTargetLanguage);
         setTranslationProgressCompleted(Object.keys(parsed.translations).length);
-        setStatusMessage(
-          lRef.current(
-            '已显示 Welcome 内置全文翻译，没有调用 API。',
-            'Displayed the built-in Welcome full translation without calling any API.',
-          ),
+        const successMessage = lRef.current(
+          '已显示 Welcome 内置全文翻译，没有调用 API。',
+          'Displayed the built-in Welcome full translation without calling any API.',
+        );
+        setStatusMessage(successMessage);
+        updateLibraryOperation(
+          'translation',
+          'success',
+          successMessage,
+          Object.keys(parsed.translations).length,
+          blocksToTranslate.length,
         );
       } catch (nextError) {
-        setError(nextError instanceof Error ? nextError.message : lRef.current('加载内置译文失败', 'Failed to load the built-in translation'));
+        const message =
+          nextError instanceof Error ? nextError.message : lRef.current('加载内置译文失败', 'Failed to load the built-in translation');
+        setError(message);
         setStatusMessage(lRef.current('加载内置译文失败', 'Failed to load the built-in translation'));
+        updateLibraryOperation('translation', 'error', message, 100, 100);
       } finally {
         setTranslating(false);
         setTranslationProgressTotal(0);
@@ -2070,7 +2170,9 @@ function DocumentReaderTab({
 
     if (!translationModelPreset || !translationModelPreset.apiKey.trim()) {
       onOpenPreferences();
-      setError(lRef.current('请先在设置中填写 AI 接口 API Key', 'Configure the AI API key in Settings first'));
+      const message = lRef.current('请先在设置中填写 AI 接口 API Key', 'Configure the AI API key in Settings first');
+      setError(message);
+      updateLibraryOperation('translation', 'error', message, 100, 100);
       return;
     }
 
@@ -2078,11 +2180,17 @@ function DocumentReaderTab({
     setTranslationProgressCompleted(0);
     setTranslationProgressTotal(blocksToTranslate.length);
     setError('');
-    setStatusMessage(
-      lRef.current(
-        `正在翻译 ${blocksToTranslate.length} 个结构块`,
-        `Translating ${blocksToTranslate.length} structured blocks`,
-      ),
+    const translationStartMessage = lRef.current(
+      `正在翻译 ${blocksToTranslate.length} 个结构块`,
+      `Translating ${blocksToTranslate.length} structured blocks`,
+    );
+    setStatusMessage(translationStartMessage);
+    updateLibraryOperation(
+      'translation',
+      'running',
+      translationStartMessage,
+      0,
+      blocksToTranslate.length,
     );
 
     try {
@@ -2124,11 +2232,17 @@ function DocumentReaderTab({
 
           completedBlocks = Math.min(blocksToTranslate.length, completedBlocks + batch.length);
           setTranslationProgressCompleted(completedBlocks);
-          setStatusMessage(
-            lRef.current(
-              `正在翻译 ${completedBlocks}/${blocksToTranslate.length} 个块`,
-              `Translating ${completedBlocks}/${blocksToTranslate.length} blocks`,
-            ),
+          const progressMessage = lRef.current(
+            `正在翻译 ${completedBlocks}/${blocksToTranslate.length} 个块`,
+            `Translating ${completedBlocks}/${blocksToTranslate.length} blocks`,
+          );
+          setStatusMessage(progressMessage);
+          updateLibraryOperation(
+            'translation',
+            'running',
+            progressMessage,
+            completedBlocks,
+            blocksToTranslate.length,
           );
         }
       };
@@ -2149,15 +2263,24 @@ function DocumentReaderTab({
       if (currentDocument) {
         await saveTranslationCache(currentDocument, nextTranslations).catch(() => undefined);
       }
-      setStatusMessage(
-        lRef.current(
-          `翻译完成，已生成 ${Object.keys(nextTranslations).length} 段译文`,
-          `Translation complete. Generated ${Object.keys(nextTranslations).length} translated blocks`,
-        ),
+      const successMessage = lRef.current(
+        `翻译完成，已生成 ${Object.keys(nextTranslations).length} 段译文`,
+        `Translation complete. Generated ${Object.keys(nextTranslations).length} translated blocks`,
+      );
+      setStatusMessage(successMessage);
+      updateLibraryOperation(
+        'translation',
+        'success',
+        successMessage,
+        blocksToTranslate.length,
+        blocksToTranslate.length,
       );
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : lRef.current('翻译失败', 'Translation failed'));
+      const message =
+        nextError instanceof Error ? nextError.message : lRef.current('翻译失败', 'Translation failed');
+      setError(message);
       setStatusMessage(lRef.current('翻译失败', 'Translation failed'));
+      updateLibraryOperation('translation', 'error', message, 100, 100);
     } finally {
       setTranslating(false);
       setTranslationProgressTotal(0);
@@ -2165,13 +2288,16 @@ function DocumentReaderTab({
   }, [
     currentDocument,
     flatBlocks,
+    libraryOperation,
     onOpenPreferences,
     saveTranslationCache,
     settings.translationBatchSize,
     settings.translationConcurrency,
     settings.translationSourceLanguage,
     settings.translationTargetLanguage,
+    translating,
     translationModelPreset,
+    updateLibraryOperation,
   ]);
 
   const handleClearTranslations = useCallback(() => {
@@ -2317,6 +2443,10 @@ function DocumentReaderTab({
 
   const handleGeneratePaperSummary = useCallback(
     async (openPreferencesOnMissingKey = true) => {
+      if (paperSummaryLoading || isPaperTaskRunning(libraryOperation, 'overview')) {
+        return;
+      }
+
       if (!currentDocument) {
         return;
       }
@@ -2326,7 +2456,9 @@ function DocumentReaderTab({
         summaryRequestIdRef.current = requestId;
         setPaperSummaryLoading(true);
         setPaperSummaryError('');
-        setStatusMessage(lRef.current('正在加载 Welcome 内置概览…', 'Loading the built-in Welcome overview...'));
+        const loadingMessage = lRef.current('正在加载 Welcome 内置概览…', 'Loading the built-in Welcome overview...');
+        setStatusMessage(loadingMessage);
+        updateLibraryOperation('overview', 'running', loadingMessage, 15, 100);
 
         try {
           const response = await fetch(`${ONBOARDING_WELCOME_CACHE_DIR}/summaries/614ada92.json`);
@@ -2342,20 +2474,23 @@ function DocumentReaderTab({
 
           setPaperSummary(parsed.summary);
           setPaperSummarySourceKey(parsed.sourceKey || 'onboarding:welcome::summary');
-          setStatusMessage(
-            lRef.current(
-              '已显示 Welcome 内置 AI 概览，没有调用 API。',
-              'Displayed the built-in Welcome AI overview without calling any API.',
-            ),
+          const successMessage = lRef.current(
+            '已显示 Welcome 内置 AI 概览，没有调用 API。',
+            'Displayed the built-in Welcome AI overview without calling any API.',
           );
+          setStatusMessage(successMessage);
+          updateLibraryOperation('overview', 'success', successMessage, 100, 100);
         } catch (nextError) {
           if (summaryRequestIdRef.current !== requestId) {
             return;
           }
 
           setPaperSummary(null);
-          setPaperSummaryError(nextError instanceof Error ? nextError.message : lRef.current('加载内置概览失败', 'Failed to load the built-in overview'));
+          const message =
+            nextError instanceof Error ? nextError.message : lRef.current('加载内置概览失败', 'Failed to load the built-in overview');
+          setPaperSummaryError(message);
           setStatusMessage(lRef.current('加载内置概览失败', 'Failed to load the built-in overview'));
+          updateLibraryOperation('overview', 'error', message, 100, 100);
         } finally {
           if (summaryRequestIdRef.current === requestId) {
             setPaperSummaryLoading(false);
@@ -2367,25 +2502,25 @@ function DocumentReaderTab({
 
       if (settings.summarySourceMode === 'mineru-markdown' && summaryBlockInputs.length === 0) {
         setPaperSummary(null);
-        setPaperSummaryError(
-          lRef.current(
-            '请先加载 MinerU JSON，再基于 MinerU Markdown 生成概览。',
-            'Load a MinerU JSON file before generating an overview from MinerU Markdown.',
-          ),
+        const message = lRef.current(
+          '请先加载 MinerU JSON，再基于 MinerU Markdown 生成概览。',
+          'Load a MinerU JSON file before generating an overview from MinerU Markdown.',
         );
+        setPaperSummaryError(message);
         setStatusMessage(lRef.current('请先加载 MinerU JSON 后再生成概览', 'Load MinerU JSON before generating the overview'));
+        updateLibraryOperation('overview', 'error', message, 100, 100);
         return;
       }
 
       if (!summaryModelPreset || !summaryModelPreset.baseUrl.trim()) {
         setPaperSummary(null);
-        setPaperSummaryError(
-          lRef.current(
-            '请先在设置中填写概览模型的 OpenAI 兼容 Base URL。',
-            'Configure the overview model OpenAI-compatible Base URL in Settings first.',
-          ),
+        const message = lRef.current(
+          '请先在设置中填写概览模型的 OpenAI 兼容 Base URL。',
+          'Configure the overview model OpenAI-compatible Base URL in Settings first.',
         );
+        setPaperSummaryError(message);
         setStatusMessage(lRef.current('缺少概览接口 Base URL', 'Missing overview Base URL'));
+        updateLibraryOperation('overview', 'error', message, 100, 100);
 
         if (openPreferencesOnMissingKey) {
           onOpenPreferences();
@@ -2397,12 +2532,12 @@ function DocumentReaderTab({
       if (!summaryModelPreset || !summaryModelPreset.apiKey.trim()) {
         setStatusMessage(lRef.current('缺少概览接口 API Key', 'Missing overview API key'));
         setPaperSummary(null);
-        setPaperSummaryError(
-          lRef.current(
-            '请先在设置中填写概览模型的 API Key。',
-            'Configure the overview model API key in Settings first.',
-          ),
+        const message = lRef.current(
+          '请先在设置中填写概览模型的 API Key。',
+          'Configure the overview model API key in Settings first.',
         );
+        setPaperSummaryError(message);
+        updateLibraryOperation('overview', 'error', message, 100, 100);
 
         if (openPreferencesOnMissingKey) {
           onOpenPreferences();
@@ -2413,13 +2548,13 @@ function DocumentReaderTab({
 
       if (!summaryModelPreset || !summaryModelPreset.model.trim()) {
         setPaperSummary(null);
-        setPaperSummaryError(
-          lRef.current(
-            '请先在设置中填写概览模型名称。',
-            'Configure the overview model name in Settings first.',
-          ),
+        const message = lRef.current(
+          '请先在设置中填写概览模型名称。',
+          'Configure the overview model name in Settings first.',
         );
+        setPaperSummaryError(message);
         setStatusMessage(lRef.current('缺少概览模型名称', 'Missing overview model name'));
+        updateLibraryOperation('overview', 'error', message, 100, 100);
 
         if (openPreferencesOnMissingKey) {
           onOpenPreferences();
@@ -2433,7 +2568,9 @@ function DocumentReaderTab({
 
       setPaperSummaryLoading(true);
       setPaperSummaryError('');
-      setStatusMessage(lRef.current('正在生成论文概览…', 'Generating the paper overview...'));
+      const runningMessage = lRef.current('正在生成论文概览…', 'Generating the paper overview...');
+      setStatusMessage(runningMessage);
+      updateLibraryOperation('overview', 'running', runningMessage, 25, 100);
 
       try {
         const summaryRequest = await resolveSummaryRequest();
@@ -2446,7 +2583,9 @@ function DocumentReaderTab({
 
           setPaperSummary(cachedSummary);
           setPaperSummarySourceKey(paperSummaryNextSourceKey);
-          setStatusMessage(lRef.current('已从本地缓存恢复论文概览', 'Restored the paper overview from the local cache'));
+          const successMessage = lRef.current('已从本地缓存恢复论文概览', 'Restored the paper overview from the local cache');
+          setStatusMessage(successMessage);
+          updateLibraryOperation('overview', 'success', successMessage, 100, 100);
           return;
         }
 
@@ -2473,19 +2612,22 @@ function DocumentReaderTab({
         await saveSummaryCache(currentDocument, paperSummaryNextSourceKey, summary).catch(
           () => undefined,
         );
-        setStatusMessage(lRef.current('论文概览已生成', 'Paper overview generated'));
+        const successMessage = lRef.current('论文概览已生成', 'Paper overview generated');
+        setStatusMessage(successMessage);
+        updateLibraryOperation('overview', 'success', successMessage, 100, 100);
       } catch (nextError) {
         if (summaryRequestIdRef.current !== requestId) {
           return;
         }
 
         setPaperSummary(null);
-        setPaperSummaryError(
+        const message =
           nextError instanceof Error
             ? nextError.message
-            : lRef.current('生成论文概览失败', 'Failed to generate the paper overview'),
-        );
+            : lRef.current('生成论文概览失败', 'Failed to generate the paper overview');
+        setPaperSummaryError(message);
         setStatusMessage(lRef.current('论文概览生成失败', 'Failed to generate the paper overview'));
+        updateLibraryOperation('overview', 'error', message, 100, 100);
       } finally {
         if (summaryRequestIdRef.current === requestId) {
           setPaperSummaryLoading(false);
@@ -2494,8 +2636,10 @@ function DocumentReaderTab({
     },
     [
       currentDocument,
+      libraryOperation,
       onOpenPreferences,
       paperSummaryNextSourceKey,
+      paperSummaryLoading,
       resolveSummaryRequest,
       saveSummaryCache,
       settings.summaryOutputLanguage,
@@ -2504,6 +2648,7 @@ function DocumentReaderTab({
       summaryBlockInputs.length,
       summaryModelPreset,
       tryLoadSavedSummary,
+      updateLibraryOperation,
     ],
   );
 

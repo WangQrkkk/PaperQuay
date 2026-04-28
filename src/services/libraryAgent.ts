@@ -7,6 +7,7 @@ import {
 import { invoke } from '@tauri-apps/api/core';
 import { lookupLiteratureMetadata } from './metadata';
 import { readLocalBinaryFile } from './desktop';
+import { readReaderConfigFile } from './readerConfig';
 import { extractPdfTextByPdfJs } from './summarySource';
 import type {
   CreateCategoryRequest,
@@ -19,6 +20,7 @@ import type {
   ModelRuntimeConfig,
   ModelReasoningEffort,
   QaModelPreset,
+  ReaderConfigFile,
   ReaderSecrets,
   ReaderSettings,
 } from '../types/reader';
@@ -303,6 +305,14 @@ function readStorageJson<T>(key: string): Partial<T> {
   }
 }
 
+async function loadPersistedReaderConfig(): Promise<Partial<ReaderConfigFile> | null> {
+  try {
+    return await readReaderConfigFile();
+  } catch {
+    return null;
+  }
+}
+
 function normalizeAgentRuntimeConfig(settings: Partial<ReaderSettings>): ModelRuntimeConfig {
   const config = settings.modelRuntimeConfigs?.agent ?? {};
   const temperature =
@@ -319,9 +329,18 @@ function normalizeAgentRuntimeConfig(settings: Partial<ReaderSettings>): ModelRu
   return { temperature, reasoningEffort };
 }
 
-export function loadLibraryAgentModelPreset(): LibraryAgentModelPreset | null {
-  const settings = readStorageJson<ReaderSettings>(SETTINGS_STORAGE_KEY);
-  const secrets = readStorageJson<ReaderSecrets>(SECRETS_STORAGE_KEY);
+export async function loadLibraryAgentModelPreset(): Promise<LibraryAgentModelPreset | null> {
+  const persistedConfig = await loadPersistedReaderConfig();
+  const storedSettings = readStorageJson<ReaderSettings>(SETTINGS_STORAGE_KEY);
+  const storedSecrets = readStorageJson<ReaderSecrets>(SECRETS_STORAGE_KEY);
+  const settings = {
+    ...(persistedConfig?.settings ?? {}),
+    ...storedSettings,
+  };
+  const secrets = {
+    ...(persistedConfig?.secrets ?? {}),
+    ...storedSecrets,
+  };
   const presets = Array.isArray(secrets.qaModelPresets) ? secrets.qaModelPresets : [];
   const preferredId =
     settings.agentModelPresetId ||
@@ -587,10 +606,6 @@ function isLikelyContextSizeError(error: unknown): boolean {
     'request too large',
     'payload too large',
     '413',
-    'rate limit',
-    'timeout',
-    'network',
-    'failed to fetch',
   ].some((signal) => normalized.includes(signal));
 }
 

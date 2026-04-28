@@ -4,26 +4,45 @@ type ThemeMode = 'light' | 'dark' | 'system';
 type ResolvedTheme = 'light' | 'dark';
 
 const STORAGE_KEY = 'paperquay-theme-mode';
+const DARK_MEDIA_QUERY = '(prefers-color-scheme: dark)';
+
+let mediaQueryListenerBound = false;
+let mediaQueryList: MediaQueryList | null = null;
+let mediaQueryChangeHandler: (() => void) | null = null;
 
 function readStoredMode(): ThemeMode {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw === 'dark' || raw === 'light' || raw === 'system') return raw;
+    if (raw === 'dark' || raw === 'light' || raw === 'system') {
+      return raw;
+    }
   } catch {
     // ignore
   }
+
   return 'system';
 }
 
 function resolveTheme(mode: ThemeMode): ResolvedTheme {
   if (mode === 'system') {
-    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    return window.matchMedia(DARK_MEDIA_QUERY).matches ? 'dark' : 'light';
   }
+
   return mode;
 }
 
 function applyHtmlClass(resolved: ResolvedTheme) {
   document.documentElement.classList.toggle('dark', resolved === 'dark');
+}
+
+function unbindSystemThemeListener() {
+  if (mediaQueryList && mediaQueryChangeHandler) {
+    mediaQueryList.removeEventListener('change', mediaQueryChangeHandler);
+  }
+
+  mediaQueryList = null;
+  mediaQueryChangeHandler = null;
+  mediaQueryListenerBound = false;
 }
 
 interface ThemeState {
@@ -36,19 +55,23 @@ export const useThemeStore = create<ThemeState>()((set, get) => {
   const initialMode = readStoredMode();
   const initialResolved = resolveTheme(initialMode);
 
-  // Apply the class immediately on store creation
   applyHtmlClass(initialResolved);
 
-  // Listen for system preference changes
-  if (typeof window !== 'undefined') {
-    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+  if (typeof window !== 'undefined' && !mediaQueryListenerBound) {
+    mediaQueryList = window.matchMedia(DARK_MEDIA_QUERY);
+    mediaQueryChangeHandler = () => {
       const current = get();
-      if (current.mode === 'system') {
-        const next = resolveTheme('system');
-        applyHtmlClass(next);
-        set({ resolved: next });
+
+      if (current.mode !== 'system') {
+        return;
       }
-    });
+
+      const next = resolveTheme('system');
+      applyHtmlClass(next);
+      set({ resolved: next });
+    };
+    mediaQueryList.addEventListener('change', mediaQueryChangeHandler);
+    mediaQueryListenerBound = true;
   }
 
   return {
@@ -60,9 +83,16 @@ export const useThemeStore = create<ThemeState>()((set, get) => {
       } catch {
         // ignore
       }
+
       const resolved = resolveTheme(mode);
       applyHtmlClass(resolved);
       set({ mode, resolved });
     },
   };
 });
+
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    unbindSystemThemeListener();
+  });
+}

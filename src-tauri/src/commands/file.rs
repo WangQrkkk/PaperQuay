@@ -1,7 +1,8 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::process::Command;
+use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[cfg(target_os = "windows")]
@@ -53,6 +54,8 @@ pub struct CapturedScreenshot {
     size: u64,
 }
 
+static APPROVED_WRITE_PATHS: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
+
 fn ensure_file(path: &Path) -> Result<(), String> {
     if !path.exists() {
         return Err(format!("File does not exist: {}", path.display()));
@@ -69,6 +72,93 @@ fn path_to_string(path: PathBuf) -> Result<String, String> {
     path.into_os_string()
         .into_string()
         .map_err(|_| "Path contains non-Unicode characters".to_string())
+}
+
+fn normalize_absolute_path(path: &Path) -> Result<PathBuf, String> {
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map_err(|error| format!("Failed to resolve current directory: {}", error))?
+            .join(path)
+    };
+    let mut normalized = PathBuf::new();
+
+    for component in absolute.components() {
+        match component {
+            Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
+            Component::RootDir => normalized.push(component.as_os_str()),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            Component::Normal(part) => normalized.push(part),
+        }
+    }
+
+    Ok(normalized)
+}
+
+fn approved_write_paths() -> &'static Mutex<HashSet<PathBuf>> {
+    APPROVED_WRITE_PATHS.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+fn remember_approved_write_path(path: &Path) -> Result<(), String> {
+    let normalized = normalize_absolute_path(path)?;
+    let mut guard = approved_write_paths()
+        .lock()
+        .map_err(|_| "Failed to lock approved write paths".to_string())?;
+    guard.insert(normalized);
+    Ok(())
+}
+
+fn is_within_path(parent: &Path, candidate: &Path) -> Result<bool, String> {
+    let normalized_parent = normalize_absolute_path(parent)?;
+    let normalized_candidate = normalize_absolute_path(candidate)?;
+
+    Ok(
+        normalized_candidate == normalized_parent
+            || normalized_candidate.starts_with(&normalized_parent),
+    )
+}
+
+fn app_managed_write_roots() -> Result<Vec<PathBuf>, String> {
+    let executable_dir = resolve_executable_dir()?;
+
+    Ok(vec![
+        executable_dir.join(".settings"),
+        executable_dir.join(".mineru-cache"),
+        executable_dir.join(".downloads"),
+        executable_dir.join(".screenshots"),
+        executable_dir.join("paperquay-data"),
+    ])
+}
+
+fn is_approved_write_path(path: &Path) -> Result<bool, String> {
+    let normalized = normalize_absolute_path(path)?;
+    let guard = approved_write_paths()
+        .lock()
+        .map_err(|_| "Failed to lock approved write paths".to_string())?;
+
+    Ok(guard.contains(&normalized))
+}
+
+fn ensure_writable_path_allowed(path: &Path) -> Result<(), String> {
+    if app_managed_write_roots()?
+        .iter()
+        .any(|root| is_within_path(root, path).unwrap_or(false))
+    {
+        return Ok(());
+    }
+
+    if is_approved_write_path(path)? {
+        return Ok(());
+    }
+
+    Err(format!(
+        "Writing to this path is not allowed until the user explicitly approves it: {}",
+        path.display()
+    ))
 }
 
 fn resolve_executable_dir() -> Result<PathBuf, String> {
@@ -293,6 +383,12 @@ pub fn get_app_default_paths() -> Result<AppDefaultPaths, String> {
 }
 
 #[tauri::command]
+pub fn approve_write_path(path: String) -> Result<(), String> {
+    let file_path = PathBuf::from(path);
+    remember_approved_write_path(&file_path)
+}
+
+#[tauri::command]
 pub fn select_pdf_file() -> Result<Option<String>, String> {
     FileDialog::new()
         .add_filter("PDF", &["pdf"])
@@ -447,7 +543,13 @@ pub fn select_save_pdf_path(
         dialog = dialog.set_directory(next_directory);
     }
 
-    dialog.save_file().map(path_to_string).transpose()
+    let selected = dialog.save_file().map(path_to_string).transpose()?;
+
+    if let Some(path) = selected.as_ref() {
+        remember_approved_write_path(Path::new(path))?;
+    }
+
+    Ok(selected)
 }
 
 #[tauri::command]
@@ -490,6 +592,7 @@ pub fn read_binary_file_base64(path: String) -> Result<String, String> {
 #[tauri::command]
 pub fn write_text_file(path: String, content: String) -> Result<(), String> {
     let file_path = PathBuf::from(path);
+    ensure_writable_path_allowed(&file_path)?;
 
     if let Some(parent) = file_path.parent() {
         fs::create_dir_all(parent).map_err(|error| {
@@ -509,6 +612,7 @@ pub fn write_text_file(path: String, content: String) -> Result<(), String> {
 #[tauri::command]
 pub fn write_binary_file_base64(path: String, content_base64: String) -> Result<(), String> {
     let file_path = PathBuf::from(path);
+    ensure_writable_path_allowed(&file_path)?;
 
     if let Some(parent) = file_path.parent() {
         fs::create_dir_all(parent).map_err(|error| {
@@ -592,8 +696,17 @@ pub async fn download_remote_file_to_path(
     path: String,
     headers: Option<HashMap<String, String>>,
 ) -> Result<(), String> {
+    let trimmed_url = url.trim();
+
+    if !(trimmed_url.starts_with("https://") || trimmed_url.starts_with("http://")) {
+        return Err("Only http and https URLs can be downloaded".to_string());
+    }
+
+    let file_path = PathBuf::from(path);
+    ensure_writable_path_allowed(&file_path)?;
+
     let client = reqwest::Client::new();
-    let mut request = client.get(&url);
+    let mut request = client.get(trimmed_url);
 
     if let Some(next_headers) = headers {
         for (key, value) in next_headers {
@@ -604,22 +717,20 @@ pub async fn download_remote_file_to_path(
     let response = request
         .send()
         .await
-        .map_err(|error| format!("Failed to download remote file {}: {}", url, error))?;
+        .map_err(|error| format!("Failed to download remote file {}: {}", trimmed_url, error))?;
 
     if !response.status().is_success() {
         return Err(format!(
             "Remote download returned HTTP {} for {}",
             response.status(),
-            url
+            trimmed_url
         ));
     }
 
     let bytes = response
         .bytes()
         .await
-        .map_err(|error| format!("Failed to read remote response {}: {}", url, error))?;
-
-    let file_path = PathBuf::from(path);
+        .map_err(|error| format!("Failed to read remote response {}: {}", trimmed_url, error))?;
 
     if let Some(parent) = file_path.parent() {
         fs::create_dir_all(parent).map_err(|error| {
@@ -634,4 +745,36 @@ pub async fn download_remote_file_to_path(
             error
         )
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn unique_temp_dir(label: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "paperquay-file-tests-{}-{}",
+            label,
+            current_unix_millis()
+        ));
+        fs::create_dir_all(&dir).expect("create temp dir");
+        dir
+    }
+
+    #[test]
+    fn lexical_normalization_blocks_parent_traversal() {
+        let base = unique_temp_dir("normalize");
+        let nested = base.join("allowed").join("..").join("allowed").join("file.txt");
+
+        assert!(is_within_path(&base, &nested).expect("path check"));
+        assert!(!is_within_path(&base, &base.join("..").join("escape.txt")).expect("path check"));
+    }
+
+    #[test]
+    fn approved_write_paths_are_allowed() {
+        let target = unique_temp_dir("approved").join("export.pdf");
+        remember_approved_write_path(&target).expect("approve path");
+
+        assert!(ensure_writable_path_allowed(&target).is_ok());
+    }
 }

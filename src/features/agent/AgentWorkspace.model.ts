@@ -67,7 +67,7 @@ export const agentCapabilities: AgentCapability[] = [
 ];
 
 export const promptSuggestions = [
-  '把选中的论文标题后面加 123',
+  '把选中的论文标题的前面加上已读',
   '给这些论文自动补全元数据，只修改有把握的字段',
   '清理这些论文的标签，合并同义词并移除重复项',
   '根据研究主题给这些论文自动归类到新的 Collection',
@@ -75,7 +75,7 @@ export const promptSuggestions = [
 ];
 
 export const promptSuggestionsEn = [
-  'Append 123 to the selected paper titles',
+  'Add "Read" to the beginning of the selected paper titles',
   'Auto-complete metadata for these papers, only changing well-supported fields',
   'Clean these paper tags by merging synonyms and removing duplicates',
   'Create dynamic Collections and classify these papers by research topic',

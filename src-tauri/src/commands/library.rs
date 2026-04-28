@@ -16,6 +16,7 @@ const SYSTEM_CATEGORY_ALL: &str = "all";
 const SYSTEM_CATEGORY_RECENT: &str = "recent";
 const SYSTEM_CATEGORY_UNCATEGORIZED: &str = "uncategorized";
 const SYSTEM_CATEGORY_FAVORITES: &str = "favorites";
+const RECENT_IMPORT_LIMIT: i64 = 50;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -29,6 +30,125 @@ pub struct LibrarySettings {
     folder_watch_enabled: bool,
     backup_enabled: bool,
     preserve_original_path: bool,
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_connection() -> Connection {
+        let connection = Connection::open_in_memory().expect("open sqlite");
+        migrate_library_schema(&connection).expect("migrate");
+        seed_system_categories(&connection).expect("seed categories");
+        connection
+    }
+
+    fn unique_temp_dir(label: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "paperquay-library-tests-{}-{}",
+            label,
+            now_millis()
+        ));
+        fs::create_dir_all(&dir).expect("create temp dir");
+        dir
+    }
+
+    fn write_test_pdf(path: &Path) {
+        fs::write(path, b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF")
+            .expect("write test pdf");
+    }
+
+    #[test]
+    fn recent_category_returns_only_latest_imports() {
+        let connection = test_connection();
+
+        for index in 0..(RECENT_IMPORT_LIMIT + 5) {
+            connection
+                .execute(
+                    "insert into papers
+                     (id, title, keywords, imported_at, updated_at, reading_progress, is_favorite, source, sort_order)
+                     values (?1, ?2, '[]', ?3, ?3, 0, 0, 'local', 0)",
+                    params![
+                        format!("paper-{}", index),
+                        format!("Paper {}", index),
+                        index as i64
+                    ],
+                )
+                .expect("insert paper");
+        }
+
+        let recent_papers = list_papers_inner(
+            &connection,
+            ListPapersRequest {
+                category_id: Some("system-recent".to_string()),
+                tag_id: None,
+                search: None,
+                sort_by: None,
+                sort_direction: None,
+                limit: Some(200),
+            },
+        )
+        .expect("list recent papers");
+
+        assert_eq!(recent_papers.len() as i64, RECENT_IMPORT_LIMIT);
+        assert_eq!(recent_papers.first().map(|paper| paper.title.as_str()), Some("Paper 54"));
+        assert_eq!(recent_papers.last().map(|paper| paper.title.as_str()), Some("Paper 5"));
+
+        assert_eq!(
+            recent_import_count(&connection).expect("count recent papers"),
+            RECENT_IMPORT_LIMIT
+        );
+    }
+
+    #[test]
+    fn move_import_rolls_back_file_and_database_on_failure() {
+        let mut connection = test_connection();
+        let root_dir = unique_temp_dir("import-rollback");
+        let source_path = root_dir.join("source.pdf");
+        let storage_dir = root_dir.join("library");
+        write_test_pdf(&source_path);
+
+        let settings = LibrarySettings {
+            storage_dir: storage_dir.to_string_lossy().into_owned(),
+            zotero_local_data_dir: String::new(),
+            import_mode: "move".to_string(),
+            auto_rename_files: true,
+            file_naming_rule: "{title}.pdf".to_string(),
+            create_category_folders: false,
+            folder_watch_enabled: false,
+            backup_enabled: false,
+            preserve_original_path: true,
+        };
+
+        let error = import_single_pdf(
+            &mut connection,
+            &settings,
+            source_path.to_string_lossy().as_ref(),
+            Some("missing-category"),
+            "move",
+            None,
+        )
+        .expect_err("import should fail");
+
+        assert!(error.contains("分类") || error.contains("category") || error.contains("FOREIGN"));
+        assert!(source_path.exists(), "source file should be restored after rollback");
+        assert_eq!(
+            fs::read_dir(&storage_dir)
+                .ok()
+                .map(|entries| entries.filter_map(Result::ok).count())
+                .unwrap_or(0),
+            0,
+            "storage directory should not keep staged or target files after rollback"
+        );
+
+        let paper_count: i64 = connection
+            .query_row("select count(*) from papers", [], |row| row.get(0))
+            .expect("count papers");
+        let attachment_count: i64 = connection
+            .query_row("select count(*) from attachments", [], |row| row.get(0))
+            .expect("count attachments");
+        assert_eq!(paper_count, 0);
+        assert_eq!(attachment_count, 0);
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -833,6 +953,111 @@ fn unique_target_path(directory: &Path, file_name: &str) -> PathBuf {
     directory.join(format!("{}-{}.{}", stem, now_millis(), extension))
 }
 
+fn unique_staged_target_path(final_path: &Path) -> PathBuf {
+    let file_name = final_path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("paper.pdf");
+
+    let staged_name = format!("{}.paperquay-importing", file_name);
+    let parent = final_path.parent().unwrap_or_else(|| Path::new("."));
+
+    unique_target_path(parent, &staged_name)
+}
+
+struct StagedImportFile {
+    import_mode: String,
+    source_path: PathBuf,
+    staged_path: PathBuf,
+    final_path: PathBuf,
+    activated: bool,
+    completed: bool,
+}
+
+impl StagedImportFile {
+    fn prepare(import_mode: &str, source_path: &Path, final_path: PathBuf) -> Result<Self, String> {
+        let staged_path = unique_staged_target_path(&final_path);
+
+        if import_mode == "move" {
+            fs::rename(source_path, &staged_path).map_err(|error| {
+                format!(
+                    "移动 PDF 到导入暂存区失败 {} -> {}: {}",
+                    source_path.display(),
+                    staged_path.display(),
+                    error
+                )
+            })?;
+        } else {
+            fs::copy(source_path, &staged_path).map_err(|error| {
+                format!(
+                    "复制 PDF 到导入暂存区失败 {} -> {}: {}",
+                    source_path.display(),
+                    staged_path.display(),
+                    error
+                )
+            })?;
+        }
+
+        Ok(Self {
+            import_mode: import_mode.to_string(),
+            source_path: source_path.to_path_buf(),
+            staged_path,
+            final_path,
+            activated: false,
+            completed: false,
+        })
+    }
+
+    fn activate(&mut self) -> Result<(), String> {
+        fs::rename(&self.staged_path, &self.final_path).map_err(|error| {
+            format!(
+                "将暂存 PDF 提交到文献库失败 {} -> {}: {}",
+                self.staged_path.display(),
+                self.final_path.display(),
+                error
+            )
+        })?;
+        self.activated = true;
+        Ok(())
+    }
+
+    fn rollback(&self) {
+        if self.import_mode == "move" {
+            let rollback_source = if self.activated {
+                &self.final_path
+            } else {
+                &self.staged_path
+            };
+
+            if rollback_source.exists() && !self.source_path.exists() {
+                let _ = fs::rename(rollback_source, &self.source_path);
+            }
+        } else {
+            let rollback_source = if self.activated {
+                &self.final_path
+            } else {
+                &self.staged_path
+            };
+
+            if rollback_source.exists() {
+                let _ = fs::remove_file(rollback_source);
+            }
+        }
+    }
+
+    fn finish(&mut self) {
+        self.completed = true;
+    }
+}
+
+impl Drop for StagedImportFile {
+    fn drop(&mut self) {
+        if !self.completed {
+            self.rollback();
+        }
+    }
+}
+
 fn fnv1a_file_hash(path: &Path) -> Result<String, String> {
     let bytes = fs::read(path)
         .map_err(|error| format!("读取文件用于去重失败 {}: {}", path.display(), error))?;
@@ -913,6 +1138,20 @@ fn insert_import_record(
         .map_err(|error| format!("写入导入记录失败: {}", error))?;
 
     Ok(())
+}
+
+fn recent_import_count(connection: &Connection) -> Result<i64, String> {
+    connection
+        .query_row(
+            "select count(*) from (
+               select id from papers
+               order by imported_at desc, lower(title) asc
+               limit ?1
+             )",
+            params![RECENT_IMPORT_LIMIT],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|error| format!("统计最近导入文献失败: {}", error))
 }
 
 fn insert_authors(
@@ -1382,6 +1621,7 @@ fn apply_category_paper_counts(
             row.get::<_, i64>(0)
         })
         .map_err(|error| format!("统计收藏文献失败: {}", error))?;
+    let recent_papers = recent_import_count(connection)?;
     let mut children_map = HashMap::<String, Vec<String>>::new();
 
     for category in categories.iter().filter(|category| !category.is_system) {
@@ -1411,7 +1651,8 @@ fn apply_category_paper_counts(
 
     for category in categories {
         category.paper_count = match category.system_key.as_deref() {
-            Some(SYSTEM_CATEGORY_ALL) | Some(SYSTEM_CATEGORY_RECENT) => all_papers,
+            Some(SYSTEM_CATEGORY_ALL) => all_papers,
+            Some(SYSTEM_CATEGORY_RECENT) => recent_papers,
             Some(SYSTEM_CATEGORY_UNCATEGORIZED) => uncategorized_papers,
             Some(SYSTEM_CATEGORY_FAVORITES) => favorite_papers,
             _ => collect_category_paper_ids(&category.id, &children_map, &direct_papers, &mut memo)
@@ -1532,7 +1773,17 @@ fn list_papers_inner(
         let system_key = category_system_key(connection, category_id)?;
 
         match system_key.as_deref() {
-            Some(SYSTEM_CATEGORY_ALL) | Some(SYSTEM_CATEGORY_RECENT) => {}
+            Some(SYSTEM_CATEGORY_ALL) => {}
+            Some(SYSTEM_CATEGORY_RECENT) => {
+                filters.push(format!(
+                    "p.id in (
+                       select recent.id from papers recent
+                       order by recent.imported_at desc, lower(recent.title) asc
+                       limit {}
+                     )",
+                    RECENT_IMPORT_LIMIT
+                ));
+            }
             Some(SYSTEM_CATEGORY_UNCATEGORIZED) => {
                 filters.push(
                     "not exists (select 1 from paper_categories pc where pc.paper_id = p.id)"
@@ -1712,7 +1963,7 @@ fn reorder_papers_by_subset(
 }
 
 fn import_single_pdf(
-    connection: &Connection,
+    connection: &mut Connection,
     settings: &LibrarySettings,
     path: &str,
     target_category_id: Option<&str>,
@@ -1760,6 +2011,7 @@ fn import_single_pdf(
     let sort_order = next_paper_sort_order(connection)?;
     let storage_dir = PathBuf::from(&settings.storage_dir);
     let normalized_import_mode = normalize_import_mode(import_mode)?;
+    let mut staged_file = None;
     let target_path = if normalized_import_mode == "keep" {
         source_path.clone()
     } else {
@@ -1777,8 +2029,13 @@ fn import_single_pdf(
 
         let file_name = build_target_file_name(&source_path, settings, metadata, &title);
         let target_path = unique_target_path(&storage_dir, &file_name);
+        staged_file = Some(StagedImportFile::prepare(
+            normalized_import_mode.as_str(),
+            &source_path,
+            target_path.clone(),
+        )?);
 
-        if normalized_import_mode == "move" {
+        if false {
             fs::rename(&source_path, &target_path).map_err(|error| {
                 format!(
                     "移动 PDF 到文献库失败 {} -> {}: {}",
@@ -1787,7 +2044,7 @@ fn import_single_pdf(
                     error
                 )
             })?;
-        } else {
+        } else if false {
             fs::copy(&source_path, &target_path).map_err(|error| {
                 format!(
                     "复制 PDF 到文献库失败 {} -> {}: {}",
@@ -1812,8 +2069,11 @@ fn import_single_pdf(
         .and_then(|value| value.to_str())
         .map(str::to_string)
         .unwrap_or_else(|| format!("{}.pdf", sanitize_filename_part(&title)));
+    let transaction = connection
+        .transaction()
+        .map_err(|error| format!("开启 PDF 导入事务失败: {}", error))?;
 
-    connection
+    transaction
         .execute(
             "insert into papers
        (id, title, year, publication, doi, url, abstract_text, keywords,
@@ -1835,7 +2095,7 @@ fn import_single_pdf(
         )
         .map_err(|error| format!("写入文献失败: {}", error))?;
 
-    connection
+    transaction
         .execute(
             "insert into attachments
        (id, paper_id, kind, original_path, stored_path, relative_path, file_name,
@@ -1856,18 +2116,37 @@ fn import_single_pdf(
         .map_err(|error| format!("写入 PDF 附件失败: {}", error))?;
 
     if let Some(authors) = metadata.and_then(|value| value.authors.as_ref()) {
-        insert_authors(connection, &paper_id, authors)?;
+        insert_authors(&transaction, &paper_id, authors)?;
     }
 
-    insert_category_relation(connection, &paper_id, target_category_id)?;
+    insert_category_relation(&transaction, &paper_id, target_category_id)?;
     insert_import_record(
-        connection,
+        &transaction,
         Some(path),
         Some(&stored_path_string),
         Some(&paper_id),
         "imported",
         "PDF 已导入文献库",
     )?;
+
+    if let Some(staged_file) = staged_file.as_mut() {
+        if let Err(error) = staged_file.activate() {
+            staged_file.rollback();
+            return Err(error);
+        }
+    }
+
+    if let Err(error) = transaction.commit() {
+        if let Some(staged_file) = staged_file.as_ref() {
+            staged_file.rollback();
+        }
+
+        return Err(format!("提交 PDF 导入事务失败: {}", error));
+    }
+
+    if let Some(staged_file) = staged_file.as_mut() {
+        staged_file.finish();
+    }
 
     Ok(ImportedPdfResult {
         source_path: path.to_string(),
@@ -2261,7 +2540,7 @@ pub fn library_import_pdfs(
     app: AppHandle,
     request: ImportPdfRequest,
 ) -> Result<Vec<ImportedPdfResult>, String> {
-    let connection = open_library_connection(&app)?;
+    let mut connection = open_library_connection(&app)?;
     let settings = load_library_settings(&connection, &app)?;
     let import_mode = request
         .import_mode
@@ -2276,7 +2555,7 @@ pub fn library_import_pdfs(
     for path in request.paths {
         let metadata = request.metadata.as_ref().and_then(|items| items.get(&path));
         let result = import_single_pdf(
-            &connection,
+            &mut connection,
             &settings,
             &path,
             request.target_category_id.as_deref(),

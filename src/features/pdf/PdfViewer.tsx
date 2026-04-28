@@ -26,7 +26,7 @@ import {
 import { AnnotationEditorType, AnnotationMode, GlobalWorkerOptions, getDocument } from 'pdfjs-dist';
 import 'pdfjs-dist/web/pdf_viewer.css';
 import EmptyState from '../../components/EmptyState';
-import { selectSavePdfPath, writeLocalBinaryFile } from '../../services/desktop';
+import { approveWritePath, selectSavePdfPath, writeLocalBinaryFile } from '../../services/desktop';
 import type {
   PaperAnnotation,
   PdfHighlightTarget,
@@ -829,6 +829,7 @@ function PdfViewer({
       }
 
       const nextBytes = await pdfDocumentRef.current.saveDocument();
+      await approveWritePath(targetPath);
       await writeLocalBinaryFile(targetPath, new Uint8Array(nextBytes));
       const updatingCurrentAnnotatedFile =
         sourcePath && normalizePathForCompare(targetPath) === normalizePathForCompare(sourcePath);

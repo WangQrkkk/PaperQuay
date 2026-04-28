@@ -33,7 +33,9 @@ import type {
   TranslationMap,
 } from '../../types/reader';
 import { cn } from '../../utils/cn';
+import { useLocaleText } from '../../i18n/uiLanguage';
 import { normalizeMarkdownMath, normalizeRawLatexExpression } from '../../utils/markdown';
+import { sanitizeMineruTableHtml } from '../../utils/safeHtml';
 import { normalizeSelectionText } from '../../utils/text';
 
 interface BlockViewerProps {
@@ -122,6 +124,7 @@ function selectionBelongsToContainer(container: HTMLElement | null) {
 }
 
 function useMineruAssetDataUrl(assetPath?: string) {
+  const l = useLocaleText();
   const [dataUrl, setDataUrl] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -153,7 +156,7 @@ function useMineruAssetDataUrl(assetPath?: string) {
         }
 
         setDataUrl('');
-        setError(nextError instanceof Error ? nextError.message : '加载资产失败');
+        setError(nextError instanceof Error ? nextError.message : l('加载资源失败', 'Failed to load asset'));
       })
       .finally(() => {
         if (cancelled) {
@@ -318,6 +321,7 @@ function AssetFigure({
   emptyIcon: React.ReactNode;
   scale: number;
 }) {
+  const l = useLocaleText();
   const { dataUrl, loading, error } = useMineruAssetDataUrl(assetPath);
   const [previewOpen, setPreviewOpen] = useState(false);
 
@@ -336,7 +340,7 @@ function AssetFigure({
             <img src={dataUrl} alt={label} className="max-h-[420px] w-full object-contain" />
             <span className="pointer-events-none absolute right-3 top-3 inline-flex items-center rounded-full bg-slate-950/70 px-2.5 py-1 text-xs text-white opacity-0 transition-opacity duration-200 group-hover:opacity-100">
               <Expand className="mr-1.5 h-3.5 w-3.5" strokeWidth={1.9} />
-              放大
+              {l('放大', 'Zoom')}
             </span>
           </button>
         ) : (
@@ -349,7 +353,7 @@ function AssetFigure({
             <span className="inline-flex h-14 w-14 items-center justify-center rounded-full bg-white text-slate-400 shadow-sm">
               {emptyIcon}
             </span>
-            <div className="text-sm">{loading ? '正在加载资源…' : emptyText}</div>
+            <div className="text-sm">{loading ? l('正在加载资源…', 'Loading asset...') : emptyText}</div>
             {error ? <div className="max-w-[320px] text-center text-xs text-rose-500">{error}</div> : null}
           </div>
         )}
@@ -374,7 +378,7 @@ function AssetFigure({
                 onClick={() => setPreviewOpen(false)}
                 className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-700 transition hover:bg-slate-50"
               >
-                关闭
+                {l('关闭', 'Close')}
               </button>
             </div>
             <div className="max-h-[calc(100vh-140px)] overflow-auto bg-slate-50 p-4">
@@ -406,12 +410,18 @@ function TableContent({
   showBilingual: boolean;
   scale: number;
 }) {
+  const l = useLocaleText();
+  const sanitizedTableHtml = useMemo(
+    () => (tableHtml ? sanitizeMineruTableHtml(tableHtml) : ''),
+    [tableHtml],
+  );
+
   return (
     <div className="space-y-4">
       <AssetFigure
         assetPath={assetPath}
-        label={captionText || '表格截图'}
-        emptyText="没有找到对应的表格截图"
+        label={captionText || l('表格截图', 'Table Snapshot')}
+        emptyText={l('没有找到对应的表格截图', 'No matching table snapshot was found')}
         emptyIcon={<Table2 className="h-7 w-7" strokeWidth={1.8} />}
         scale={scale}
       />
@@ -432,12 +442,12 @@ function TableContent({
             </div>
           ) : null}
 
-          {tableHtml ? (
+          {sanitizedTableHtml ? (
             <div className="overflow-auto rounded-[20px] border border-slate-200/80 bg-white shadow-[0_10px_24px_rgba(15,23,42,0.05)] dark:border-chrome-700/80 dark:bg-chrome-800 dark:shadow-[0_10px_24px_rgba(0,0,0,0.18)]">
               <div
                 className="mineru-table min-w-max p-4"
                 style={{ fontSize: `${14 * scale}px` }}
-                dangerouslySetInnerHTML={{ __html: tableHtml }}
+                dangerouslySetInnerHTML={{ __html: sanitizedTableHtml }}
               />
             </div>
           ) : (
@@ -448,7 +458,7 @@ function TableContent({
             <div className="rounded-[18px] border border-indigo-100 bg-indigo-50/70 px-4 py-3 dark:border-indigo-500/30 dark:bg-indigo-500/10">
               <div className="mb-2 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-indigo-500">
                 <Languages className="h-3.5 w-3.5" strokeWidth={1.9} />
-                Translation
+                {l('译文', 'Translation')}
               </div>
               <MarkdownContent markdown={translatedText} scale={scale} />
             </div>
@@ -476,12 +486,13 @@ function ImageContent({
   showBilingual: boolean;
   scale: number;
 }) {
+  const l = useLocaleText();
   return (
     <div className="space-y-4">
       <AssetFigure
         assetPath={assetPath}
-        label={captionText || '图片截图'}
-        emptyText="没有找到对应的图片资源"
+        label={captionText || l('图片截图', 'Image Snapshot')}
+        emptyText={l('没有找到对应的图片资源', 'No matching image asset was found')}
         emptyIcon={<ImageIcon className="h-7 w-7" strokeWidth={1.8} />}
         scale={scale}
       />
@@ -495,7 +506,7 @@ function ImageContent({
         <div className="rounded-[18px] border border-indigo-100 bg-indigo-50/70 px-4 py-3 dark:border-indigo-500/30 dark:bg-indigo-500/10">
           <div className="mb-2 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-indigo-500">
             <Languages className="h-3.5 w-3.5" strokeWidth={1.9} />
-            Translation
+            {l('译文', 'Translation')}
           </div>
           <MarkdownContent markdown={translatedText} scale={scale} />
         </div>
@@ -529,6 +540,7 @@ function BlockItem({
   onClick: (block: PositionedMineruBlock) => void;
   registerRef: (element: HTMLDivElement | null) => void;
 }) {
+  const l = useLocaleText();
   const { block, markdown, mathText, plainText, tableHtml, captionText, assetPath } = renderable;
   const pointerStartRef = useRef<{ x: number; y: number } | null>(null);
   const clickTimerRef = useRef<number | null>(null);
@@ -625,7 +637,10 @@ function BlockItem({
         >
           <span className="font-semibold uppercase tracking-[0.18em]">{block.type}</span>
           <span>
-            第 {block.pageIndex + 1} 页 · 块 {block.blockIndex + 1}
+            {l(
+              `第 ${block.pageIndex + 1} 页 · 块 ${block.blockIndex + 1}`,
+              `Page ${block.pageIndex + 1} · Block ${block.blockIndex + 1}`,
+            )}
           </span>
         </div>
       ) : null}
@@ -633,7 +648,7 @@ function BlockItem({
       {block.type === 'title' ? (
         <div className={cn('first:mt-0', compactMode ? 'mt-2' : 'mt-4')}>
           <MarkdownContent
-            markdown={effectiveMarkdown || `## ${effectivePlainText || '未命名标题'}`}
+            markdown={effectiveMarkdown || `## ${effectivePlainText || l('未命名标题', 'Untitled Heading')}`}
             scale={scale}
           />
         </div>
@@ -676,7 +691,7 @@ function BlockItem({
             <div className="mt-4 rounded-[18px] border border-indigo-100 bg-indigo-50/70 px-4 py-3 dark:border-white/10 dark:bg-chrome-800">
               <div className="mb-2 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-indigo-500 dark:text-[#b8c2d9]">
                 <Languages className="h-3.5 w-3.5" strokeWidth={1.9} />
-                Translation
+                {l('译文', 'Translation')}
               </div>
               <MarkdownContent markdown={displayTranslatedMarkdown || ''} scale={scale} />
             </div>
@@ -702,6 +717,7 @@ function BlockViewer({
   onBlockClick,
   onTextSelect,
 }: BlockViewerProps) {
+  const l = useLocaleText();
   const visibleBlocks = useMemo(
     () =>
       hidePageDecorations
@@ -877,8 +893,11 @@ function BlockViewer({
   if (renderableBlocks.length === 0) {
     return (
       <EmptyState
-        title="等待结构化内容"
-        description="打开或加载 MinerU JSON 后，这里会按块展示论文内容，并保持与左侧 PDF 的几何联动。"
+        title={l('等待结构化内容', 'Waiting for Structured Content')}
+        description={l(
+          '打开或加载 MinerU JSON 后，这里会按块展示论文内容，并保持与左侧 PDF 的几何联动。',
+          'After opening or loading a MinerU JSON file, this panel will show the paper block by block and stay geometrically linked to the PDF on the left.',
+        )}
       />
     );
   }
@@ -895,14 +914,14 @@ function BlockViewer({
         <div className="mx-auto flex w-fit max-w-full flex-wrap items-center gap-2 rounded-2xl border border-white/80 bg-white/72 px-3 py-2 shadow-[0_10px_22px_rgba(15,23,42,0.05)] backdrop-blur-xl dark:border-white/10 dark:bg-chrome-800 dark:shadow-none">
           <div className="flex items-center gap-2 rounded-full bg-slate-50 px-2.5 py-1 text-sm text-slate-600 dark:bg-chrome-700 dark:text-chrome-300">
             <SearchCode className="h-4 w-4 text-slate-400 dark:text-chrome-400" strokeWidth={1.8} />
-            <span className="hidden sm:inline">结构化阅读</span>
+            <span className="hidden sm:inline">{l('结构化阅读', 'Structured Reading')}</span>
           </div>
 
           <span className="pq-badge-neutral rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-500">
-            {renderableBlocks.length} 个块
+            {l(`${renderableBlocks.length} 个块`, `${renderableBlocks.length} blocks`)}
           </span>
           <span className="pq-badge-state rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-500">
-            {translatedCount} 个译文块
+            {l(`${translatedCount} 个译文块`, `${translatedCount} translated blocks`)}
           </span>
 
           <div className="flex items-center gap-1 rounded-full border border-slate-200 bg-white px-1.5 py-1 text-sm text-slate-600 dark:border-white/10 dark:bg-chrome-700 dark:text-chrome-300">
@@ -910,7 +929,7 @@ function BlockViewer({
               type="button"
               onClick={() => updateContentScale(-CONTENT_SCALE_STEP)}
               className="rounded-full p-1.5 transition-all duration-200 hover:bg-slate-100 dark:hover:bg-chrome-600"
-              aria-label="缩小正文"
+              aria-label={l('缩小正文', 'Zoom out content')}
             >
               <ZoomOut className="h-4 w-4" strokeWidth={1.9} />
             </button>
@@ -921,14 +940,14 @@ function BlockViewer({
               type="button"
               onClick={() => updateContentScale(CONTENT_SCALE_STEP)}
               className="rounded-full p-1.5 transition-all duration-200 hover:bg-slate-100 dark:hover:bg-chrome-600"
-              aria-label="放大正文"
+              aria-label={l('放大正文', 'Zoom in content')}
             >
               <ZoomIn className="h-4 w-4" strokeWidth={1.9} />
             </button>
           </div>
 
           <span className="hidden rounded-full bg-slate-50 px-3 py-1 text-xs text-slate-400 lg:inline dark:bg-chrome-700 dark:text-chrome-400">
-            点击块可反向定位到 PDF 几何区域
+            {l('点击块可反向定位到 PDF 几何区域', 'Click a block to jump back to the PDF geometry region')}
           </span>
         </div>
       </div>
@@ -959,7 +978,7 @@ function BlockViewer({
           <div className="mt-8 flex justify-center">
             <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-400 shadow-sm dark:border-white/10 dark:bg-chrome-800 dark:text-chrome-400 dark:shadow-none">
               <Sparkles className="h-3.5 w-3.5" strokeWidth={1.9} />
-              左侧 PDF 与右侧结构块保持几何联动
+              {l('左侧 PDF 与右侧结构块保持几何联动', 'The PDF on the left stays geometrically linked with the structured blocks on the right')}
             </div>
           </div>
         </article>

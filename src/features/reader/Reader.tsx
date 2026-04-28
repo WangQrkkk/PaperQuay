@@ -34,6 +34,11 @@ import DocumentReaderTab, {
   type ReaderTabBridgeState,
 } from './DocumentReaderTab';
 import {
+  buildPaperTaskState as buildLocalizedPaperTaskState,
+  isPaperPipelineBusy,
+  isPaperTaskRunning,
+} from './paperTaskState';
+import {
   getAppDefaultPaths,
   readLocalBinaryFile,
   readLocalTextFile,
@@ -44,6 +49,10 @@ import {
   writeLocalTextFile,
 } from '../../services/desktop';
 import type { AppDefaultPaths } from '../../services/desktop';
+import {
+  readReaderConfigFile,
+  writeReaderConfigFile,
+} from '../../services/readerConfig';
 import {
   extractTextFromMineruBlock,
   flattenMineruPages,
@@ -106,6 +115,7 @@ import {
   type LibrarySettingsUpdatedEventDetail,
 } from '../literature/libraryEvents';
 import {
+  emitUiLanguageChanged,
   OPEN_PREFERENCES_EVENT,
   type OpenPreferencesEventDetail,
 } from '../../app/appEvents';
@@ -649,38 +659,6 @@ const EMPTY_LIBRARY_PREVIEW_STATE: LibraryPreviewState = {
   statusMessage: '',
   sourceKey: '',
 };
-
-function buildPaperTaskState({
-  kind,
-  status,
-  label,
-  message,
-  completed,
-  total,
-}: Omit<LiteraturePaperTaskState, 'updatedAt'>): LiteraturePaperTaskState {
-  return {
-    kind,
-    status,
-    label,
-    message,
-    completed,
-    total,
-    updatedAt: Date.now(),
-  };
-}
-
-function taskLabel(kind: LiteraturePaperTaskKind, locale: UiLanguage): string {
-  switch (kind) {
-    case 'mineru':
-      return pickLocaleText(locale, 'MinerU 解析', 'MinerU Parse');
-    case 'translation':
-      return pickLocaleText(locale, '全文翻译', 'Full Translation');
-    case 'overview':
-      return pickLocaleText(locale, '概览生成', 'Overview Generation');
-    default:
-      return pickLocaleText(locale, '文档处理', 'Document Processing');
-  }
-}
 
 const EMPTY_BATCH_PROGRESS: BatchProgressState = {
   running: false,
@@ -2593,7 +2571,7 @@ function Reader() {
   const setHomeTabTitle = useTabsStore((state) => state.setHomeTabTitle);
 
   const [settings, setSettings] = useState<ReaderSettings>(loadSettings);
-  const [readerSecrets, setReaderSecrets] = useState<ReaderSecrets>(loadSecrets);
+  const [readerSecrets, setReaderSecrets] = useState<ReaderSecrets>(DEFAULT_SECRETS);
   const [preferencesOpen, setPreferencesOpen] = useState(false);
   const [preferredPreferencesSection, setPreferredPreferencesSection] = useState<PreferencesSectionKey | undefined>(undefined);
   const [onboardingOpen, setOnboardingOpen] = useState(false);
@@ -2657,10 +2635,10 @@ function Reader() {
       completed?: number | null,
       total?: number | null,
     ) =>
-      buildPaperTaskState({
+      buildLocalizedPaperTaskState({
+        locale: settings.uiLanguage,
         kind,
         status,
-        label: taskLabel(kind, settings.uiLanguage),
         message,
         completed,
         total,
@@ -2754,21 +2732,20 @@ function Reader() {
         }
 
         setAppDefaultPaths(defaultPaths);
+        const legacySecrets = loadSecrets();
         let nextConfig = mergeReaderConfigWithDefaults(
           null,
           loadSettings(),
-          loadSecrets(),
+          legacySecrets,
           defaultPaths,
         );
 
         try {
-          const configText = await readLocalTextFile(defaultPaths.configPath);
-          const parsedConfig = JSON.parse(configText) as Partial<ReaderConfigFile>;
-
+          const parsedConfig = await readReaderConfigFile(defaultPaths);
           nextConfig = mergeReaderConfigWithDefaults(
             parsedConfig,
             loadSettings(),
-            loadSecrets(),
+            legacySecrets,
             defaultPaths,
           );
         } catch {
@@ -2781,7 +2758,7 @@ function Reader() {
             nextConfig = mergeReaderConfigWithDefaults(
               parsedLegacyConfig,
               loadSettings(),
-              loadSecrets(),
+              legacySecrets,
               defaultPaths,
             );
           } catch {
@@ -2801,9 +2778,10 @@ function Reader() {
         const configZoteroDir = nextConfig.zoteroLocalDataDir.trim();
         const nativeZoteroDir = nativeLibrarySettings?.zoteroLocalDataDir.trim() ?? '';
         const resolvedZoteroDir = nativeZoteroDir || configZoteroDir;
+        const hydratedSecrets = nextConfig.secrets ?? DEFAULT_SECRETS;
 
         setSettings(nextConfig.settings);
-        setReaderSecrets(nextConfig.secrets);
+        setReaderSecrets(hydratedSecrets);
         setZoteroLocalDataDir(resolvedZoteroDir);
         if (nativeLibrarySettings && configZoteroDir && !nativeZoteroDir) {
           const syncedSettings = await updateLibrarySettings({
@@ -5517,44 +5495,98 @@ function Reader() {
     [openNativeLibraryWorkspace],
   );
 
-  const handleNativeLibraryMineruParse = useCallback(
-    (paper: LiteraturePaper) => {
-      const workspaceItem = registerNativeLibraryWorkspace(paper);
+  const triggerNativeLibraryReaderAction = useCallback(
+    (paper: LiteraturePaper, kind: LiteraturePaperTaskKind) => {
+      const existingOperation = nativePaperActionStates[paper.id] ?? null;
 
-      if (!workspaceItem) {
+      if (isPaperPipelineBusy(existingOperation) || isPaperTaskRunning(existingOperation, kind)) {
         return;
       }
 
-      void runLibraryItemMineruParse(workspaceItem);
+      const openedWorkspace = openNativeLibraryWorkspace(paper);
+
+      if (!openedWorkspace) {
+        return;
+      }
+
+      const { workspaceItem, tabId } = openedWorkspace;
+      const openingMessage =
+        kind === 'mineru'
+          ? l('正在准备 MinerU 解析...', 'Preparing MinerU parsing...')
+          : kind === 'translation'
+            ? l('正在准备全文翻译...', 'Preparing full translation...')
+            : l('正在准备论文概览...', 'Preparing the paper overview...');
+
+      updateLibraryPreviewOperation(
+        workspaceItem,
+        createPaperTaskState(
+          kind,
+          'running',
+          openingMessage,
+          kind === 'translation' ? 0 : 5,
+          kind === 'translation' ? null : 100,
+        ),
+        {
+          loading: true,
+          error: '',
+          currentPdfName: workspaceItem.localPdfPath
+            ? getFileNameFromPath(workspaceItem.localPdfPath)
+            : noPdfLoadedText,
+          statusMessage: openingMessage,
+        },
+      );
+
+      const bridge = readerBridges[tabId];
+
+      if (bridge) {
+        if (kind === 'mineru') {
+          bridge.onCloudParse();
+        } else if (kind === 'translation') {
+          bridge.onTranslate();
+        } else {
+          bridge.onGenerateSummary();
+        }
+      } else if (kind === 'mineru') {
+        setPendingCloudParseTabId(tabId);
+      } else if (kind === 'translation') {
+        setPendingTranslateTabId(tabId);
+      } else {
+        setPendingSummaryTabId(tabId);
+      }
+
+      setActiveTab(HOME_TAB_ID);
     },
-    [registerNativeLibraryWorkspace, runLibraryItemMineruParse],
+    [
+      createPaperTaskState,
+      l,
+      nativePaperActionStates,
+      noPdfLoadedText,
+      openNativeLibraryWorkspace,
+      readerBridges,
+      setActiveTab,
+      updateLibraryPreviewOperation,
+    ],
+  );
+
+  const handleNativeLibraryMineruParse = useCallback(
+    (paper: LiteraturePaper) => {
+      triggerNativeLibraryReaderAction(paper, 'mineru');
+    },
+    [triggerNativeLibraryReaderAction],
   );
 
   const handleNativeLibraryTranslate = useCallback(
     (paper: LiteraturePaper) => {
-      const workspaceItem = registerNativeLibraryWorkspace(paper);
-
-      if (!workspaceItem) {
-        return;
-      }
-
-      void runLibraryItemTranslation(workspaceItem);
+      triggerNativeLibraryReaderAction(paper, 'translation');
     },
-    [registerNativeLibraryWorkspace, runLibraryItemTranslation],
+    [triggerNativeLibraryReaderAction],
   );
 
   const handleNativeLibraryGenerateSummary = useCallback(
     (paper: LiteraturePaper) => {
-      const workspaceItem = registerNativeLibraryWorkspace(paper);
-
-      if (!workspaceItem) {
-        return;
-      }
-
-      setStatusMessage(l(`正在生成概览：${workspaceItem.title}`, `Generating overview: ${workspaceItem.title}`));
-      void generateLibraryPreview(workspaceItem, true, { allowGenerate: true });
+      triggerNativeLibraryReaderAction(paper, 'overview');
     },
-    [generateLibraryPreview, l, registerNativeLibraryWorkspace],
+    [triggerNativeLibraryReaderAction],
   );
 
   const handleWindowMinimize = () => {
@@ -6061,11 +6093,8 @@ function Reader() {
 
   useEffect(() => {
     localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings));
+    emitUiLanguageChanged(settings.uiLanguage);
   }, [settings]);
-
-  useEffect(() => {
-    localStorage.setItem(SECRETS_STORAGE_KEY, JSON.stringify(readerSecrets));
-  }, [readerSecrets]);
 
   useEffect(() => {
     if (qaModelPresets.some((preset) => preset.id === settings.qaActivePresetId)) {
@@ -6100,7 +6129,7 @@ function Reader() {
     }
 
     const timer = window.setTimeout(() => {
-      const nextConfig: ReaderConfigFile = {
+      const nextConfig: Partial<ReaderConfigFile> = {
         version: READER_CONFIG_VERSION,
         settings,
         secrets: readerSecrets,
@@ -6108,9 +6137,13 @@ function Reader() {
         leftSidebarCollapsed: false,
       };
 
-      void writeLocalTextFile(appDefaultPaths.configPath, JSON.stringify(nextConfig, null, 2)).catch(
-        () => undefined,
-      );
+      void writeReaderConfigFile(nextConfig, appDefaultPaths)
+        .then(() => {
+          window.localStorage.removeItem(SECRETS_STORAGE_KEY);
+        })
+        .catch((error) => {
+          console.error('Failed to persist reader config to file.', error);
+        });
     }, CONFIG_WRITE_DEBOUNCE_MS);
 
     return () => {

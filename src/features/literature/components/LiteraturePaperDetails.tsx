@@ -22,6 +22,10 @@ import type {
   UpdatePaperRequest,
 } from '../../../types/library';
 import {
+  isPaperPipelineActionDisabled,
+  isPaperPipelineBusy,
+} from '../../reader/paperTaskState';
+import {
   paperAuthors,
   paperPdfPath,
 } from '../literatureUi';
@@ -507,6 +511,7 @@ export default function LiteraturePaperDetails({
   const hasPdf = selectedPaper ? Boolean(paperPdfPath(selectedPaper)) : false;
   const activeTaskKind: LiteraturePaperTaskKind | null =
     actionState?.status === 'running' ? actionState.kind : null;
+  const pipelineBusy = isPaperPipelineBusy(actionState);
   const aiSummary = selectedPaper?.aiSummary?.trim() ?? '';
   const overviewSections = useMemo(() => parseOverviewSections(aiSummary), [aiSummary]);
   const activeOverviewSection =
@@ -614,9 +619,13 @@ export default function LiteraturePaperDetails({
                 <div className="space-y-2">
                   <ProcessingActionTile
                     dataTour="overview-mineru-parse"
-                    disabled={!hasPdf || !onRunMineruParse}
+                    disabled={isPaperPipelineActionDisabled({
+                      hasPdf,
+                      hasHandler: Boolean(onRunMineruParse),
+                      actionState,
+                    })}
                     active={activeTaskKind === 'mineru'}
-                    busy={activeTaskKind === 'mineru'}
+                    busy={pipelineBusy && activeTaskKind === 'mineru'}
                     icon={<Sparkles className="h-4 w-4" strokeWidth={1.9} />}
                     onClick={() => onRunMineruParse?.(selectedPaper)}
                     title={l('MinerU 解析', 'MinerU Parse')}
@@ -624,9 +633,13 @@ export default function LiteraturePaperDetails({
                   />
                   <ProcessingActionTile
                     dataTour="overview-translate-document"
-                    disabled={!hasPdf || !onTranslatePaper}
+                    disabled={isPaperPipelineActionDisabled({
+                      hasPdf,
+                      hasHandler: Boolean(onTranslatePaper),
+                      actionState,
+                    })}
                     active={activeTaskKind === 'translation'}
-                    busy={activeTaskKind === 'translation'}
+                    busy={pipelineBusy && activeTaskKind === 'translation'}
                     icon={<Languages className="h-4 w-4" strokeWidth={1.9} />}
                     onClick={() => onTranslatePaper?.(selectedPaper)}
                     title={l('全文翻译', 'Full Translation')}
@@ -634,9 +647,13 @@ export default function LiteraturePaperDetails({
                   />
                   <ProcessingActionTile
                     dataTour="generate-summary"
-                    disabled={!hasPdf || !onGenerateSummary}
+                    disabled={isPaperPipelineActionDisabled({
+                      hasPdf,
+                      hasHandler: Boolean(onGenerateSummary),
+                      actionState,
+                    })}
                     active={activeTaskKind === 'overview'}
-                    busy={activeTaskKind === 'overview'}
+                    busy={pipelineBusy && activeTaskKind === 'overview'}
                     icon={<FileText className="h-4 w-4" strokeWidth={1.9} />}
                     onClick={() => onGenerateSummary?.(selectedPaper)}
                     title={l('概览生成', 'Generate Overview')}

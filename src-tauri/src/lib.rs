@@ -16,6 +16,7 @@ pub fn run() {
             commands::file::path_exists,
             commands::file::read_text_file,
             commands::file::read_binary_file_base64,
+            commands::file::approve_write_path,
             commands::file::write_text_file,
             commands::file::write_binary_file_base64,
             commands::file::download_remote_file_to_path,

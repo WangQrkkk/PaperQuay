@@ -592,6 +592,10 @@ export default function LiteratureLibraryView({
 
   const handleStartDetailsPanelResize = (event: ReactPointerEvent<HTMLDivElement>) => {
     event.preventDefault();
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+    }
     detailsPanelResizeStartRef.current = {
       clientX: event.clientX,
       width: detailsPanelWidth,
@@ -2027,11 +2031,12 @@ export default function LiteratureLibraryView({
         onPointerDown={handleStartDetailsPanelResize}
         onDoubleClick={() => setDetailsPanelWidth(DETAILS_PANEL_DEFAULT_WIDTH)}
         className={[
-          'absolute bottom-0 top-0 z-30 w-3 -translate-x-1/2 cursor-col-resize touch-none',
-          detailsPanelResizing ? 'bg-teal-400/8' : 'bg-transparent',
+          'absolute bottom-0 top-0 z-40 w-4 -translate-x-1/2 cursor-col-resize touch-none',
+          detailsPanelResizing ? 'bg-teal-400/10' : 'bg-transparent hover:bg-teal-400/4',
         ].join(' ')}
         style={{
           right: detailsPanelWidth - 1,
+          touchAction: 'none',
         }}
       >
         <div

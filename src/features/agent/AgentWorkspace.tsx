@@ -49,6 +49,14 @@ import type { LiteraturePaper } from '../../types/library';
 import { useThemeStore } from '../../stores/useThemeStore';
 import { PlanDiffCard, ToolCallCard, TraceTimeline } from './AgentExecutionCards';
 import {
+  patchAgentHistorySessionMessage,
+  upsertAgentHistorySession,
+} from './agentSessionState';
+import {
+  isAgentSessionRunning,
+  updateAgentRunningSessions,
+} from './agentRunningSessions';
+import {
   agentCapabilities,
   buildErrorTrace,
   buildAgentHistorySession,
@@ -160,7 +168,7 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
   const [papers, setPapers] = useState<LiteraturePaper[]>([]);
   const [selectedPaperIds, setSelectedPaperIds] = useState<Set<string>>(() => new Set());
   const [paperSearchQuery, setPaperSearchQuery] = useState('');
-  const [composerValue, setComposerValue] = useState(l('把选中的论文标题后面加 123', 'Append 123 to the selected paper titles'));
+  const [composerValue, setComposerValue] = useState('');
   const [lastInstruction, setLastInstruction] = useState('');
   const [agentPresetName, setAgentPresetName] = useState('');
   const [plan, setPlan] = useState<LibraryAgentPlan | null>(null);
@@ -178,7 +186,7 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
       content:
         l(
           '选择左侧文献后，直接用自然语言提问或描述任务。普通问答会直接回答；需要修改文库时，我会调用工具生成可审查计划，只有确认后才写入本地文库。',
-          'Select papers on the left, then ask questions or describe tasks in natural language. Plain Q&A is answered directly; library edits are converted into reviewable tool plans and written only after confirmation.',
+          'You can chat directly, or select papers on the left to add literature context. Plain Q&A is answered directly; library edits are converted into reviewable tool plans and written only after confirmation.',
         ),
       meta: l(
         '支持问答、重命名、元数据补全、智能标签、标签清洗、自动归类',
@@ -190,14 +198,17 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
           id: 'welcome-intent',
           type: 'intent',
           title: l('等待用户指令', 'Waiting for user instruction'),
-          summary: l('从左侧选择论文，然后输入要执行的任务。', 'Select papers on the left, then enter the task to run.'),
+          summary: l('可直接输入问题，也可以先在左侧选择论文后再执行任务。', 'You can type a question directly, or select papers on the left before running a task.'),
           status: 'waiting',
         },
       ],
     },
   ]);
   const [loading, setLoading] = useState(true);
-  const [working, setWorking] = useState(false);
+  const [applyingPlan, setApplyingPlan] = useState(false);
+  const [runningSessionIds, setRunningSessionIds] = useState<Set<string>>(() => new Set());
+  const runningSessionIdsRef = useRef(runningSessionIds);
+  const activeSessionIdRef = useRef(activeSessionId);
   const [statusMessage, setStatusMessage] = useState('');
   const [error, setError] = useState('');
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
@@ -207,7 +218,7 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
     role: 'assistant',
     content: l(
       '选择左侧文献后，直接用自然语言提问或描述任务。普通问答会直接回答；需要修改文库时，我会调用工具生成可审查计划，只有确认后才写入本地文库。',
-      'Select papers on the left, then ask questions or describe tasks in natural language. Plain Q&A is answered directly; library edits are converted into reviewable tool plans and written only after confirmation.',
+      'You can chat directly, or select papers on the left to add literature context. Plain Q&A is answered directly; library edits are converted into reviewable tool plans and written only after confirmation.',
     ),
     meta: l(
       '支持问答、重命名、元数据补全、智能标签、标签清洗、自动归类',
@@ -219,7 +230,7 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
         id: 'welcome-intent',
         type: 'intent',
         title: l('等待用户指令', 'Waiting for user instruction'),
-        summary: l('从左侧选择论文，然后输入要执行的任务。', 'Select papers on the left, then enter the task to run.'),
+        summary: l('可直接输入问题，也可以先在左侧选择论文后再执行任务。', 'You can type a question directly, or select papers on the left before running a task.'),
         status: 'waiting',
       },
     ],
@@ -238,6 +249,10 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
     [approvedItemIds, plan],
   );
   const selectedTags = useMemo(() => uniqueTagNames(selectedPapers), [selectedPapers]);
+  const activeSessionRunning = useMemo(
+    () => isAgentSessionRunning(runningSessionIds, activeSessionId),
+    [activeSessionId, runningSessionIds],
+  );
   const sortedHistorySessions = useMemo(
     () => historySessions.slice().sort((left, right) => right.updatedAt - left.updatedAt),
     [historySessions],
@@ -286,7 +301,17 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
 
   useEffect(() => {
     setComposerValue((current) =>
-      containsLegacyMojibake(current) ? l('把选中的论文标题后面加 123', 'Append 123 to the selected paper titles') : current,
+      containsLegacyMojibake(current)
+        || current === 'Append 123 to the selected paper titles'
+        || current === 'Add "Read" to the beginning of the selected paper titles'
+        ? ''
+        : current,
+    );
+  }, []);
+
+  useEffect(() => {
+    setComposerValue((current) =>
+      containsLegacyMojibake(current) ? '' : current,
     );
     setMessages((current) => {
       if (
@@ -313,7 +338,7 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
       top: chatScrollRef.current.scrollHeight,
       behavior: 'smooth',
     });
-  }, [messages, working]);
+  }, [activeSessionRunning, applyingPlan, messages]);
 
   useEffect(() => {
     const nextSession = buildAgentHistorySession({
@@ -334,8 +359,67 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
     saveAgentHistorySessions(historySessions);
   }, [historySessions]);
 
+  useEffect(() => {
+    runningSessionIdsRef.current = runningSessionIds;
+  }, [runningSessionIds]);
+
+  useEffect(() => {
+    activeSessionIdRef.current = activeSessionId;
+  }, [activeSessionId]);
+
   const updateMessage = (messageId: string, updater: (message: AgentChatMessage) => AgentChatMessage) => {
     setMessages((current) => current.map((message) => (message.id === messageId ? updater(message) : message)));
+  };
+
+  const upsertSessionSnapshot = (
+    sessionId: string,
+    nextMessages: AgentChatMessage[],
+    nextSelectedPaperIds: string[],
+    nextInstruction: string,
+  ) => {
+    setHistorySessions((current) =>
+      upsertAgentHistorySession(current, {
+        sessionId,
+        messages: nextMessages,
+        selectedPaperIds: nextSelectedPaperIds,
+        lastInstruction: nextInstruction,
+        locale,
+      }),
+    );
+  };
+
+  const updateSessionMessage = (
+    sessionId: string,
+    messageId: string,
+    updater: (message: AgentChatMessage) => AgentChatMessage,
+  ) => {
+    setHistorySessions((current) =>
+      patchAgentHistorySessionMessage(current, {
+        sessionId,
+        messageId,
+        updater,
+        locale,
+      }),
+    );
+
+    if (activeSessionIdRef.current === sessionId) {
+      updateMessage(messageId, updater);
+    }
+  };
+
+  const restoreDraftStateFromMessages = (sessionMessages: AgentChatMessage[]) => {
+    const latestPlanMessage = [...sessionMessages]
+      .reverse()
+      .find((message) => message.role === 'assistant' && message.plan);
+    const nextPlan = latestPlanMessage?.plan ?? null;
+
+    setPlan(nextPlan);
+    setApprovedItemIds(new Set(nextPlan?.items.map((item) => item.id) ?? []));
+    setSelectedInspectorItemId(nextPlan?.items[0]?.id ?? null);
+  };
+
+  const setAgentSessionRunning = (sessionId: string, running: boolean) => {
+    setRunningSessionIds((current) => updateAgentRunningSessions(current, sessionId, running));
   };
 
   const togglePaper = (paperId: string) => {
@@ -378,17 +462,38 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
     setStatusMessage(nextPlan.description);
   };
 
-  const appendAssistantMessage = (content: string, meta?: string) => {
-    setMessages((current) => [
-      ...current,
-      {
-        id: newMessageId(),
-        role: 'assistant',
-        content,
-        meta,
-        createdAt: Date.now(),
-      },
-    ]);
+  const appendAssistantMessageToSession = (
+    sessionId: string,
+    content: string,
+    meta?: string,
+  ) => {
+    const nextMessage: AgentChatMessage = {
+      id: newMessageId(),
+      role: 'assistant',
+      content,
+      meta,
+      createdAt: Date.now(),
+    };
+
+    setHistorySessions((current) => {
+      const targetSession = current.find((session) => session.id === sessionId);
+
+      if (!targetSession) {
+        return current;
+      }
+
+      return upsertAgentHistorySession(current, {
+        sessionId,
+        messages: [...targetSession.messages, nextMessage],
+        selectedPaperIds: targetSession.selectedPaperIds,
+        lastInstruction: targetSession.lastInstruction,
+        locale,
+      });
+    });
+
+    if (activeSessionIdRef.current === sessionId) {
+      setMessages((existingMessages) => [...existingMessages, nextMessage]);
+    }
   };
 
   const copyToolParameters = async (toolCall: AgentToolCallView) => {
@@ -421,53 +526,81 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
       return;
     }
 
-    if (selectedPapers.length === 0) {
-      setError(l('请先在左侧选择至少一篇文献。', 'Select at least one paper on the left first.'));
+    const sessionId = activeSessionId;
+
+    if (isAgentSessionRunning(runningSessionIdsRef.current, sessionId)) {
+      setStatusMessage(
+        l(
+          '当前对话仍在处理中，请等待这一轮回复完成后再继续发送。',
+          'This chat is still processing. Wait for the current reply to finish before sending another message.',
+        ),
+      );
       return;
     }
 
+    const selectedPapersSnapshot = selectedPapers;
+    const selectedPaperIdsSnapshot = [...selectedPaperIds];
     const startedAt = performance.now();
     const assistantMessageId = newMessageId();
-    const paperCount = selectedPapers.length;
+    const paperCount = selectedPapersSnapshot.length;
     const historyMessages = buildConversationHistory();
+    const userMessage: AgentChatMessage = {
+      id: newMessageId(),
+      role: 'user',
+      content: instruction,
+      meta: paperCount > 0
+        ? l(`作用于 ${paperCount} 篇论文`, `Applied to ${paperCount} papers`)
+        : l('未选择论文，按通用对话处理', 'No papers selected; using general chat context'),
+      createdAt: Date.now(),
+    };
+    const pendingAssistantMessage: AgentChatMessage = {
+      id: assistantMessageId,
+      role: 'assistant',
+      content: l('Agent 正在回复...', 'Agent is replying...'),
+      meta: l('执行中', 'Running'),
+      createdAt: Date.now(),
+      trace: [
+        {
+          id: `${assistantMessageId}:intent`,
+          type: 'intent',
+          title: l('正在分析请求', 'Analyzing request'),
+          summary: instruction,
+          status: 'running',
+        },
+      ],
+    };
+    const nextMessages = [...messages, userMessage, pendingAssistantMessage];
+    const isTargetSessionActive = () => activeSessionIdRef.current === sessionId;
 
     setLastInstruction(instruction);
-    setMessages((current) => [
-      ...current,
-      {
-        id: newMessageId(),
-        role: 'user',
-        content: instruction,
-        meta: l(`作用于 ${paperCount} 篇文献`, `Applied to ${paperCount} papers`),
-        createdAt: Date.now(),
-      },
-      {
-        id: assistantMessageId,
-        role: 'assistant',
-        content: l('Agent 回复中...', 'Agent is replying...'),
-        meta: 'Agent running',
-        createdAt: Date.now(),
-      },
-    ]);
+    setMessages(nextMessages);
+    upsertSessionSnapshot(sessionId, nextMessages, selectedPaperIdsSnapshot, instruction);
     setComposerValue('');
-    setWorking(true);
+    setAgentSessionRunning(sessionId, true);
     setError('');
     setPlan(null);
     setApprovedItemIds(new Set());
     setSelectedInspectorItemId(null);
 
     try {
-      const preset = loadLibraryAgentModelPreset();
+      const preset = await loadLibraryAgentModelPreset();
 
       if (!preset) {
         throw new Error(l('请先在设置里配置 Agent 工具调用模型。', 'Configure the Agent tool-calling model in Settings first.'));
       }
 
       setAgentPresetName(preset.label || preset.model);
-      setStatusMessage(l(`正在调用大模型 Agent：${preset.label || preset.model}...`, `Calling Agent model: ${preset.label || preset.model}...`));
+      if (isTargetSessionActive()) {
+        setStatusMessage(
+          l(
+            `正在调用大模型 Agent：${preset.label || preset.model}...`,
+            `Calling Agent model: ${preset.label || preset.model}...`,
+          ),
+        );
+      }
 
       const result = await runConversationalLibraryAgent({
-        papers: selectedPapers,
+        papers: selectedPapersSnapshot,
         instruction,
         preset,
         historyMessages,
@@ -476,44 +609,62 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
       const durationMs = Math.round(performance.now() - startedAt);
 
       if (result.kind === 'answer') {
-        updateMessage(assistantMessageId, (message) => ({
+        updateSessionMessage(sessionId, assistantMessageId, (message) => ({
           ...message,
           content: result.answer,
-        meta: `direct answer · ${durationLabel(durationMs, locale)}`,
+        meta: `${result.contextLabel} · ${durationLabel(durationMs, locale)}`,
           trace: undefined,
           toolCall: undefined,
           plan: undefined,
+          choices: undefined,
+          error: undefined,
         }));
-        setStatusMessage(l(`已直接回答，无需工具调用。${durationLabel(durationMs, locale)}`, `Answered directly without tool calls. ${durationLabel(durationMs, locale)}`));
+        if (isTargetSessionActive()) {
+          setStatusMessage(
+            l(
+              `已直接回答，无需工具调用。${durationLabel(durationMs, locale)}`,
+              `Answered directly without tool calls. ${durationLabel(durationMs, locale)}`,
+            ),
+          );
+        }
         return;
       }
 
       if (result.kind === 'choice') {
-        updateMessage(assistantMessageId, (message) => ({
+        updateSessionMessage(sessionId, assistantMessageId, (message) => ({
           ...message,
           content: result.answer,
           meta: `waiting for choice · ${durationLabel(durationMs, locale)}`,
-          trace: undefined,
+          trace: [
+            {
+              id: `${assistantMessageId}:choice`,
+              type: 'plan',
+              title: l('等待你的选择', 'Waiting for your choice'),
+              summary: l('Agent 需要你确认下一步。', 'The Agent needs your confirmation for the next step.'),
+              status: 'waiting',
+              durationMs,
+            },
+          ],
           toolCall: undefined,
           plan: undefined,
           choices: result.choices,
+          error: undefined,
         }));
-        setStatusMessage(l(`Agent 需要你选择下一步，共 ${result.choices.length} 个选项。`, `The Agent needs your next-step choice. ${result.choices.length} options available.`));
+        if (isTargetSessionActive()) {
+          setStatusMessage(
+            l(
+              `Agent 需要你选择下一步，共 ${result.choices.length} 个选项。`,
+              `The Agent needs your next-step choice. ${result.choices.length} options available.`,
+            ),
+          );
+        }
         return;
       }
 
       const nextPlan = result.plan;
       const nextToolCall = buildToolCallView(nextPlan, instruction, paperCount, durationMs, locale);
 
-      setNextPlan(nextPlan);
-      setExpandedStepKeys((current) => new Set([
-        ...current,
-        `${assistantMessageId}:intent`,
-        `${assistantMessageId}:tool-call`,
-        `${assistantMessageId}:tool-result`,
-      ]));
-
-      updateMessage(assistantMessageId, (message) => ({
+      updateSessionMessage(sessionId, assistantMessageId, (message) => ({
         ...message,
         content:
           nextPlan.items.length > 0
@@ -529,25 +680,44 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
         trace: buildSuccessTrace(instruction, paperCount, nextPlan, durationMs, locale),
         toolCall: nextToolCall,
         plan: nextPlan,
+        choices: undefined,
+        error: undefined,
       }));
+      if (isTargetSessionActive()) {
+        setNextPlan(nextPlan);
+        setExpandedStepKeys((current) => new Set([
+          ...current,
+          `${assistantMessageId}:intent`,
+          `${assistantMessageId}:tool-call`,
+          `${assistantMessageId}:tool-result`,
+        ]));
+        setStatusMessage(nextPlan.description);
+      }
     } catch (nextError) {
       const message = nextError instanceof Error ? nextError.message : l('生成 Agent 计划失败', 'Failed to generate Agent plan');
       const durationMs = Math.round(performance.now() - startedAt);
 
-      setError(message);
-      setStatusMessage(message);
-      updateMessage(assistantMessageId, (chatMessage) => ({
+      updateSessionMessage(sessionId, assistantMessageId, (chatMessage) => ({
         ...chatMessage,
         content: message.includes('tool call')
-          ? l('当前模型没有返回 tool call。请换用支持 OpenAI-compatible tools/function calling 的模型。', 'The current model did not return a tool call. Use a model that supports OpenAI-compatible tools/function calling.')
+          ? l(
+            '当前模型没有返回 tool call。请换用支持 OpenAI-compatible tools/function calling 的模型。',
+            'The current model did not return a tool call. Use a model that supports OpenAI-compatible tools/function calling.',
+          )
           : l(`生成计划失败：${message}`, `Plan generation failed: ${message}`),
         meta: `error · ${durationLabel(durationMs, locale)}`,
         trace: buildErrorTrace(instruction, paperCount, message, durationMs, locale),
         toolCall: buildPreviewToolCall(instruction, paperCount, 'error', locale),
+        plan: undefined,
+        choices: undefined,
         error: message,
       }));
+      if (isTargetSessionActive()) {
+        setError(message);
+        setStatusMessage(message);
+      }
     } finally {
-      setWorking(false);
+      setAgentSessionRunning(sessionId, false);
     }
   };
 
@@ -557,38 +727,68 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
   };
 
   const applyPlan = async () => {
+    if (applyingPlan) {
+      return;
+    }
     if (!plan || approvedItemIds.size === 0) {
       setError(l('没有可执行的计划项。', 'There are no executable plan items.'));
       return;
     }
 
-    setWorking(true);
+    const sessionId = activeSessionId;
+    const planToApply = plan;
+    const approvedIdsSnapshot = new Set(approvedItemIds);
+    const isTargetSessionActive = () => activeSessionIdRef.current === sessionId;
+
+    setApplyingPlan(true);
     setError('');
-    setStatusMessage(l(`正在执行 ${approvedItemIds.size} 个计划项...`, `Running ${approvedItemIds.size} plan items...`));
+    if (isTargetSessionActive()) {
+      setStatusMessage(
+        l(
+          `正在执行 ${approvedIdsSnapshot.size} 个计划项...`,
+          `Running ${approvedIdsSnapshot.size} plan items...`,
+        ),
+      );
+    }
 
     try {
-      const result = await applyLibraryAgentPlan(plan, approvedItemIds);
+      const result = await applyLibraryAgentPlan(planToApply, approvedIdsSnapshot);
 
       await refreshPapers();
-      setPlan(null);
-      setApprovedItemIds(new Set());
-      setSelectedInspectorItemId(null);
-      setStatusMessage(l(`执行完成：成功 ${result.applied}，失败 ${result.failed}。`, `Execution finished: ${result.applied} succeeded, ${result.failed} failed.`));
-      appendAssistantMessage(
+      if (isTargetSessionActive()) {
+        setPlan(null);
+        setApprovedItemIds(new Set());
+        setSelectedInspectorItemId(null);
+        setStatusMessage(
+          l(
+            `执行完成：成功 ${result.applied}，失败 ${result.failed}。`,
+            `Execution finished: ${result.applied} succeeded, ${result.failed} failed.`,
+          ),
+        );
+      }
+      appendAssistantMessageToSession(
+        sessionId,
         l(`已执行计划：成功 ${result.applied} 项，失败 ${result.failed} 项。`, `Plan executed: ${result.applied} succeeded, ${result.failed} failed.`),
-        result.failed > 0 ? result.errors.join('\n') : 'Local write completed',
+        result.failed > 0 ? result.errors.join('\n') : l('本地写入已完成', 'Local write completed'),
       );
 
       if (result.failed > 0) {
-        setError(result.errors.join('\n') || l('部分计划项执行失败。', 'Some plan items failed.'));
+        if (isTargetSessionActive()) {
+          setError(result.errors.join('\n') || l('部分计划项执行失败。', 'Some plan items failed.'));
+        }
       }
     } catch (nextError) {
       const message = nextError instanceof Error ? nextError.message : l('执行 Agent 计划失败', 'Failed to execute Agent plan');
-      setError(message);
-      setStatusMessage(message);
-      appendAssistantMessage(l(`执行计划失败：${message}`, `Plan execution failed: ${message}`));
+      if (isTargetSessionActive()) {
+        setError(message);
+        setStatusMessage(message);
+      }
+      appendAssistantMessageToSession(
+        sessionId,
+        l(`执行计划失败：${message}`, `Plan execution failed: ${message}`),
+      );
     } finally {
-      setWorking(false);
+      setApplyingPlan(false);
     }
   };
 
@@ -741,7 +941,7 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
     role: 'assistant',
     content: l(
       '选择左侧文献后，直接用自然语言提问或描述任务。普通问答会直接回答；需要修改文库时，我会调用工具生成可审查计划，只有确认后才写入本地文库。',
-      'Select papers on the left, then ask questions or describe tasks in natural language. Plain Q&A is answered directly; library edits are converted into reviewable tool plans and written only after confirmation.',
+      'You can chat directly, or select papers on the left to add literature context. Plain Q&A is answered directly; library edits are converted into reviewable tool plans and written only after confirmation.',
     ),
     meta: l(
       '支持问答、重命名、元数据补全、智能标签、标签清洗、自动归类',
@@ -753,7 +953,7 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
         id: 'welcome-intent',
         type: 'intent',
         title: l('等待用户指令', 'Waiting for user instruction'),
-        summary: l('从左侧选择论文，然后输入要执行的任务。', 'Select papers on the left, then enter the task to run.'),
+        summary: l('可直接输入问题，也可以先在左侧选择论文后再执行任务。', 'You can type a question directly, or select papers on the left before running a task.'),
         status: 'waiting',
       },
     ],
@@ -776,9 +976,7 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
     setMessages(session.messages);
     setSelectedPaperIds(new Set(session.selectedPaperIds));
     setLastInstruction(session.lastInstruction);
-    setPlan(null);
-    setApprovedItemIds(new Set());
-    setSelectedInspectorItemId(null);
+    restoreDraftStateFromMessages(session.messages);
     setComposerValue('');
     setError('');
     setStatusMessage(l(`已打开历史对话：${session.title}`, `Opened history chat: ${session.title}`));
@@ -867,7 +1065,7 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
             <button
               type="button"
               onClick={() => void refreshPapers()}
-              disabled={loading || working}
+              disabled={loading || applyingPlan}
               className="inline-flex items-center rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition-all duration-200 hover:border-slate-300 hover:bg-slate-50 disabled:opacity-60 dark:border-chrome-700 dark:bg-chrome-800 dark:text-chrome-200 dark:hover:border-chrome-600 dark:hover:bg-chrome-700"
             >
               <RefreshCw className={loading ? 'mr-2 h-4 w-4 animate-spin' : 'mr-2 h-4 w-4'} strokeWidth={1.8} />
@@ -1325,7 +1523,7 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
                                     key={choice.id}
                                     type="button"
                                     onClick={() => handleAgentChoice(choice.instruction)}
-                                    disabled={working}
+                                    disabled={activeSessionRunning}
                                     className="group rounded-[20px] border border-slate-200 bg-slate-50/80 px-4 py-3 text-left transition hover:border-teal-200 hover:bg-teal-50 disabled:opacity-60 dark:border-white/10 dark:bg-chrome-950/70 dark:hover:border-teal-300/30 dark:hover:bg-teal-300/10"
                                   >
                                     <div className="flex items-center justify-between gap-3">
@@ -1425,7 +1623,7 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
                             <button
                               type="button"
                               onClick={() => void applyPlan()}
-                              disabled={working || !isActivePlan || approvedItemIds.size === 0}
+                              disabled={applyingPlan || activeSessionRunning || !isActivePlan || approvedItemIds.size === 0}
                               className="inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-slate-800 disabled:opacity-50 dark:bg-teal-300 dark:text-slate-950 dark:hover:bg-teal-200"
                             >
                               <PlayCircle className="h-4 w-4" />
@@ -1450,7 +1648,7 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
                             <button
                               type="button"
                               onClick={cancelPlan}
-                              disabled={working || !isActivePlan}
+                              disabled={applyingPlan || activeSessionRunning || !isActivePlan}
                               className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50 dark:border-white/10 dark:bg-chrome-900 dark:text-chrome-200"
                             >
                               <X className="h-4 w-4" />
@@ -1459,7 +1657,7 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
                             <button
                               type="button"
                               onClick={() => handleRetryAgent(lastInstruction)}
-                              disabled={!lastInstruction || working}
+                              disabled={!lastInstruction || applyingPlan || activeSessionRunning}
                               className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50 dark:border-white/10 dark:bg-chrome-900 dark:text-chrome-200"
                             >
                               <RotateCcw className="h-4 w-4" />
@@ -1515,14 +1713,14 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
                       }
                     }}
                     className="min-h-[58px] flex-1 resize-none rounded-[24px] border border-slate-200 bg-white/95 px-4 py-3 text-sm leading-6 text-slate-800 shadow-sm outline-none transition focus:border-teal-300 focus:bg-white dark:border-white/10 dark:bg-chrome-900 dark:text-chrome-100 dark:focus:border-teal-300/50"
-                    placeholder={l('例如：把选中的论文标题后面加 123，或者清理标签并自动归类...', 'Example: append 123 to selected paper titles, or clean tags and auto-classify...')}
+                    placeholder={l('在此处发送消息...', 'Send a message here...')}
                   />
                   <button
                     type="submit"
-                    disabled={working || selectedPapers.length === 0 || !composerValue.trim()}
+                    disabled={activeSessionRunning || !composerValue.trim()}
                     className="inline-flex h-[58px] items-center gap-2 rounded-[22px] bg-slate-950 px-5 text-sm font-black text-white shadow-[0_18px_40px_rgba(15,23,42,0.18)] transition hover:-translate-y-0.5 hover:bg-slate-800 disabled:translate-y-0 disabled:opacity-50 dark:bg-teal-300 dark:text-slate-950 dark:hover:bg-teal-200"
                   >
-                    {working ? <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2} /> : <Send className="h-4 w-4" strokeWidth={2} />}
+                    {activeSessionRunning ? <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2} /> : <Send className="h-4 w-4" strokeWidth={2} />}
                     {l('发送', 'Send')}
                   </button>
                 </form>
@@ -1548,10 +1746,10 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
                   <button
                     type="button"
                     onClick={() => void applyPlan()}
-                    disabled={!plan || approvedItemIds.size === 0 || working}
+                    disabled={!plan || approvedItemIds.size === 0 || applyingPlan || activeSessionRunning}
                     className="inline-flex items-center gap-2 rounded-2xl bg-teal-600 px-3.5 py-2 text-xs font-black text-white transition hover:bg-teal-500 disabled:opacity-60 dark:bg-teal-300 dark:text-slate-950 dark:hover:bg-teal-200"
                   >
-                    {working ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+                    {applyingPlan ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
                     {l('执行', 'Run')}
                   </button>
                 </div>
@@ -1666,7 +1864,7 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
                     <button
                       type="button"
                       onClick={() => void applyPlan()}
-                      disabled={selectedPlanItems.length === 0 || working}
+                      disabled={selectedPlanItems.length === 0 || applyingPlan || activeSessionRunning}
                       className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-950 px-4 py-3 text-sm font-black text-white transition hover:bg-slate-800 disabled:opacity-60 dark:bg-teal-300 dark:text-slate-950 dark:hover:bg-teal-200"
                     >
                       <PlayCircle className="h-4 w-4" />
@@ -1675,7 +1873,7 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
                     <button
                       type="button"
                       onClick={cancelPlan}
-                      disabled={working}
+                      disabled={applyingPlan || activeSessionRunning}
                       className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-black text-slate-700 transition hover:bg-slate-50 disabled:opacity-60 dark:border-white/10 dark:bg-chrome-900 dark:text-chrome-200"
                     >
                       <X className="h-4 w-4" />

@@ -154,6 +154,14 @@ export async function selectSavePdfPath(options?: {
   }
 }
 
+export async function approveWritePath(path: string): Promise<void> {
+  try {
+    await invoke('approve_write_path', { path });
+  } catch (error) {
+    throw new Error(toErrorMessage(error, `Failed to approve write path: ${path}`));
+  }
+}
+
 export async function localPathExists(path: string): Promise<boolean> {
   try {
     return await invoke<boolean>('path_exists', { path });

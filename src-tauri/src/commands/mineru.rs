@@ -117,7 +117,13 @@ fn validate_pdf_path(path: &Path) -> Result<(), String> {
 fn file_name_from_path(path: &Path) -> Result<String, String> {
     path.file_name()
         .and_then(|name| name.to_str())
-        .map(|name| name.to_string())
+        .map(|name| {
+            if name.to_ascii_lowercase().ends_with(".pdf") {
+                name.to_string()
+            } else {
+                format!("{}.pdf", name)
+            }
+        })
         .ok_or_else(|| "无法从路径中获取 PDF 文件名".to_string())
 }
 
@@ -598,4 +604,18 @@ pub async fn run_mineru_cloud_parse(
         markdown_path: extracted_paths.markdown_path,
         zip_entries: zip_texts.zip_entries,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn file_name_from_path_appends_pdf_extension_when_missing() {
+        let path = Path::new("C:/papers/Jiawei C");
+
+        let file_name = file_name_from_path(path).expect("resolve upload file name");
+
+        assert_eq!(file_name, "Jiawei C.pdf");
+    }
 }
