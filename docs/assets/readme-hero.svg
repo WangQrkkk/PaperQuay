@@ -1,0 +1,232 @@
+<svg
+  width="980"
+  height="380"
+  viewBox="0 0 980 380"
+  fill="none"
+  xmlns="http://www.w3.org/2000/svg"
+  role="img"
+  aria-label="PaperQuay feature overview"
+>
+  <defs>
+    <linearGradient
+      id="bg"
+      x1="0"
+      y1="0"
+      x2="980"
+      y2="380"
+      gradientUnits="userSpaceOnUse"
+    >
+      <stop offset="0" stop-color="#111827" />
+      <stop offset="0.48" stop-color="#1f2937" />
+      <stop offset="1" stop-color="#0f766e" />
+    </linearGradient>
+    <linearGradient id="card" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#ffffff" stop-opacity="0.14" />
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0.06" />
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow
+        dx="0"
+        dy="16"
+        stdDeviation="18"
+        flood-color="#020617"
+        flood-opacity="0.25"
+      />
+    </filter>
+  </defs>
+
+  <rect width="980" height="380" rx="28" fill="url(#bg)" />
+  <circle cx="846" cy="64" r="132" fill="#14b8a6" opacity="0.12" />
+  <circle cx="108" cy="314" r="152" fill="#60a5fa" opacity="0.1" />
+
+  <g filter="url(#shadow)">
+    <rect
+      x="54"
+      y="46"
+      width="872"
+      height="292"
+      rx="24"
+      fill="#0f172a"
+      opacity="0.42"
+    />
+    <rect
+      x="54.5"
+      y="46.5"
+      width="871"
+      height="291"
+      rx="23.5"
+      stroke="#ffffff"
+      stroke-opacity="0.16"
+    />
+  </g>
+
+  <text
+    x="490"
+    y="95"
+    text-anchor="middle"
+    fill="#f8fafc"
+    font-family="Inter, Segoe UI, Arial, sans-serif"
+    font-size="38"
+    font-weight="750"
+  >
+    PaperQuay
+  </text>
+  <text
+    x="490"
+    y="130"
+    text-anchor="middle"
+    fill="#cbd5e1"
+    font-family="Inter, Segoe UI, Arial, sans-serif"
+    font-size="17"
+  >
+    AI-assisted literature management, reading, translation, and agent workflows
+  </text>
+
+  <g font-family="Inter, Segoe UI, Arial, sans-serif">
+    <g transform="translate(86 166)">
+      <rect
+        width="258"
+        height="62"
+        rx="14"
+        fill="url(#card)"
+        stroke="#ffffff"
+        stroke-opacity="0.14"
+      />
+      <circle cx="34" cy="31" r="16" fill="#2dd4bf" opacity="0.22" />
+      <path
+        d="M26 31h16M34 23v16"
+        stroke="#99f6e4"
+        stroke-width="2.4"
+        stroke-linecap="round"
+      />
+      <text x="62" y="27" fill="#f8fafc" font-size="15" font-weight="700">
+        Instant Translation
+      </text>
+      <text x="62" y="47" fill="#cbd5e1" font-size="10.5">
+        Source blocks to cached translations
+      </text>
+    </g>
+
+    <g transform="translate(361 166)">
+      <rect
+        width="258"
+        height="62"
+        rx="14"
+        fill="url(#card)"
+        stroke="#ffffff"
+        stroke-opacity="0.14"
+      />
+      <circle cx="34" cy="31" r="16" fill="#60a5fa" opacity="0.2" />
+      <path
+        d="M26 25h16M26 32h16M26 39h10"
+        stroke="#bfdbfe"
+        stroke-width="2.2"
+        stroke-linecap="round"
+      />
+      <text x="62" y="27" fill="#f8fafc" font-size="15" font-weight="700">
+        Paper Overview
+      </text>
+      <text x="62" y="47" fill="#cbd5e1" font-size="10.5">
+        Screen methods, findings, limits
+      </text>
+    </g>
+
+    <g transform="translate(636 166)">
+      <rect
+        width="258"
+        height="62"
+        rx="14"
+        fill="url(#card)"
+        stroke="#ffffff"
+        stroke-opacity="0.14"
+      />
+      <circle cx="34" cy="31" r="16" fill="#f59e0b" opacity="0.18" />
+      <path
+        d="M25 36c7-12 11-12 18 0M34 22v8M28 27l12 12"
+        stroke="#fde68a"
+        stroke-width="2.2"
+        stroke-linecap="round"
+      />
+      <text x="62" y="27" fill="#f8fafc" font-size="15" font-weight="700">
+        Agent Tools
+      </text>
+      <text x="62" y="47" fill="#cbd5e1" font-size="10.5">
+        Rename, tag, classify, enrich
+      </text>
+    </g>
+
+    <g transform="translate(86 248)">
+      <rect
+        width="258"
+        height="62"
+        rx="14"
+        fill="url(#card)"
+        stroke="#ffffff"
+        stroke-opacity="0.14"
+      />
+      <circle cx="34" cy="31" r="16" fill="#a78bfa" opacity="0.2" />
+      <path
+        d="M25 25h18v12H25zM29 41h10"
+        stroke="#ddd6fe"
+        stroke-width="2.2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      />
+      <text x="62" y="27" fill="#f8fafc" font-size="15" font-weight="700">
+        Local Library
+      </text>
+      <text x="62" y="47" fill="#cbd5e1" font-size="10.5">
+        SQLite, categories, tags, notes
+      </text>
+    </g>
+
+    <g transform="translate(361 248)">
+      <rect
+        width="258"
+        height="62"
+        rx="14"
+        fill="url(#card)"
+        stroke="#ffffff"
+        stroke-opacity="0.14"
+      />
+      <circle cx="34" cy="31" r="16" fill="#fb7185" opacity="0.18" />
+      <path
+        d="M27 36l7-14 7 14M30 32h8"
+        stroke="#fecdd3"
+        stroke-width="2.2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      />
+      <text x="62" y="27" fill="#f8fafc" font-size="15" font-weight="700">
+        PDF Annotation
+      </text>
+      <text x="62" y="47" fill="#cbd5e1" font-size="10.5">
+        Highlight, write, note, export
+      </text>
+    </g>
+
+    <g transform="translate(636 248)">
+      <rect
+        width="258"
+        height="62"
+        rx="14"
+        fill="url(#card)"
+        stroke="#ffffff"
+        stroke-opacity="0.14"
+      />
+      <circle cx="34" cy="31" r="16" fill="#34d399" opacity="0.18" />
+      <path
+        d="M25 31h18M34 22c5 5 5 13 0 18M34 22c-5 5-5 13 0 18"
+        stroke="#bbf7d0"
+        stroke-width="2.2"
+        stroke-linecap="round"
+      />
+      <text x="62" y="27" fill="#f8fafc" font-size="15" font-weight="700">
+        Zotero Compatible
+      </text>
+      <text x="62" y="47" fill="#cbd5e1" font-size="10.5">
+        Import collections, tags, PDFs
+      </text>
+    </g>
+  </g>
+</svg>
