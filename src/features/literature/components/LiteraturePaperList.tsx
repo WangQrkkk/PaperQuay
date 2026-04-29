@@ -16,6 +16,7 @@ import {
   Star,
 } from 'lucide-react';
 import { useLocaleText } from '../../../i18n/uiLanguage';
+import { useWheelScrollDelegate } from '../../../hooks/useWheelScrollDelegate';
 import type { LiteraturePaper } from '../../../types/library';
 import { truncateMiddle } from '../../../utils/text';
 import {
@@ -81,6 +82,8 @@ export default function LiteraturePaperList({
   onPaperContextMenu,
 }: LiteraturePaperListProps) {
   const l = useLocaleText();
+  const rootRef = useRef<HTMLElement | null>(null);
+  const handleWheelCapture = useWheelScrollDelegate({ rootRef });
   const [dropIndicator, setDropIndicator] = useState<{
     paperId: string;
     placement: 'before' | 'after';
@@ -348,7 +351,11 @@ export default function LiteraturePaperList({
   };
 
   return (
-    <section className="flex min-h-0 flex-col border-r border-slate-200 bg-slate-50 dark:border-white/10 dark:bg-[#121212]">
+    <section
+      ref={rootRef}
+      onWheelCapture={handleWheelCapture}
+      className="flex h-full min-h-0 flex-col overflow-hidden border-r border-slate-200 bg-slate-50 dark:border-white/10 dark:bg-[#121212]"
+    >
       <header className="border-b border-slate-200 bg-white/82 px-5 py-4 dark:border-white/10 dark:bg-[#181818]">
         <div className="flex flex-wrap items-center gap-3">
           <div className="relative min-w-[260px] flex-1">
@@ -387,7 +394,10 @@ export default function LiteraturePaperList({
         </div>
       </header>
 
-      <div className="min-h-0 flex-1 overflow-y-auto p-4">
+      <div
+        data-wheel-scroll-target
+        className="h-0 min-h-0 flex-1 overflow-y-auto overscroll-y-contain p-4"
+      >
         {loading ? (
           <div className="rounded-3xl border border-slate-200 bg-white p-8 text-sm text-slate-500 dark:border-white/10 dark:bg-[#1e1e1e] dark:text-[#a0a0a0]">
             {l('正在加载文献库...', 'Loading library...')}

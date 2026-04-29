@@ -1,5 +1,7 @@
+import { useRef } from 'react';
 import { Database, FolderOpen, RefreshCw, X } from 'lucide-react';
 import { useLocaleText } from '../../../i18n/uiLanguage';
+import { useWheelScrollDelegate } from '../../../hooks/useWheelScrollDelegate';
 import type {
   LibraryImportMode,
   LibrarySettings,
@@ -78,6 +80,8 @@ export default function LibrarySettingsDialog({
   onSave,
 }: LibrarySettingsDialogProps) {
   const l = useLocaleText();
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const handleWheelCapture = useWheelScrollDelegate({ rootRef: panelRef });
 
   if (!open || !settings) {
     return null;
@@ -87,7 +91,11 @@ export default function LibrarySettingsDialog({
 
   return (
     <div className="fixed inset-0 z-[82] flex items-center justify-center bg-slate-950/42 px-4 py-6 backdrop-blur-sm dark:bg-black/56">
-      <div className="flex max-h-[min(720px,calc(100vh-32px))] w-[min(820px,calc(100vw-32px))] flex-col overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_36px_120px_rgba(15,23,42,0.28)] dark:border-white/10 dark:bg-[#181818] dark:text-[#e0e0e0]">
+      <div
+        ref={panelRef}
+        onWheelCapture={handleWheelCapture}
+        className="flex max-h-[min(720px,calc(100vh-32px))] w-[min(820px,calc(100vw-32px))] flex-col overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_36px_120px_rgba(15,23,42,0.28)] dark:border-white/10 dark:bg-[#181818] dark:text-[#e0e0e0]"
+      >
         <header className="flex items-start justify-between gap-4 border-b border-slate-200 px-6 py-5 dark:border-white/10">
           <div>
             <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400 dark:text-[#8d8d8d]">
@@ -115,7 +123,10 @@ export default function LibrarySettingsDialog({
           </button>
         </header>
 
-        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 py-5">
+        <div
+          data-wheel-scroll-target
+          className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-y-contain px-6 py-5"
+        >
           <section className="rounded-3xl border border-slate-200 bg-slate-50/80 p-4 dark:border-white/10 dark:bg-[#1e1e1e]">
             <SettingLabel
               title={l('默认文献存储文件夹', 'Default Paper Storage Folder')}

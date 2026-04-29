@@ -1,5 +1,5 @@
 import clsx from 'clsx';
-import { useState, type DragEvent, type MouseEvent } from 'react';
+import { useRef, useState, type DragEvent, type MouseEvent } from 'react';
 import {
   ChevronRight,
   FolderPlus,
@@ -12,6 +12,7 @@ import type {
   LibrarySettings,
   LiteratureCategory,
 } from '../../../types/library';
+import { useWheelScrollDelegate } from '../../../hooks/useWheelScrollDelegate';
 import { truncateMiddle } from '../../../utils/text';
 import {
   categoryIcon,
@@ -57,6 +58,8 @@ export default function LiteratureCategorySidebar({
 }: LiteratureCategorySidebarProps) {
   const l = useLocaleText();
   const locale = useAppLocale();
+  const rootRef = useRef<HTMLElement | null>(null);
+  const handleWheelCapture = useWheelScrollDelegate({ rootRef });
   const [contextMenu, setContextMenu] = useState<CategoryContextMenuState | null>(null);
   const [collapsedCategoryIds, setCollapsedCategoryIds] = useState<Set<string>>(() => new Set());
   const [dragOverCategoryId, setDragOverCategoryId] = useState<string | null>(null);
@@ -283,7 +286,11 @@ export default function LiteratureCategorySidebar({
   };
 
   return (
-    <aside className="flex min-h-0 flex-col border-r border-slate-200 bg-white/86 dark:border-white/10 dark:bg-[#181818]">
+    <aside
+      ref={rootRef}
+      onWheelCapture={handleWheelCapture}
+      className="flex h-full min-h-0 flex-col overflow-hidden border-r border-slate-200 bg-white/86 dark:border-white/10 dark:bg-[#181818]"
+    >
       <div className="border-b border-slate-200 px-4 py-4 dark:border-white/10">
         <div className="flex items-center justify-between">
           <div>
@@ -305,7 +312,10 @@ export default function LiteratureCategorySidebar({
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
+      <div
+        data-wheel-scroll-target
+        className="h-0 min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-3 py-3"
+      >
         <div className="mb-3 rounded-3xl border border-slate-200 bg-slate-50/80 p-1.5 shadow-sm dark:border-white/10 dark:bg-[#1e1e1e]">
           {systemCategories.map(renderCategoryRow)}
         </div>

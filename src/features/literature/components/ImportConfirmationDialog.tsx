@@ -1,5 +1,7 @@
+import { useRef } from 'react';
 import { RefreshCw, X } from 'lucide-react';
 import { useAppLocale, useLocaleText } from '../../../i18n/uiLanguage';
+import { useWheelScrollDelegate } from '../../../hooks/useWheelScrollDelegate';
 import type { LiteratureCategory } from '../../../types/library';
 import { getFileNameFromPath, truncateMiddle } from '../../../utils/text';
 import { categoryDisplayName } from '../literatureUi';
@@ -72,6 +74,8 @@ export default function ImportConfirmationDialog({
 }: ImportConfirmationDialogProps) {
   const l = useLocaleText();
   const locale = useAppLocale();
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const handleWheelCapture = useWheelScrollDelegate({ rootRef: panelRef });
   const editableCategories = userCategories(categories);
 
   if (!open) {
@@ -80,7 +84,11 @@ export default function ImportConfirmationDialog({
 
   return (
     <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/42 px-4 py-6 backdrop-blur-sm dark:bg-black/56">
-      <div className="flex max-h-[min(760px,calc(100vh-32px))] w-[min(1120px,calc(100vw-32px))] flex-col overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_36px_120px_rgba(15,23,42,0.28)] dark:border-white/10 dark:bg-[#181818] dark:text-[#e0e0e0]">
+      <div
+        ref={panelRef}
+        onWheelCapture={handleWheelCapture}
+        className="flex max-h-[min(760px,calc(100vh-32px))] w-[min(1120px,calc(100vw-32px))] flex-col overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_36px_120px_rgba(15,23,42,0.28)] dark:border-white/10 dark:bg-[#181818] dark:text-[#e0e0e0]"
+      >
         <header className="flex items-start justify-between gap-4 border-b border-slate-200 px-6 py-5 dark:border-white/10">
           <div>
             <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400 dark:text-[#8d8d8d]">
@@ -108,7 +116,10 @@ export default function ImportConfirmationDialog({
           </button>
         </header>
 
-        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+        <div
+          data-wheel-scroll-target
+          className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-6 py-5"
+        >
           <div className="space-y-4">
             {drafts.map((draft, index) => (
               <section

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   AlertCircle,
   BookOpenText,
@@ -15,6 +15,7 @@ import {
   X,
 } from 'lucide-react';
 import { useLocaleText } from '../../../i18n/uiLanguage';
+import { useWheelScrollDelegate } from '../../../hooks/useWheelScrollDelegate';
 import type {
   LiteraturePaper,
   LiteraturePaperTaskKind,
@@ -462,6 +463,8 @@ export default function LiteraturePaperDetails({
   onGenerateSummary,
 }: LiteraturePaperDetailsProps) {
   const l = useLocaleText();
+  const rootRef = useRef<HTMLElement | null>(null);
+  const handleWheelCapture = useWheelScrollDelegate({ rootRef });
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<PaperEditDraft>(() => draftFromPaper(selectedPaper));
   const [activeOverviewKey, setActiveOverviewKey] = useState<OverviewSectionKey>('overview');
@@ -529,7 +532,11 @@ export default function LiteraturePaperDetails({
   }, [activeOverviewKey, overviewSections]);
 
   return (
-    <aside className="flex min-h-0 flex-col bg-white dark:bg-[#181818]">
+    <aside
+      ref={rootRef}
+      onWheelCapture={handleWheelCapture}
+      className="flex h-full min-h-0 flex-col overflow-hidden bg-white dark:bg-[#181818]"
+    >
       <header className="border-b border-slate-200 px-5 py-4 dark:border-white/10">
         <div className="flex items-center justify-between gap-3">
           <div>
@@ -551,7 +558,10 @@ export default function LiteraturePaperDetails({
         </div>
       </header>
 
-      <div className="min-h-0 flex-1 overflow-y-auto p-5">
+      <div
+        data-wheel-scroll-target
+        className="h-0 min-h-0 flex-1 overflow-y-auto overscroll-y-contain p-5"
+      >
         {selectedPaper ? (
           <div className="space-y-5">
             <div className="flex items-start justify-between gap-3">

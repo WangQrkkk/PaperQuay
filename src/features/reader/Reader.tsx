@@ -26,6 +26,7 @@ import {
   X,
 } from 'lucide-react';
 import TabBar from '../../components/tabs/TabBar';
+import { useWheelScrollDelegate } from '../../hooks/useWheelScrollDelegate';
 import OnboardingGuide from './OnboardingGuide';
 import LiteratureLibraryView from '../literature/LiteratureLibraryView';
 import DocumentReaderTab, {
@@ -1192,6 +1193,10 @@ function PreferencesWindow({
   const qaSourceOptions = buildQaSourceOptions(uiLanguage);
   const resolvedSummaryLanguage = resolveSummaryOutputLanguage(settings);
   const [activeSection, setActiveSection] = useState<PreferencesSectionKey>('general');
+  const sidebarRef = useRef<HTMLElement | null>(null);
+  const contentRef = useRef<HTMLElement | null>(null);
+  const handleSidebarWheelCapture = useWheelScrollDelegate({ rootRef: sidebarRef });
+  const handleContentWheelCapture = useWheelScrollDelegate({ rootRef: contentRef });
   const [llmTestLoading, setLlmTestLoading] = useState(false);
   const [llmTestResult, setLlmTestResult] = useState<OpenAICompatibleTestResult | null>(null);
   const [presetTestLoadingMap, setPresetTestLoadingMap] = useState<Record<string, boolean>>({});
@@ -1428,7 +1433,11 @@ function PreferencesWindow({
       />
 
       <div className="paperquay-settings relative flex h-[min(760px,calc(100vh-32px))] w-[min(1080px,calc(100vw-32px))] overflow-hidden rounded-[30px] border border-slate-200/80 bg-[linear-gradient(180deg,#f8fafc,#f1f5f9)] shadow-[0_36px_120px_rgba(15,23,42,0.20)] dark:border-white/10 dark:bg-chrome-950 dark:shadow-[0_36px_120px_rgba(0,0,0,0.48)]">
-        <aside className="flex min-h-0 w-64 shrink-0 flex-col border-r border-slate-200/80 bg-white/76 px-4 py-4 backdrop-blur-xl dark:border-white/10 dark:bg-chrome-900">
+        <aside
+          ref={sidebarRef}
+          onWheelCapture={handleSidebarWheelCapture}
+          className="flex min-h-0 w-64 shrink-0 flex-col border-r border-slate-200/80 bg-white/76 px-4 py-4 backdrop-blur-xl dark:border-white/10 dark:bg-chrome-900"
+        >
           <div className="shrink-0 px-3 pb-4">
             <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400 dark:text-chrome-400">
               {l('设置', 'Settings')}
@@ -1444,7 +1453,10 @@ function PreferencesWindow({
             </div>
           </div>
 
-          <div className="min-h-0 flex-1 space-y-1 overflow-y-auto pr-1">
+          <div
+            data-wheel-scroll-target
+            className="min-h-0 flex-1 space-y-1 overflow-y-auto overscroll-y-contain pr-1"
+          >
             {sections.map((section) => (
               <button
                 key={section.key}
@@ -1485,7 +1497,11 @@ function PreferencesWindow({
           </div>
         </aside>
 
-        <section className="flex min-w-0 flex-1 flex-col">
+        <section
+          ref={contentRef}
+          onWheelCapture={handleContentWheelCapture}
+          className="flex min-w-0 flex-1 flex-col"
+        >
           <header className="flex items-center justify-between border-b border-slate-200/80 bg-white/70 px-6 py-4 backdrop-blur-xl dark:border-white/10 dark:bg-chrome-950">
             <div>
               <div className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400 dark:text-chrome-400">
@@ -1506,7 +1522,10 @@ function PreferencesWindow({
             </button>
           </header>
 
-          <div className="min-h-0 flex-1 overflow-y-auto px-6 py-6 pb-10">
+          <div
+            data-wheel-scroll-target
+            className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-6 py-6 pb-10"
+          >
             <div className="mx-auto max-w-3xl space-y-4">
               {activeSection === 'general' ? (
                 <>
@@ -2602,9 +2621,6 @@ function Reader() {
   const [itemParseStatusMap, setItemParseStatusMap] = useState<Record<string, boolean | undefined>>(
     {},
   );
-  const [pendingCloudParseTabId, setPendingCloudParseTabId] = useState<string | null>(null);
-  const [pendingTranslateTabId, setPendingTranslateTabId] = useState<string | null>(null);
-  const [pendingSummaryTabId, setPendingSummaryTabId] = useState<string | null>(null);
   const [batchMineruRunning, setBatchMineruRunning] = useState(false);
   const [batchSummaryRunning, setBatchSummaryRunning] = useState(false);
   const [batchMineruPaused, setBatchMineruPaused] = useState(false);
@@ -5453,7 +5469,12 @@ function Reader() {
   };
 
   const registerNativeLibraryWorkspace = useCallback(
-    (paper: LiteraturePaper) => {
+    (
+      paper: LiteraturePaper,
+      options?: {
+        select?: boolean;
+      },
+    ) => {
       const workspaceItem = createNativeLibraryWorkspaceItem(paper);
 
       if (!workspaceItem) {
@@ -5467,7 +5488,11 @@ function Reader() {
         const existingItems = current.filter((item) => item.workspaceId !== workspaceItem.workspaceId);
         return [workspaceItem, ...existingItems];
       });
-      setSelectedLibraryItemId(workspaceItem.workspaceId);
+
+      if (options?.select ?? true) {
+        setSelectedLibraryItemId(workspaceItem.workspaceId);
+      }
+
       return workspaceItem;
     },
     [l],
@@ -5496,97 +5521,65 @@ function Reader() {
   );
 
   const triggerNativeLibraryReaderAction = useCallback(
-    (paper: LiteraturePaper, kind: LiteraturePaperTaskKind) => {
+    (paper: LiteraturePaper): WorkspaceItem | null => {
       const existingOperation = nativePaperActionStates[paper.id] ?? null;
 
-      if (isPaperPipelineBusy(existingOperation) || isPaperTaskRunning(existingOperation, kind)) {
-        return;
+      if (isPaperPipelineBusy(existingOperation)) {
+        setStatusMessage(
+          l(
+            '当前文献已有任务正在执行，请等待本轮处理完成。',
+            'A task is already running for this paper. Wait for it to finish first.',
+          ),
+        );
+        return null;
       }
 
-      const openedWorkspace = openNativeLibraryWorkspace(paper);
-
-      if (!openedWorkspace) {
-        return;
-      }
-
-      const { workspaceItem, tabId } = openedWorkspace;
-      const openingMessage =
-        kind === 'mineru'
-          ? l('正在准备 MinerU 解析...', 'Preparing MinerU parsing...')
-          : kind === 'translation'
-            ? l('正在准备全文翻译...', 'Preparing full translation...')
-            : l('正在准备论文概览...', 'Preparing the paper overview...');
-
-      updateLibraryPreviewOperation(
-        workspaceItem,
-        createPaperTaskState(
-          kind,
-          'running',
-          openingMessage,
-          kind === 'translation' ? 0 : 5,
-          kind === 'translation' ? null : 100,
-        ),
-        {
-          loading: true,
-          error: '',
-          currentPdfName: workspaceItem.localPdfPath
-            ? getFileNameFromPath(workspaceItem.localPdfPath)
-            : noPdfLoadedText,
-          statusMessage: openingMessage,
-        },
-      );
-
-      const bridge = readerBridges[tabId];
-
-      if (bridge) {
-        if (kind === 'mineru') {
-          bridge.onCloudParse();
-        } else if (kind === 'translation') {
-          bridge.onTranslate();
-        } else {
-          bridge.onGenerateSummary();
-        }
-      } else if (kind === 'mineru') {
-        setPendingCloudParseTabId(tabId);
-      } else if (kind === 'translation') {
-        setPendingTranslateTabId(tabId);
-      } else {
-        setPendingSummaryTabId(tabId);
-      }
-
-      setActiveTab(HOME_TAB_ID);
+      return registerNativeLibraryWorkspace(paper, { select: false }) ?? null;
     },
     [
-      createPaperTaskState,
       l,
       nativePaperActionStates,
-      noPdfLoadedText,
-      openNativeLibraryWorkspace,
-      readerBridges,
-      setActiveTab,
-      updateLibraryPreviewOperation,
+      registerNativeLibraryWorkspace,
     ],
   );
 
   const handleNativeLibraryMineruParse = useCallback(
     (paper: LiteraturePaper) => {
-      triggerNativeLibraryReaderAction(paper, 'mineru');
+      const workspaceItem = triggerNativeLibraryReaderAction(paper);
+
+      if (!workspaceItem) {
+        return;
+      }
+
+      void runLibraryItemMineruParse(workspaceItem);
     },
-    [triggerNativeLibraryReaderAction],
+    [runLibraryItemMineruParse, triggerNativeLibraryReaderAction],
   );
 
   const handleNativeLibraryTranslate = useCallback(
     (paper: LiteraturePaper) => {
-      triggerNativeLibraryReaderAction(paper, 'translation');
+      const workspaceItem = triggerNativeLibraryReaderAction(paper);
+
+      if (!workspaceItem) {
+        return;
+      }
+
+      void runLibraryItemTranslation(workspaceItem);
     },
-    [triggerNativeLibraryReaderAction],
+    [runLibraryItemTranslation, triggerNativeLibraryReaderAction],
   );
 
   const handleNativeLibraryGenerateSummary = useCallback(
     (paper: LiteraturePaper) => {
-      triggerNativeLibraryReaderAction(paper, 'overview');
+      const workspaceItem = triggerNativeLibraryReaderAction(paper);
+
+      if (!workspaceItem) {
+        return;
+      }
+
+      void generateLibraryPreview(workspaceItem, true);
     },
-    [triggerNativeLibraryReaderAction],
+    [generateLibraryPreview, triggerNativeLibraryReaderAction],
   );
 
   const handleWindowMinimize = () => {
@@ -6158,51 +6151,6 @@ function Reader() {
   ]);
 
   useEffect(() => {
-    if (!pendingCloudParseTabId) {
-      return;
-    }
-
-    const bridge = readerBridges[pendingCloudParseTabId];
-
-    if (!bridge) {
-      return;
-    }
-
-    bridge.onCloudParse();
-    setPendingCloudParseTabId(null);
-  }, [pendingCloudParseTabId, readerBridges]);
-
-  useEffect(() => {
-    if (!pendingTranslateTabId) {
-      return;
-    }
-
-    const bridge = readerBridges[pendingTranslateTabId];
-
-    if (!bridge) {
-      return;
-    }
-
-    bridge.onTranslate();
-    setPendingTranslateTabId(null);
-  }, [pendingTranslateTabId, readerBridges]);
-
-  useEffect(() => {
-    if (!pendingSummaryTabId) {
-      return;
-    }
-
-    const bridge = readerBridges[pendingSummaryTabId];
-
-    if (!bridge) {
-      return;
-    }
-
-    bridge.onGenerateSummary();
-    setPendingSummaryTabId(null);
-  }, [pendingSummaryTabId, readerBridges]);
-
-  useEffect(() => {
     autoMineruAttemptedRef.current.clear();
   }, [
     mineruApiToken,
@@ -6423,7 +6371,7 @@ function Reader() {
         </div>
 
         <main className="relative min-h-0 flex-1 overflow-hidden">
-          <div className="h-full min-h-0" hidden={activeTabId !== HOME_TAB_ID}>
+          <div className="h-full min-h-0 overflow-hidden" hidden={activeTabId !== HOME_TAB_ID}>
             <LiteratureLibraryView
               onOpenPaper={onboardingOpen ? handleOpenOnboardingDemoPaper : handleOpenNativeLibraryPaper}
               onOpenSettings={handleOpenPreferences}
@@ -6445,7 +6393,7 @@ function Reader() {
             }
 
             return (
-              <div key={tab.id} className="h-full min-h-0" hidden={tab.id !== activeTabId}>
+              <div key={tab.id} className="h-full min-h-0 overflow-hidden" hidden={tab.id !== activeTabId}>
                 <DocumentReaderTab
                   tabId={tab.id}
                   document={item}

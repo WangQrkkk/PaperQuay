@@ -26,6 +26,7 @@ import {
 import { AnnotationEditorType, AnnotationMode, GlobalWorkerOptions, getDocument } from 'pdfjs-dist';
 import 'pdfjs-dist/web/pdf_viewer.css';
 import EmptyState from '../../components/EmptyState';
+import { useWheelScrollDelegate } from '../../hooks/useWheelScrollDelegate';
 import { approveWritePath, selectSavePdfPath, writeLocalBinaryFile } from '../../services/desktop';
 import type {
   PaperAnnotation,
@@ -417,6 +418,7 @@ function PdfViewer({
 }: PdfViewerProps) {
   const l = useLocaleText();
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const thumbnailSidebarRef = useRef<HTMLElement | null>(null);
   const viewerRef = useRef<HTMLDivElement | null>(null);
   const loadingTaskRef = useRef<any>(null);
   const pdfViewerRef = useRef<any>(null);
@@ -454,6 +456,7 @@ function PdfViewer({
     loadStoredBoolean(PDF_THUMBNAILS_COLLAPSED_STORAGE_KEY, false),
   );
   const [pageThumbnails, setPageThumbnails] = useState<Record<number, string>>({});
+  const handleThumbnailWheelCapture = useWheelScrollDelegate({ rootRef: thumbnailSidebarRef });
   const translationProgressRatio =
     translationProgressTotal > 0
       ? Math.min(100, Math.max(0, (translationProgressCompleted / translationProgressTotal) * 100))
@@ -1795,7 +1798,11 @@ function PdfViewer({
       </div>
 
       <div className="flex min-h-0 flex-1">
-        <aside className="flex min-h-0 shrink-0 border-r border-slate-200/80 bg-white/72 backdrop-blur-xl dark:border-white/10 dark:bg-chrome-800">
+        <aside
+          ref={thumbnailSidebarRef}
+          onWheelCapture={handleThumbnailWheelCapture}
+          className="flex min-h-0 shrink-0 border-r border-slate-200/80 bg-white/72 backdrop-blur-xl dark:border-white/10 dark:bg-chrome-800"
+        >
           <div className="flex min-h-0">
             <div className="flex w-12 shrink-0 flex-col items-center gap-3 border-r border-slate-200/70 px-2 py-4 dark:border-white/10">
               <button
@@ -1831,7 +1838,10 @@ function PdfViewer({
                 <div className="border-b border-slate-200/70 px-3 py-3 text-xs font-medium text-slate-500 dark:border-chrome-700/70 dark:text-chrome-400">
                   {l('页面缩略图', 'Page Thumbnails')}
                 </div>
-                <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
+                <div
+                  data-wheel-scroll-target
+                  className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-3 py-3"
+                >
                   <div className="space-y-3">
                     {Array.from({ length: Math.max(pageCount, 0) }, (_, pageIndex) => {
                       const isActivePage = currentPage === pageIndex + 1;

@@ -1963,12 +1963,13 @@ export default function LiteratureLibraryView({
 
   return (
     <div
-      className="relative grid h-full min-h-0 bg-slate-100 text-slate-900 dark:bg-[#121212] dark:text-[#e0e0e0]"
+      className="relative grid h-full min-h-0 overflow-hidden bg-slate-100 text-slate-900 dark:bg-[#121212] dark:text-[#e0e0e0]"
       style={{
         gridTemplateColumns: `280px minmax(360px,1fr) ${detailsPanelWidth}px`,
+        gridTemplateRows: 'minmax(0, 1fr)',
       }}
     >
-      <div data-tour="library-sidebar" className="min-h-0">
+      <div data-tour="library-sidebar" className="h-full min-h-0 overflow-hidden">
         <LiteratureCategorySidebar
           settings={settings}
           categories={flatCategories}
@@ -1984,7 +1985,7 @@ export default function LiteratureLibraryView({
         />
       </div>
 
-      <div data-tour="paper-list" className="min-h-0">
+      <div data-tour="paper-list" className="h-full min-h-0 overflow-hidden">
         <LiteraturePaperList
           loading={loading}
           working={working}
@@ -2009,7 +2010,7 @@ export default function LiteratureLibraryView({
       />
       </div>
 
-      <div data-tour="ai-summary" className="min-h-0">
+      <div data-tour="ai-summary" className="h-full min-h-0 overflow-hidden">
         <LiteraturePaperDetails
           selectedPaper={selectedPaper}
           saving={paperSaving}

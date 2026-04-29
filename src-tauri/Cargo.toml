@@ -1,6 +1,6 @@
 [package]
 name = "paperquay"
-version = "0.1.1"
+version = "0.1.2"
 description = "Desktop-first AI workspace for reading research papers"
 authors = ["OpenAI Codex"]
 edition = "2021"

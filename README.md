@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-v0.1.1-2563eb?style=flat-square" alt="Version v0.1.1">
+  <img src="https://img.shields.io/badge/version-v0.1.2-2563eb?style=flat-square" alt="Version v0.1.2">
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-4b5563?style=flat-square" alt="Windows macOS Linux">
   <img src="https://img.shields.io/badge/built%20with-Tauri%202-f97316?style=flat-square" alt="Tauri 2">
   <img src="https://img.shields.io/badge/frontend-React%20%2B%20TypeScript-0f766e?style=flat-square" alt="React TypeScript">
@@ -79,9 +79,9 @@ Many paper tools force the user to choose between fragmented workflows: one app 
 
 PaperQuay uses a translation workflow designed for long paper reading sessions. It can translate and cache MinerU-parsed structural blocks in advance. Later, when reading, clicking a source block can instantly jump to its translated counterpart. Translation no longer needs to happen only after each click or selection.
 
-### MinerU-Linked Reading
+### Fast Paper Screening from the Overview Panel
 
-With MinerU, PaperQuay can parse PDFs into structured blocks such as paragraphs, headings, lists, formulas, tables, and page regions. The app links PDF regions and structured text through `blockId + pageIndex + bbox`, enabling navigation between the original PDF, parsed blocks, translations, and overview results.
+PaperQuay is designed not only for deep reading, but also for screening large numbers of papers quickly. In the overview panel, each paper can directly surface AI-generated fields such as background, research question, method, experiment setup, key findings, conclusions, and limitations. This allows you to judge whether a paper deserves deeper reading directly inside the library workflow before opening the full PDF in detail.
 
 ### Literature Library, Not Just Import
 
@@ -141,7 +141,7 @@ The agent workspace is designed for library operations, not just conversation. I
 | Paper details   | Title, authors, year, venue, DOI, URL, abstract, keywords, tags, notes, citation, and favorite state                                 |
 | Reader          | PDF reader with MinerU structured block views and region-based linkage                                                               |
 | Translation     | Full-text translation, cached block translations, and selection translation through OpenAI-compatible models                         |
-| Paper overview  | AI-generated overview fields for background, questions, methods, experiments, findings, conclusions, and limitations                 |
+| Paper overview  | AI-generated screening fields for background, research questions, methods, experiment setup, findings, conclusions, and limitations  |
 | Agent workspace | Conversation UI with execution traces, tool call cards, paper selection, metadata tools, rename tools, tagging, and classification   |
 | Zotero import   | Import local Zotero collections, tags, and available PDF attachments from `zotero.sqlite`                                            |
 | Themes          | Light and dark UI modes optimized for long desktop reading sessions                                                                  |
@@ -259,6 +259,12 @@ Do not commit local data, API keys, PDFs, parser outputs, or backups. The `.giti
 - RAG-based knowledge-base QA.
 - One-click survey generation and Word / LaTeX research draft generation.
 - Optional cloud sync after the local-first model is stable.
+
+---
+
+## Acknowledgements
+
+PaperQuay is also shaped by discussions, feedback, and shared ideas from the [LinuxDo community](https://linux.do/).
 
 ---
 

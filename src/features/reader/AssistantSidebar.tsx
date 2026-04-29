@@ -27,6 +27,7 @@ import rehypeKatex from 'rehype-katex';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import 'katex/dist/katex.min.css';
+import { useWheelScrollDelegate } from '../../hooks/useWheelScrollDelegate';
 import { useLocaleText } from '../../i18n/uiLanguage';
 import type {
   AssistantPanelKey,
@@ -627,10 +628,14 @@ function ChatWorkspacePanel({
   const l = useLocaleText();
   const locale = l('zh-CN', 'en-US') as 'zh-CN' | 'en-US';
   const panelRef = useRef<HTMLDivElement | null>(null);
+  const historyRootRef = useRef<HTMLElement | null>(null);
+  const chatRootRef = useRef<HTMLDivElement | null>(null);
   const messageEndRef = useRef<HTMLDivElement | null>(null);
   const composerRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const compactActionsMenuRef = useRef<HTMLDivElement | null>(null);
+  const handleHistoryWheelCapture = useWheelScrollDelegate({ rootRef: historyRootRef });
+  const handleChatWheelCapture = useWheelScrollDelegate({ rootRef: chatRootRef });
   const [historyCollapsed, setHistoryCollapsed] = useState(false);
   const [historyPanelWidth, setHistoryPanelWidth] = useState(() =>
     loadStoredPanelWidth(CHAT_HISTORY_PANEL_WIDTH_STORAGE_KEY, 228),
@@ -827,6 +832,8 @@ function ChatWorkspacePanel({
     >
       {!historyCollapsed ? (
         <aside
+          ref={historyRootRef}
+          onWheelCapture={handleHistoryWheelCapture}
           className="flex min-h-0 shrink-0 flex-col border-r border-slate-200/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.94),rgba(244,247,251,0.92))]"
           style={{ width: historyPanelWidth }}
         >
@@ -850,7 +857,10 @@ function ChatWorkspacePanel({
             </div>
           </div>
 
-          <div className="min-h-0 flex-1 overflow-y-auto p-2">
+          <div
+            data-wheel-scroll-target
+            className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain p-2"
+          >
             {orderedSessions.length > 0 ? (
               <div className="space-y-2">
                 {orderedSessions.map((session) => {
@@ -916,7 +926,11 @@ function ChatWorkspacePanel({
         </div>
       ) : null}
 
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+      <div
+        ref={chatRootRef}
+        onWheelCapture={handleChatWheelCapture}
+        className="flex min-h-0 min-w-0 flex-1 flex-col"
+      >
         <div className="border-b border-slate-200/70 bg-white/84 px-4 py-3 backdrop-blur-xl">
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
@@ -950,7 +964,10 @@ function ChatWorkspacePanel({
           </div>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto bg-[radial-gradient(circle_at_top,#ffffff,#f8fafc_35%,#f3f6fb_100%)] px-4 py-5 dark:bg-chrome-950">
+        <div
+          data-wheel-scroll-target
+          className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain bg-[radial-gradient(circle_at_top,#ffffff,#f8fafc_35%,#f3f6fb_100%)] px-4 py-5 dark:bg-chrome-950"
+        >
           {messages.length === 0 ? (
             <div className="flex min-h-full items-center justify-center">
               <div className="w-full space-y-4 rounded-[28px] border border-white/80 bg-white/86 p-5 shadow-[0_20px_48px_rgba(15,23,42,0.06)] backdrop-blur-xl dark:border-white/10 dark:bg-chrome-800 dark:shadow-none">

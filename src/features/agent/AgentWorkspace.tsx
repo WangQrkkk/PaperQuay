@@ -37,6 +37,7 @@ import rehypeKatex from 'rehype-katex';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import 'katex/dist/katex.min.css';
+import { useWheelScrollDelegate } from '../../hooks/useWheelScrollDelegate';
 import {
   applyLibraryAgentPlan,
   loadLibraryAgentModelPreset,
@@ -212,6 +213,14 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
   const [statusMessage, setStatusMessage] = useState('');
   const [error, setError] = useState('');
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
+  const historySidebarRef = useRef<HTMLElement | null>(null);
+  const paperSidebarRef = useRef<HTMLElement | null>(null);
+  const conversationPanelRef = useRef<HTMLElement | null>(null);
+  const inspectorSidebarRef = useRef<HTMLElement | null>(null);
+  const handleHistoryWheelCapture = useWheelScrollDelegate({ rootRef: historySidebarRef });
+  const handlePaperWheelCapture = useWheelScrollDelegate({ rootRef: paperSidebarRef });
+  const handleConversationWheelCapture = useWheelScrollDelegate({ rootRef: conversationPanelRef });
+  const handleInspectorWheelCapture = useWheelScrollDelegate({ rootRef: inspectorSidebarRef });
 
   const createLocalizedWelcomeMessage = (): AgentChatMessage => ({
     id: newMessageId(),
@@ -1135,9 +1144,14 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
             gridTemplateColumns: historySidebarCollapsed
               ? '76px 350px minmax(0,1fr) 420px'
               : '280px 350px minmax(0,1fr) 420px',
+            gridTemplateRows: 'minmax(0, 1fr)',
           }}
         >
-          <aside className="min-h-0 border-r border-slate-200/80 bg-white/64 backdrop-blur-xl dark:border-white/10 dark:bg-[#101720]/86">
+          <aside
+            ref={historySidebarRef}
+            onWheelCapture={handleHistoryWheelCapture}
+            className="min-h-0 border-r border-slate-200/80 bg-white/64 backdrop-blur-xl dark:border-white/10 dark:bg-[#101720]/86"
+          >
             {historySidebarCollapsed ? (
               <div className="flex h-full min-h-0 flex-col items-center gap-3 px-2 py-4">
                 <button
@@ -1156,7 +1170,10 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
                 >
                   <Plus className="h-4 w-4" strokeWidth={2} />
                 </button>
-                <div className="mt-1 flex min-h-0 flex-1 flex-col items-center gap-2 overflow-y-auto">
+                <div
+                  data-wheel-scroll-target
+                  className="mt-1 flex min-h-0 flex-1 flex-col items-center gap-2 overflow-y-auto overscroll-y-contain"
+                >
                   {sortedHistorySessions.slice(0, 12).map((session) => (
                     <button
                       key={session.id}
@@ -1216,7 +1233,10 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
                   </div>
                 </div>
 
-                <div className="min-h-0 flex-1 overflow-y-auto p-3">
+                <div
+                  data-wheel-scroll-target
+                  className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain p-3"
+                >
                   <div className="space-y-2">
                     {sortedHistorySessions.map((session) => (
                       <div
@@ -1281,7 +1301,11 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
             )}
           </aside>
 
-          <aside className="min-h-0 border-r border-slate-200/80 bg-white/70 backdrop-blur-xl dark:border-white/10 dark:bg-[#121922]/74">
+          <aside
+            ref={paperSidebarRef}
+            onWheelCapture={handlePaperWheelCapture}
+            className="min-h-0 border-r border-slate-200/80 bg-white/70 backdrop-blur-xl dark:border-white/10 dark:bg-[#121922]/74"
+          >
             <div className="flex h-full min-h-0 flex-col">
               <div className="border-b border-slate-200/70 p-4 dark:border-white/10">
                 <div className="flex items-start justify-between gap-3">
@@ -1346,7 +1370,10 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
                 ) : null}
               </div>
 
-              <div className="min-h-0 flex-1 overflow-y-auto p-3">
+              <div
+                data-wheel-scroll-target
+                className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain p-3"
+              >
                 {loading ? (
                   <div className="flex h-full items-center justify-center text-sm text-slate-500">
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" strokeWidth={2} />
@@ -1414,7 +1441,11 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
             </div>
           </aside>
 
-          <section className="flex min-h-0 flex-col">
+          <section
+            ref={conversationPanelRef}
+            onWheelCapture={handleConversationWheelCapture}
+            className="flex min-h-0 flex-col"
+          >
             <div className="border-b border-slate-200/70 bg-white/50 px-5 py-4 backdrop-blur-xl dark:border-white/10 dark:bg-[#0f141b]/60">
               <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
                 <div>
@@ -1470,7 +1501,11 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
               </div>
             </div>
 
-            <div ref={chatScrollRef} className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
+            <div
+              ref={chatScrollRef}
+              data-wheel-scroll-target
+              className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-5 py-5"
+            >
               <div className="mx-auto max-w-5xl space-y-5">
                 {messages.map((message) => {
                   const isUser = message.role === 'user';
@@ -1728,7 +1763,11 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
             </div>
           </section>
 
-          <aside className="min-h-0 border-l border-slate-200/80 bg-white/72 backdrop-blur-xl dark:border-white/10 dark:bg-[#121922]/74">
+          <aside
+            ref={inspectorSidebarRef}
+            onWheelCapture={handleInspectorWheelCapture}
+            className="min-h-0 border-l border-slate-200/80 bg-white/72 backdrop-blur-xl dark:border-white/10 dark:bg-[#121922]/74"
+          >
             <div className="flex h-full min-h-0 flex-col">
               <div className="border-b border-slate-200/70 p-4 dark:border-white/10">
                 <div className="flex items-center justify-between gap-3">
@@ -1755,7 +1794,10 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
                 </div>
               </div>
 
-              <div className="min-h-0 flex-1 overflow-y-auto p-4">
+              <div
+                data-wheel-scroll-target
+                className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain p-4"
+              >
                 <div className="space-y-4">
                   <section className="rounded-[26px] border border-slate-200 bg-slate-50/80 p-4 dark:border-white/10 dark:bg-chrome-950/58">
                     <div className="flex items-center gap-2 text-sm font-black text-slate-950 dark:text-white">
