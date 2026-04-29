@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=PaperQuay
+Comment=AI-assisted literature management and PDF reading
+Exec=paperquay
+Icon=paperquay
+Terminal=false
+Categories=Office;Education;Science;
+StartupNotify=true

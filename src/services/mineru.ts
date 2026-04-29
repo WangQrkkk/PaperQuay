@@ -708,6 +708,13 @@ export function extractTextFromMineruBlock(block: PositionedMineruBlock): string
   return joinReadableText(collectTextParts(block.content));
 }
 
+export function extractTranslatableMarkdownFromMineruBlock(
+  block: PositionedMineruBlock,
+): string {
+  const plainText = extractTextFromMineruBlock(block);
+  return toMarkdownFragment(block, plainText);
+}
+
 export function buildRenderableBlocks(
   blocks: PositionedMineruBlock[],
   mineruPath?: string,

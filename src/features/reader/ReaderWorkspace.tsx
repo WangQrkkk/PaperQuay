@@ -113,6 +113,7 @@ interface ReaderWorkspaceProps {
   blocks: PositionedMineruBlock[];
   translations: TranslationMap;
   translationDisplayMode: TranslationDisplayMode;
+  translationLanguageLabel: string;
   activeBlockId: string | null;
   hoveredBlockId: string | null;
   activePdfHighlight: PdfHighlightTarget | null;
@@ -129,6 +130,7 @@ interface ReaderWorkspaceProps {
   onPdfBlockHover: (block: PositionedMineruBlock | null) => void;
   onPdfBlockSelect: (block: PositionedMineruBlock) => void;
   onBlockClick: (block: PositionedMineruBlock) => void;
+  onTranslationDisplayModeChange: (mode: TranslationDisplayMode) => void;
   onTextSelect: (selection: TextSelectionPayload, source: TextSelectionSource) => void;
   onOpenStandalonePdf: () => void;
   onOpenMineruJson: () => void;
@@ -1088,6 +1090,7 @@ function ReadingStage(
                   mineruPath={mineruPath}
                   translations={translations}
                   translationDisplayMode={translationDisplayMode}
+                  translationLanguageLabel={props.translationLanguageLabel}
                   activeBlockId={activeBlockId}
                   hoveredBlockId={hoveredBlockId}
                   scrollSignal={blockScrollSignal}
@@ -1096,6 +1099,7 @@ function ReadingStage(
                   hidePageDecorations={hidePageDecorationsInBlockView}
                   smoothScroll={smoothScroll}
                   onBlockClick={onBlockClick}
+                  onTranslationDisplayModeChange={props.onTranslationDisplayModeChange}
                   onTextSelect={handleBlockTextSelect}
                 />
               </section>

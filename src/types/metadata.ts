@@ -14,3 +14,12 @@ export interface MetadataLookupResult {
   url: string | null;
   abstractText: string | null;
 }
+
+export interface LocalPdfMetadataPreview {
+  title: string | null;
+  authors: string[];
+  year: string | null;
+  publication: string | null;
+  doi: string | null;
+  firstPageText: string | null;
+}

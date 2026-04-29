@@ -246,6 +246,10 @@ fn searchable_title(value: &str) -> Option<String> {
         return None;
     }
 
+    if title_tokens(title).len() < 2 {
+        return None;
+    }
+
     Some(title.to_string())
 }
 
@@ -272,7 +276,7 @@ fn title_matches_query(query: &str, candidate: &str) -> bool {
     let candidate_tokens = title_tokens(candidate);
 
     if query_tokens.is_empty() || candidate_tokens.is_empty() {
-        return true;
+        return false;
     }
 
     let matched = query_tokens
@@ -468,4 +472,28 @@ pub async fn lookup_literature_metadata(
     }
 
     Ok(None)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn searchable_title_skips_queries_without_enough_latin_signal() {
+        assert_eq!(searchable_title("基于 ChatGLM 的医疗问答系统研究"), None);
+        assert_eq!(searchable_title("无人机任务分配综述"), None);
+    }
+
+    #[test]
+    fn searchable_title_keeps_english_paper_titles() {
+        assert_eq!(
+            searchable_title("A Review of Task Allocation Methods for UAVs"),
+            Some("A Review of Task Allocation Methods for UAVs".to_string())
+        );
+    }
+
+    #[test]
+    fn title_match_rejects_empty_token_queries() {
+        assert!(!title_matches_query("无人机任务分配综述", "A Survey of UAV Scheduling"));
+    }
 }

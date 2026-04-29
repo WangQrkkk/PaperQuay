@@ -1,6 +1,7 @@
 use std::{
     collections::{HashMap, HashSet, VecDeque},
-    time::Duration,
+    sync::OnceLock,
+    time::{Duration, Instant},
 };
 
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
@@ -28,6 +29,7 @@ pub struct OpenAICompatibleTranslateOptions {
     blocks: Vec<TranslateBlockInput>,
     batch_size: Option<usize>,
     concurrency: Option<usize>,
+    requests_per_minute: Option<usize>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -64,6 +66,16 @@ struct BatchTranslationOutcome {
     missing_blocks: Vec<TranslateBlockInput>,
 }
 
+const MIN_BATCH_TRANSLATION_MAX_TOKENS: usize = 256;
+const MAX_BATCH_TRANSLATION_MAX_TOKENS: usize = 12_000;
+const MIN_SINGLE_TRANSLATION_MAX_TOKENS: usize = 160;
+const MAX_SINGLE_TRANSLATION_MAX_TOKENS: usize = 6_000;
+const MAX_TRANSLATION_REQUESTS_PER_MINUTE: usize = 600;
+const TRANSLATION_RATE_LIMIT_WINDOW: Duration = Duration::from_secs(60);
+
+static TRANSLATION_REQUEST_TIMESTAMPS: OnceLock<tokio::sync::Mutex<VecDeque<Instant>>> =
+    OnceLock::new();
+
 fn build_chat_completions_url(base_url: &str) -> String {
     let trimmed = base_url.trim().trim_end_matches('/');
 
@@ -80,6 +92,135 @@ fn build_chat_completions_url(base_url: &str) -> String {
 
 fn model_temperature(value: Option<f32>, fallback: f32) -> f32 {
     value.unwrap_or(fallback).clamp(0.0, 2.0)
+}
+
+fn translation_request_queue() -> &'static tokio::sync::Mutex<VecDeque<Instant>> {
+    TRANSLATION_REQUEST_TIMESTAMPS.get_or_init(|| tokio::sync::Mutex::new(VecDeque::new()))
+}
+
+fn normalize_requests_per_minute(value: Option<usize>) -> Option<usize> {
+    value
+        .filter(|rpm| *rpm > 0)
+        .map(|rpm| rpm.clamp(1, MAX_TRANSLATION_REQUESTS_PER_MINUTE))
+}
+
+fn estimated_char_count(text: &str) -> usize {
+    text.chars().filter(|character| !character.is_control()).count()
+}
+
+fn estimate_translation_max_tokens(
+    char_count: usize,
+    overhead: usize,
+    minimum: usize,
+    maximum: usize,
+) -> usize {
+    let estimated = char_count
+        .saturating_add(char_count / 3)
+        .saturating_add(overhead);
+
+    estimated.clamp(minimum, maximum)
+}
+
+fn estimate_batch_translation_max_tokens(blocks: &[TranslateBlockInput]) -> usize {
+    let total_chars = blocks
+        .iter()
+        .map(|block| estimated_char_count(&block.text))
+        .sum::<usize>();
+
+    estimate_translation_max_tokens(
+        total_chars,
+        192 + blocks.len().saturating_mul(56),
+        MIN_BATCH_TRANSLATION_MAX_TOKENS,
+        MAX_BATCH_TRANSLATION_MAX_TOKENS,
+    )
+}
+
+fn estimate_single_translation_max_tokens(block: &TranslateBlockInput) -> usize {
+    estimate_translation_max_tokens(
+        estimated_char_count(&block.text),
+        96,
+        MIN_SINGLE_TRANSLATION_MAX_TOKENS,
+        MAX_SINGLE_TRANSLATION_MAX_TOKENS,
+    )
+}
+
+fn translation_output_is_excessive(
+    source_blocks: &[TranslateBlockInput],
+    translations: &[TranslateBlockOutput],
+) -> bool {
+    if source_blocks.is_empty() || translations.is_empty() {
+        return false;
+    }
+
+    let source_by_id = source_blocks
+        .iter()
+        .map(|block| (block.block_id.as_str(), estimated_char_count(&block.text)))
+        .collect::<HashMap<_, _>>();
+
+    let total_source_chars = source_by_id.values().copied().sum::<usize>();
+    let total_translated_chars = translations
+        .iter()
+        .map(|translation| estimated_char_count(&translation.translated_text))
+        .sum::<usize>();
+
+    let total_allowed_chars = total_source_chars
+        .saturating_mul(6)
+        .saturating_add(translations.len().saturating_mul(500))
+        .max(4_000);
+
+    if total_translated_chars > total_allowed_chars {
+        return true;
+    }
+
+    translations.iter().any(|translation| {
+        let source_chars = source_by_id
+            .get(translation.block_id.as_str())
+            .copied()
+            .unwrap_or_default();
+        let translated_chars = estimated_char_count(&translation.translated_text);
+        let per_block_limit = source_chars.saturating_mul(8).saturating_add(400).max(1_200);
+
+        translated_chars > per_block_limit
+    })
+}
+
+async fn wait_for_translation_slot(requests_per_minute: Option<usize>) {
+    let Some(requests_per_minute) = normalize_requests_per_minute(requests_per_minute) else {
+        return;
+    };
+
+    loop {
+        let sleep_duration = {
+            let mut queue = translation_request_queue().lock().await;
+            let now = Instant::now();
+
+            while let Some(front) = queue.front() {
+                if now.duration_since(*front) >= TRANSLATION_RATE_LIMIT_WINDOW {
+                    queue.pop_front();
+                } else {
+                    break;
+                }
+            }
+
+            if queue.len() < requests_per_minute {
+                queue.push_back(now);
+                None
+            } else {
+                queue.front().map(|front| {
+                    TRANSLATION_RATE_LIMIT_WINDOW
+                        .saturating_sub(now.duration_since(*front))
+                        .saturating_add(Duration::from_millis(25))
+                })
+            }
+        };
+
+        if let Some(duration) = sleep_duration {
+            tokio::time::sleep(duration).await;
+            continue;
+        }
+
+        return;
+    }
 }
 
 fn apply_reasoning_effort(body: &mut Value, reasoning_effort: Option<&str>) {
@@ -117,7 +258,10 @@ async fn request_translation_content(
     endpoint: &str,
     api_key: &str,
     body: Value,
+    requests_per_minute: Option<usize>,
 ) -> Result<String, String> {
+    wait_for_translation_slot(requests_per_minute).await;
+
     let response = client
         .post(endpoint)
         .header(CONTENT_TYPE, "application/json")
@@ -343,6 +487,7 @@ async fn translate_batch(
     temperature: Option<f32>,
     reasoning_effort: Option<&str>,
     blocks: &[TranslateBlockInput],
+    requests_per_minute: Option<usize>,
 ) -> Result<BatchTranslationOutcome, String> {
     let payload_blocks = blocks
         .iter()
@@ -354,18 +499,19 @@ async fn translate_batch(
         })
         .collect::<Vec<_>>();
     let system_prompt = format!(
-    "You are a professional academic paper translator. Translate from {} to {}. Preserve math, citations, table markers, symbols, and terminology. Return only strict JSON.",
+    "You are a professional academic paper translator. Translate from {} to {}. The input is MinerU-derived Markdown. Translate only natural language, while preserving the original Markdown structure and all technical notation exactly.",
     source_language,
     target_language
   );
     let user_prompt = json!({
-    "instruction": "Translate each item independently. Keep blockId unchanged. Return {\"translations\":[{\"blockId\":\"...\",\"translatedText\":\"...\"}]} only.",
+    "instruction": "Translate each item independently. Keep blockId unchanged. Preserve item order. Preserve headings, list markers, emphasis, links, HTML tags, line breaks, and spacing around Markdown delimiters whenever possible. Never translate, rewrite, or remove content inside $...$, $$...$$, \\(...\\), \\[...\\], bracketed citation markers like [12], or special markers like [M], [MASK], [S], [START], [E], [END]. Do not change variable names, underscores, braces, backslashes, or LaTeX commands. If a fragment is mostly formula or notation, keep it unchanged. Return valid minified JSON only in the exact shape {\"translations\":[{\"blockId\":\"...\",\"translatedText\":\"...\"}]}. Do not add markdown fences, notes, or extra keys.",
     "blocks": payload_blocks
   })
   .to_string();
     let mut body = json!({
       "model": model,
       "temperature": model_temperature(temperature, 0.2),
+      "max_tokens": estimate_batch_translation_max_tokens(blocks),
       "messages": [
         {
           "role": "system",
@@ -378,6 +524,8 @@ async fn translate_batch(
       ]
     });
     apply_reasoning_effort(&mut body, reasoning_effort);
+
+    wait_for_translation_slot(requests_per_minute).await;
 
     let response = client
         .post(endpoint)
@@ -429,6 +577,14 @@ async fn translate_batch(
             salvaged
         }
     };
+
+    if translation_output_is_excessive(blocks, &translations) {
+        return Err(format!(
+            "Translation output exceeded the expected size budget for {} blocks",
+            blocks.len()
+        ));
+    }
+
     let translated_ids = translations
         .iter()
         .map(|translation| translation.block_id.clone())
@@ -455,15 +611,17 @@ async fn translate_single_block_plaintext(
     temperature: Option<f32>,
     reasoning_effort: Option<&str>,
     block: &TranslateBlockInput,
+    requests_per_minute: Option<usize>,
 ) -> Result<TranslateBlockOutput, String> {
     let mut body = json!({
       "model": model,
       "temperature": model_temperature(temperature, 0.1),
+      "max_tokens": estimate_single_translation_max_tokens(block),
       "messages": [
         {
           "role": "system",
           "content": format!(
-            "You are a professional academic paper translator. Translate from {} to {}. Preserve math, citations, table markers, symbols, and terminology. Return only the translated text with no JSON, no markdown fences, and no commentary.",
+            "You are a professional academic paper translator. Translate from {} to {}. The input may contain MinerU-derived Markdown or inline LaTeX. Translate only natural language. Preserve Markdown structure, line breaks, inline math, display math, citations, tags, symbols, variable names, underscores, braces, backslashes, and LaTeX commands exactly. Return only the translated text. Do not add explanations, bullet points, JSON, markdown fences, or surrounding quotes unless they are part of the source text.",
             source_language,
             target_language
           )
@@ -480,12 +638,26 @@ async fn translate_single_block_plaintext(
     });
     apply_reasoning_effort(&mut body, reasoning_effort);
 
-    let content = request_translation_content(client, endpoint, api_key, body).await?;
+    let content =
+        request_translation_content(client, endpoint, api_key, body, requests_per_minute).await?;
     let translated_text = clean_plaintext_translation(&content);
 
     if translated_text.is_empty() {
         return Err(format!(
             "Fallback translation returned empty text for block {}",
+            block.block_id
+        ));
+    }
+
+    if translation_output_is_excessive(
+        std::slice::from_ref(block),
+        &[TranslateBlockOutput {
+            block_id: block.block_id.clone(),
+            translated_text: translated_text.clone(),
+        }],
+    ) {
+        return Err(format!(
+            "Fallback translation output exceeded the expected size budget for block {}",
             block.block_id
         ));
     }
@@ -505,6 +677,7 @@ pub async fn translate_blocks_openai_compatible(
     let model = options.model.trim();
     let temperature = options.temperature;
     let reasoning_effort = options.reasoning_effort.clone();
+    let requests_per_minute = normalize_requests_per_minute(options.requests_per_minute);
     let source_language = options.source_language.trim();
     let target_language = options.target_language.trim();
     let blocks = options
@@ -513,6 +686,18 @@ pub async fn translate_blocks_openai_compatible(
         .filter(|block| !block.text.trim().is_empty())
         .collect::<Vec<_>>();
     let requested_blocks = blocks.clone();
+
+    if base_url.is_empty() {
+        return Err("Translation Base URL cannot be empty.".to_string());
+    }
+
+    if api_key.is_empty() {
+        return Err("Translation API key cannot be empty.".to_string());
+    }
+
+    if model.is_empty() {
+        return Err("Translation model name cannot be empty.".to_string());
+    }
 
     if base_url.is_empty() {
         return Err("翻译接口 Base URL 不能为空".to_string());
@@ -572,6 +757,7 @@ pub async fn translate_blocks_openai_compatible(
                     task_temperature,
                     task_reasoning_effort.as_deref(),
                     &batch,
+                    requests_per_minute,
                 )
                 .await;
 
@@ -604,6 +790,7 @@ pub async fn translate_blocks_openai_compatible(
                         temperature,
                         reasoning_effort.as_deref(),
                         &batch[0],
+                        requests_per_minute,
                     )
                     .await?;
                     translations.push(fallback_translation);
@@ -631,6 +818,7 @@ pub async fn translate_blocks_openai_compatible(
                         temperature,
                         reasoning_effort.as_deref(),
                         &batch[0],
+                        requests_per_minute,
                     )
                     .await
                     .map_err(|fallback_error| {
@@ -683,6 +871,7 @@ pub async fn translate_blocks_openai_compatible(
             temperature,
             reasoning_effort.as_deref(),
             block,
+            requests_per_minute,
         )
         .await?;
 
@@ -712,4 +901,52 @@ pub async fn translate_blocks_openai_compatible(
     }
 
     Ok(ordered_translations)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn block(id: &str, text: &str) -> TranslateBlockInput {
+        TranslateBlockInput {
+            block_id: id.to_string(),
+            text: text.to_string(),
+        }
+    }
+
+    fn output(id: &str, translated_text: &str) -> TranslateBlockOutput {
+        TranslateBlockOutput {
+            block_id: id.to_string(),
+            translated_text: translated_text.to_string(),
+        }
+    }
+
+    #[test]
+    fn estimate_batch_translation_max_tokens_scales_with_source_size() {
+        let short_batch = vec![block("a", "Short source text.")];
+        let long_batch = vec![block(
+            "a",
+            "This is a significantly longer source passage that should require a noticeably larger completion token budget than the short example.",
+        )];
+
+        let short_budget = estimate_batch_translation_max_tokens(&short_batch);
+        let long_budget = estimate_batch_translation_max_tokens(&long_batch);
+
+        assert!(short_budget >= 256);
+        assert!(long_budget > short_budget);
+        assert!(long_budget <= 12_000);
+    }
+
+    #[test]
+    fn translation_output_guard_flags_excessive_expansion() {
+        let source_blocks = vec![block("a", "A concise source sentence.")];
+        let normal_outputs = vec![output("a", "A concise translated sentence.")];
+        let runaway_outputs = vec![output("a", &"translated ".repeat(800))];
+
+        assert!(!translation_output_is_excessive(&source_blocks, &normal_outputs));
+        assert!(translation_output_is_excessive(
+            &source_blocks,
+            &runaway_outputs
+        ));
+    }
 }

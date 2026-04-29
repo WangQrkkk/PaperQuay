@@ -47,6 +47,7 @@ import { useLocaleText } from '../../i18n/uiLanguage';
 import { buildSiblingPath } from '../../utils/mineruCache';
 import { buildPathInDirectory, getParentDirectory, normalizePathForCompare } from '../../utils/path';
 import { getFileNameFromPath, normalizeSelectionText } from '../../utils/text';
+import { buildHighlightScrollKey, shouldScrollToHighlight } from './highlightScroll';
 import {
   applyPdfAnnotationToolColors,
   buildPdfJsHighlightColorOptions,
@@ -435,6 +436,8 @@ function PdfViewer({
   const selectionStartedInsideRef = useRef(false);
   const selectionCommitTimerRef = useRef<number | null>(null);
   const pendingBlockSelectTimerRef = useRef<number | null>(null);
+  const scrollToPageRef = useRef<(pageIndex: number) => void>(() => undefined);
+  const lastScrolledHighlightKeyRef = useRef('');
 
   const [editorTool, setEditorTool] = useState<AnnotationEditorTool>('none');
   const [pageCount, setPageCount] = useState(0);
@@ -616,6 +619,10 @@ function PdfViewer({
     },
     [pageHosts, smoothScroll, syncPageHosts],
   );
+
+  useEffect(() => {
+    scrollToPageRef.current = scrollToPage;
+  }, [scrollToPage]);
 
   const clearSelectionCommitTimer = useCallback(() => {
     if (selectionCommitTimerRef.current !== null) {
@@ -1238,13 +1245,20 @@ function PdfViewer({
 
   useEffect(() => {
     if (!activeHighlight) {
+      lastScrolledHighlightKeyRef.current = '';
       return;
     }
 
+    if (!shouldScrollToHighlight(lastScrolledHighlightKeyRef.current, activeHighlight)) {
+      return;
+    }
+
+    lastScrolledHighlightKeyRef.current = buildHighlightScrollKey(activeHighlight);
+
     window.requestAnimationFrame(() => {
-      scrollToPage(activeHighlight.pageIndex);
+      scrollToPageRef.current(activeHighlight.pageIndex);
     });
-  }, [activeHighlight, scrollToPage]);
+  }, [activeHighlight]);
 
   useEffect(() => {
     if (!onTextSelect) {

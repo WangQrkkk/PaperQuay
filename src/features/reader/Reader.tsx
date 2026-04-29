@@ -56,6 +56,7 @@ import {
 } from '../../services/readerConfig';
 import {
   extractTextFromMineruBlock,
+  extractTranslatableMarkdownFromMineruBlock,
   flattenMineruPages,
   parseMineruPages,
 } from '../../services/mineru';
@@ -202,6 +203,12 @@ function buildLanguageOptions(locale: UiLanguage) {
   ];
 }
 
+function resolveLanguageLabel(locale: UiLanguage, value: string): string {
+  return (
+    buildLanguageOptions(locale).find((language) => language.value === value)?.label ?? value
+  );
+}
+
 function buildSummaryLanguageOptions(locale: UiLanguage) {
   return [
     { value: 'follow-ui', label: pickLocaleText(locale, '跟随界面语言', 'Follow UI Language') },
@@ -285,6 +292,7 @@ const DEFAULT_SETTINGS: ReaderSettings = {
   remotePdfDownloadDir: '',
   translationBatchSize: 10,
   translationConcurrency: 1,
+  translationRequestsPerMinute: 0,
   translationBaseUrl: 'https://api.openai.com',
   translationModel: 'gpt-4o-mini',
   summaryBaseUrl: 'https://api.openai.com',
@@ -731,6 +739,14 @@ function clampTranslationConcurrency(value: number): number {
   return Math.min(8, Math.max(1, Math.trunc(value)));
 }
 
+function clampTranslationRequestsPerMinute(value: number): number {
+  if (!Number.isFinite(value)) {
+    return DEFAULT_SETTINGS.translationRequestsPerMinute;
+  }
+
+  return Math.min(600, Math.max(0, Math.trunc(value)));
+}
+
 function normalizeReaderSettings(value?: Partial<ReaderSettings> | null): ReaderSettings {
   const merged = {
     ...DEFAULT_SETTINGS,
@@ -743,9 +759,15 @@ function normalizeReaderSettings(value?: Partial<ReaderSettings> | null): Reader
     libraryBatchConcurrency: clampBatchConcurrency(merged.libraryBatchConcurrency),
     translationBatchSize: clampTranslationBatchSize(merged.translationBatchSize),
     translationConcurrency: clampTranslationConcurrency(merged.translationConcurrency),
+    translationRequestsPerMinute: clampTranslationRequestsPerMinute(
+      merged.translationRequestsPerMinute,
+    ),
     modelRuntimeConfigs: normalizeModelRuntimeConfigs(merged.modelRuntimeConfigs),
     summaryOutputLanguage: merged.summaryOutputLanguage?.trim() || 'follow-ui',
-    translationDisplayMode: 'translated',
+    translationDisplayMode:
+      merged.translationDisplayMode === 'original' || merged.translationDisplayMode === 'bilingual'
+        ? merged.translationDisplayMode
+        : 'translated',
   };
 }
 
@@ -2330,7 +2352,7 @@ function PreferencesWindow({
                       'Control batch size and concurrency for full-document translation.',
                     )}
                   >
-                    <div className="grid gap-3 md:grid-cols-2">
+                    <div className="grid gap-3 md:grid-cols-3">
                       <div className="space-y-2">
                         <div className="text-xs font-medium text-slate-500">
                           {l('每批块数', 'Blocks Per Batch')}
@@ -2364,6 +2386,26 @@ function PreferencesWindow({
                             )
                           }
                         />
+                      </div>
+                      <div className="space-y-2">
+                        <div className="text-xs font-medium text-slate-500">
+                          {l('每分钟请求数', 'Requests Per Minute')}
+                        </div>
+                        <SettingsInput
+                          type="number"
+                          min={0}
+                          max={600}
+                          value={String(settings.translationRequestsPerMinute)}
+                          onChange={(event) =>
+                            onSettingChange(
+                              'translationRequestsPerMinute',
+                              Math.max(0, Math.min(600, Number(event.target.value) || 0)),
+                            )
+                          }
+                        />
+                        <div className="text-[11px] leading-5 text-slate-400">
+                          {l('填 0 表示不限制，由软件直接发送请求。', 'Use 0 for unlimited requests.')}
+                        </div>
                       </div>
                     </div>
                   </SettingsField>
@@ -4747,7 +4789,7 @@ function Reader() {
         const blocksToTranslate = previewContext.blocks
           .map((block) => ({
             blockId: block.blockId,
-            text: extractTextFromMineruBlock(block),
+            text: extractTranslatableMarkdownFromMineruBlock(block),
           }))
           .filter((block) => block.text.trim().length > 0);
 
@@ -4809,6 +4851,7 @@ function Reader() {
               blocks: batch,
               batchSize: batch.length,
               concurrency: 1,
+              requestsPerMinute: settings.translationRequestsPerMinute,
             });
 
             for (const translation of translations) {
@@ -4940,6 +4983,7 @@ function Reader() {
       settings.modelRuntimeConfigs,
       settings.translationBatchSize,
       settings.translationConcurrency,
+      settings.translationRequestsPerMinute,
       settings.translationSourceLanguage,
       settings.translationTargetLanguage,
       translationModelPreset,
@@ -5966,16 +6010,14 @@ function Reader() {
     key: Key,
     value: ReaderSettings[Key],
   ) => {
-    const nextValue = (key === 'translationDisplayMode' ? 'translated' : value) as ReaderSettings[Key];
-
     setSettings((current) => {
-      if (Object.is(current[key], nextValue)) {
+      if (Object.is(current[key], value)) {
         return current;
       }
 
       const nextSettings = normalizeReaderSettings({
         ...current,
-        [key]: nextValue,
+        [key]: value,
       });
 
       return Object.is(current[key], nextSettings[key]) ? current : nextSettings;
@@ -6413,6 +6455,13 @@ function Reader() {
                   onOpenPreferences={handleOpenPreferences}
                   onOpenStandalonePdf={() => void handleOpenStandalonePdf()}
                   onBridgeStateChange={handleBridgeStateChange}
+                  onTranslationDisplayModeChange={(mode) =>
+                    updateSetting('translationDisplayMode', mode)
+                  }
+                  translationTargetLanguageLabel={resolveLanguageLabel(
+                    settings.uiLanguage,
+                    settings.translationTargetLanguage,
+                  )}
                   translationSnapshot={libraryTranslationSnapshots[item.workspaceId] ?? null}
                   onboardingWorkspaceStage={
                     tab.id === activeTabId && tab.id === onboardingDemoTabId

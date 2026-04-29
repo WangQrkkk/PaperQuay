@@ -1,0 +1,59 @@
+pkgname=paperquay
+pkgver=0.1.2
+pkgrel=1
+pkgdesc="Desktop-first AI literature manager for PDF reading, translation, overview generation, and agent workflows"
+arch=('x86_64')
+url="https://github.com/WangQrkkk/PaperQuay"
+license=('AGPL-3.0-only')
+depends=(
+  'cairo'
+  'desktop-file-utils'
+  'gdk-pixbuf2'
+  'glib2'
+  'gtk3'
+  'hicolor-icon-theme'
+  'libsoup'
+  'pango'
+  'webkit2gtk-4.1'
+  'appmenu-gtk-module'
+  'libappindicator-gtk3'
+)
+makedepends=(
+  'git'
+  'nodejs'
+  'npm'
+  'rustup'
+  'librsvg'
+  'python'
+)
+options=('!lto')
+source=(
+  "PaperQuay-${pkgver}.tar.gz"
+  'paperquay.desktop'
+  'paperquay.sh'
+)
+sha256sums=('SKIP' 'SKIP' 'SKIP')
+
+build() {
+  cd "${srcdir}/PaperQuay-${pkgver}"
+
+  export RUSTUP_HOME="${HOME}/.rustup"
+  export CARGO_HOME="${HOME}/.cargo"
+  if [ -f "${CARGO_HOME}/env" ]; then
+    # rustup installs cargo shims in the user's cargo bin directory.
+    . "${CARGO_HOME}/env"
+  fi
+
+  npm ci
+  npm run build
+  cargo build --manifest-path src-tauri/Cargo.toml --release
+}
+
+package() {
+  cd "${srcdir}/PaperQuay-${pkgver}"
+
+  install -Dm755 "src-tauri/target/release/paperquay" "${pkgdir}/usr/lib/paperquay/paperquay-bin"
+  install -Dm755 "${srcdir}/paperquay.sh" "${pkgdir}/usr/bin/paperquay"
+  install -Dm644 "${srcdir}/paperquay.desktop" "${pkgdir}/usr/share/applications/paperquay.desktop"
+  install -Dm644 "src-tauri/icons/icon.png" "${pkgdir}/usr/share/icons/hicolor/512x512/apps/paperquay.png"
+}

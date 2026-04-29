@@ -43,6 +43,7 @@ interface BlockViewerProps {
   mineruPath: string;
   translations: TranslationMap;
   translationDisplayMode: TranslationDisplayMode;
+  translationLanguageLabel: string;
   activeBlockId: string | null;
   hoveredBlockId: string | null;
   scrollSignal: number;
@@ -51,6 +52,7 @@ interface BlockViewerProps {
   hidePageDecorations?: boolean;
   smoothScroll: boolean;
   onBlockClick: (block: PositionedMineruBlock) => void;
+  onTranslationDisplayModeChange?: (mode: TranslationDisplayMode) => void;
   onTextSelect?: (selection: TextSelectionPayload) => void;
 }
 
@@ -707,6 +709,7 @@ function BlockViewer({
   mineruPath,
   translations,
   translationDisplayMode,
+  translationLanguageLabel,
   activeBlockId,
   hoveredBlockId,
   scrollSignal,
@@ -715,6 +718,7 @@ function BlockViewer({
   hidePageDecorations = false,
   smoothScroll,
   onBlockClick,
+  onTranslationDisplayModeChange,
   onTextSelect,
 }: BlockViewerProps) {
   const l = useLocaleText();
@@ -746,6 +750,28 @@ function BlockViewer({
     () => Object.values(translations).filter((value) => value.trim()).length,
     [translations],
   );
+  const hasAnyTranslations = translatedCount > 0;
+  const activeDisplayMode = hasAnyTranslations ? translationDisplayMode : 'original';
+  const displayModeOptions: Array<{
+    mode: TranslationDisplayMode;
+    label: string;
+    disabled?: boolean;
+  }> = [
+    {
+      mode: 'original',
+      label: l('原始 MinerU', 'Original MinerU'),
+    },
+    {
+      mode: 'translated',
+      label: l(`译文 · ${translationLanguageLabel}`, `Translation · ${translationLanguageLabel}`),
+      disabled: !hasAnyTranslations,
+    },
+    {
+      mode: 'bilingual',
+      label: l('双语对照', 'Bilingual'),
+      disabled: !hasAnyTranslations,
+    },
+  ];
 
   const updateContentScale = (delta: number) => {
     setContentScale((current) => clampContentScale(current + delta));
@@ -923,6 +949,31 @@ function BlockViewer({
           <span className="pq-badge-state rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-500">
             {l(`${translatedCount} 个译文块`, `${translatedCount} translated blocks`)}
           </span>
+
+          <div className="flex items-center gap-1 rounded-full border border-slate-200 bg-white p-1 text-xs text-slate-600 dark:border-white/10 dark:bg-chrome-700 dark:text-chrome-300">
+            {displayModeOptions.map((option) => {
+              const selected = option.mode === activeDisplayMode;
+
+              return (
+                <button
+                  key={option.mode}
+                  type="button"
+                  disabled={option.disabled}
+                  onClick={() => onTranslationDisplayModeChange?.(option.mode)}
+                  className={cn(
+                    'rounded-full px-3 py-1.5 font-medium transition-all duration-200',
+                    selected
+                      ? 'bg-slate-900 text-white dark:bg-chrome-100 dark:text-chrome-900'
+                      : 'text-slate-500 hover:bg-slate-100 dark:text-chrome-300 dark:hover:bg-chrome-600',
+                    option.disabled &&
+                      'cursor-not-allowed opacity-45 hover:bg-transparent dark:hover:bg-transparent',
+                  )}
+                >
+                  {option.label}
+                </button>
+              );
+            })}
+          </div>
 
           <div className="flex items-center gap-1 rounded-full border border-slate-200 bg-white px-1.5 py-1 text-sm text-slate-600 dark:border-white/10 dark:bg-chrome-700 dark:text-chrome-300">
             <button

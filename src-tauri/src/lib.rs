@@ -1,7 +1,10 @@
 mod commands;
+mod startup;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    startup::configure_runtime_environment();
+
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             commands::file::get_app_default_paths,

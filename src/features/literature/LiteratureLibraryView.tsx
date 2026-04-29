@@ -12,6 +12,7 @@ import { Star, Tag, Trash2 } from 'lucide-react';
 import { useLocaleText } from '../../i18n/uiLanguage';
 import { localPathExists, selectDirectory } from '../../services/desktop';
 import { lookupLiteratureMetadata } from '../../services/metadata';
+import { extractLocalPdfMetadataPreview } from '../../services/pdfMetadata';
 import {
   assignPaperToLibraryCategory,
   createLibraryCategory,
@@ -43,7 +44,9 @@ import type {
   LiteraturePaperTaskState,
   UpdatePaperRequest,
 } from '../../types/library';
-import type { MetadataLookupResult } from '../../types/metadata';
+import type {
+  MetadataLookupResult,
+} from '../../types/metadata';
 import type {
   ZoteroCollection,
   ZoteroLibraryItem,
@@ -55,12 +58,17 @@ import {
   guessSiblingMarkdownPath,
 } from '../../utils/mineruCache';
 import { getFileNameFromPath } from '../../utils/text';
-import ImportConfirmationDialog, {
-  type ImportDraftItem,
-} from './components/ImportConfirmationDialog';
+import ImportConfirmationDialog from './components/ImportConfirmationDialog';
 import LibraryConfirmDialog from './components/LibraryConfirmDialog';
 import LibrarySettingsDialog from './components/LibrarySettingsDialog';
 import LibraryTextInputDialog from './components/LibraryTextInputDialog';
+import {
+  canAutoReplaceTitle,
+  mergeLocalPdfMetadataIntoDraft,
+  mergeRemoteMetadataIntoDraft,
+  titleFromPdfPath,
+} from './importMetadata';
+import type { ImportDraftItem } from './importTypes';
 import LiteratureCategorySidebar from './components/LiteratureCategorySidebar';
 import LiteraturePaperDetails from './components/LiteraturePaperDetails';
 import LiteraturePaperList, {
@@ -177,10 +185,6 @@ type LibraryConfirmDialogState =
   | { kind: 'delete-category'; category: LiteratureCategory }
   | { kind: 'delete-paper'; paper: LiteraturePaper; deleteFiles: boolean };
 
-function titleFromPdfPath(path: string): string {
-  return getFileNameFromPath(path).replace(/\.pdf$/i, '') || 'Untitled PDF';
-}
-
 function splitAuthors(value: string): string[] {
   return value
     .split(/[;,，；]/)
@@ -212,16 +216,6 @@ function metadataFromZoteroItem(item: ZoteroLibraryItem): ImportPdfMetadata {
 
 function categorySignature(name: string, parentId: string | null): string {
   return `${parentId ?? 'root'}::${name.trim().toLocaleLowerCase()}`;
-}
-
-function draftPatchFromMetadata(metadata: MetadataLookupResult): Partial<ImportDraftItem> {
-  return {
-    title: metadata.title?.trim() || undefined,
-    authors: metadata.authors.length > 0 ? metadata.authors.join(', ') : undefined,
-    year: metadata.year?.trim() || undefined,
-    publication: metadata.publication?.trim() || undefined,
-    doi: metadata.doi?.trim() || undefined,
-  };
 }
 
 function reorderPaperList(
@@ -262,6 +256,7 @@ function metadataUpdateForPaper(
     paperId: paper.id,
   };
   let changed = false;
+  const pdfPath = paperPdfPath(paper);
   const assignString = <Key extends keyof UpdatePaperRequest>(
     key: Key,
     currentValue: string | null,
@@ -270,6 +265,14 @@ function metadataUpdateForPaper(
     const normalized = nextValue?.trim();
 
     if (!normalized || normalized === currentValue?.trim()) {
+      return;
+    }
+
+    if (
+      key === 'title' &&
+      currentValue?.trim() &&
+      (!pdfPath || !canAutoReplaceTitle(currentValue, pdfPath))
+    ) {
       return;
     }
 
@@ -381,6 +384,7 @@ export default function LiteratureLibraryView({
   const [loading, setLoading] = useState(true);
   const [working, setWorking] = useState(false);
   const [metadataWorking, setMetadataWorking] = useState(false);
+  const [localImportMetadataWorking, setLocalImportMetadataWorking] = useState(false);
   const [bulkMetadataWorking, setBulkMetadataWorking] = useState(false);
   const [statusMessage, setStatusMessage] = useState('');
   const [error, setError] = useState('');
@@ -497,6 +501,39 @@ export default function LiteratureLibraryView({
     setCategories(nextCategories);
   }, [demoLibrary, refreshPapers, resolveDemoPapers]);
 
+  const hydrateImportDraftsFromLocalPdf = useCallback(
+    async (drafts: ImportDraftItem[]) => {
+      if (drafts.length === 0) {
+        return;
+      }
+
+      setLocalImportMetadataWorking(true);
+
+      try {
+        for (const draft of drafts) {
+          const preview = await extractLocalPdfMetadataPreview(draft.path).catch(() => null);
+
+          if (!preview) {
+            continue;
+          }
+
+          setImportDrafts((current) =>
+            current.map((item) => {
+              if (item.path !== draft.path) {
+                return item;
+              }
+
+              return mergeLocalPdfMetadataIntoDraft(item, preview);
+            }),
+          );
+        }
+      } finally {
+        setLocalImportMetadataWorking(false);
+      }
+    },
+    [],
+  );
+
   const beginImportDrafts = useCallback(
     (paths: string[]) => {
       if (demoMode) {
@@ -515,23 +552,20 @@ export default function LiteratureLibraryView({
 
       const targetCategory = categories.find((category) => category.id === selectedCategoryId);
       const defaultCategoryId = targetCategory && !targetCategory.isSystem ? targetCategory.id : '';
+      const existingPaths = new Set(importDrafts.map((draft) => draft.path));
+      const nextDrafts = pdfPaths
+        .filter((path) => !existingPaths.has(path))
+        .map((path): ImportDraftItem => ({
+          path,
+          title: titleFromPdfPath(path),
+          authors: '',
+          year: '',
+          publication: '',
+          doi: '',
+          categoryId: defaultCategoryId,
+        }));
 
-      setImportDrafts((current) => {
-        const existingPaths = new Set(current.map((draft) => draft.path));
-        const nextDrafts = pdfPaths
-          .filter((path) => !existingPaths.has(path))
-          .map((path): ImportDraftItem => ({
-            path,
-            title: titleFromPdfPath(path),
-            authors: '',
-            year: '',
-            publication: '',
-            doi: '',
-            categoryId: defaultCategoryId,
-          }));
-
-        return [...current, ...nextDrafts];
-      });
+      setImportDrafts((current) => [...current, ...nextDrafts]);
       setImportDialogOpen(true);
       setStatusMessage(
         l(
@@ -539,8 +573,20 @@ export default function LiteratureLibraryView({
           `${pdfPaths.length} PDFs are ready. Please confirm metadata.`,
         ),
       );
+
+      if (nextDrafts.length > 0) {
+        void hydrateImportDraftsFromLocalPdf(nextDrafts);
+      }
     },
-    [categories, demoMode, l, selectedCategoryId, showDemoLockedMessage],
+    [
+      categories,
+      demoMode,
+      hydrateImportDraftsFromLocalPdf,
+      importDrafts,
+      l,
+      selectedCategoryId,
+      showDemoLockedMessage,
+    ],
   );
 
   useTauriPdfDrop({
@@ -1249,16 +1295,25 @@ export default function LiteratureLibraryView({
             continue;
           }
 
-          const patch = draftPatchFromMetadata(metadata);
+          const mergedDraft = mergeRemoteMetadataIntoDraft(draft, metadata);
+          const changed =
+            mergedDraft.title !== draft.title ||
+            mergedDraft.authors !== draft.authors ||
+            mergedDraft.year !== draft.year ||
+            mergedDraft.publication !== draft.publication ||
+            mergedDraft.doi !== draft.doi;
 
-          if (Object.values(patch).some(Boolean)) {
-            setImportDrafts((current) =>
-              current.map((item) => (item.path === draft.path ? { ...item, ...patch } : item)),
-            );
-            filledCount += 1;
-          } else {
+          if (!changed) {
             missedCount += 1;
+            continue;
           }
+
+          setImportDrafts((current) =>
+            current.map((item) =>
+              item.path === draft.path ? mergeRemoteMetadataIntoDraft(item, metadata) : item,
+            ),
+          );
+          filledCount += 1;
         }
 
         if (!silent) {
@@ -1282,7 +1337,12 @@ export default function LiteratureLibraryView({
   );
 
   useEffect(() => {
-    if (!importDialogOpen || importDrafts.length === 0 || metadataWorking) {
+    if (
+      !importDialogOpen ||
+      importDrafts.length === 0 ||
+      metadataWorking ||
+      localImportMetadataWorking
+    ) {
       return;
     }
 
@@ -1304,6 +1364,7 @@ export default function LiteratureLibraryView({
     importDialogOpen,
     demoMode,
     importDrafts,
+    localImportMetadataWorking,
     showDemoLockedMessage,
     metadataAttemptedPaths,
     metadataWorking,
@@ -1317,6 +1378,7 @@ export default function LiteratureLibraryView({
     setImportDialogOpen(false);
     setImportDrafts([]);
     setMetadataAttemptedPaths(new Set());
+    setLocalImportMetadataWorking(false);
   };
 
   const handleConfirmImportDrafts = async () => {
@@ -1358,14 +1420,32 @@ export default function LiteratureLibraryView({
       const importedCount = results.filter((result) => result.status === 'imported').length;
       const duplicateCount = results.filter((result) => result.status === 'duplicate').length;
       const failedCount = results.filter((result) => result.status === 'failed').length;
+      const duplicateNames = results
+        .filter((result) => result.status === 'duplicate')
+        .map((result) => getFileNameFromPath(result.sourcePath))
+        .slice(0, 3);
+      const failedNames = results
+        .filter((result) => result.status === 'failed')
+        .map((result) => `${getFileNameFromPath(result.sourcePath)}: ${result.message}`)
+        .slice(0, 2);
 
       await refreshAll();
       setImportDialogOpen(false);
       setImportDrafts([]);
+      setMetadataAttemptedPaths(new Set());
+      setLocalImportMetadataWorking(false);
+      const duplicateSummary =
+        duplicateNames.length > 0
+          ? l(` 重复：${duplicateNames.join('、')}`, ` Duplicates: ${duplicateNames.join(', ')}`)
+          : '';
+      const failedSummary =
+        failedNames.length > 0
+          ? l(` 失败：${failedNames.join('；')}`, ` Failed: ${failedNames.join('; ')}`)
+          : '';
       setStatusMessage(
         l(
-          `导入完成：新增 ${importedCount}，重复 ${duplicateCount}，失败 ${failedCount}`,
-          `Import finished: ${importedCount} imported, ${duplicateCount} duplicated, ${failedCount} failed`,
+          `导入完成：新增 ${importedCount}，重复 ${duplicateCount}，失败 ${failedCount}。${duplicateSummary}${failedSummary}`,
+          `Import finished: ${importedCount} imported, ${duplicateCount} duplicated, ${failedCount} failed.${duplicateSummary}${failedSummary}`,
         ),
       );
     } catch (nextError) {
@@ -2124,7 +2204,7 @@ export default function LiteratureLibraryView({
         drafts={importDrafts}
         categories={categories}
         working={working}
-        metadataWorking={metadataWorking}
+        metadataWorking={metadataWorking || localImportMetadataWorking}
         onDraftChange={handleImportDraftChange}
         onRemoveDraft={handleRemoveImportDraft}
         onAutoFillMetadata={() => void handleAutoFillImportMetadata(importDrafts)}

@@ -15,6 +15,7 @@ import {
 import type { LocalDirectoryFileEntry } from '../../services/desktop';
 import {
   extractTextFromMineruBlock,
+  extractTranslatableMarkdownFromMineruBlock,
   flattenMineruPages,
   parseMineruPages,
 } from '../../services/mineru';
@@ -59,6 +60,7 @@ import type {
   SummaryBlockInput,
   TextSelectionPayload,
   TextSelectionSource,
+  TranslationDisplayMode,
   TranslationMap,
   UiLanguage,
   WorkspaceItem,
@@ -202,6 +204,8 @@ interface DocumentReaderTabProps {
   onOpenPreferences: () => void;
   onOpenStandalonePdf: () => void;
   onBridgeStateChange: (tabId: string, bridge: ReaderTabBridgeState | null) => void;
+  onTranslationDisplayModeChange: (mode: TranslationDisplayMode) => void;
+  translationTargetLanguageLabel: string;
   translationSnapshot?: ReaderDocumentTranslationSnapshot | null;
   onboardingWorkspaceStage?: WorkspaceStage | null;
   onboardingDemoReveal?: {
@@ -614,6 +618,8 @@ function DocumentReaderTab({
   onOpenPreferences,
   onOpenStandalonePdf,
   onBridgeStateChange,
+  onTranslationDisplayModeChange,
+  translationTargetLanguageLabel,
   translationSnapshot = null,
   onboardingWorkspaceStage = null,
   onboardingDemoReveal,
@@ -1205,6 +1211,9 @@ function DocumentReaderTab({
   const resetDocumentState = useCallback(() => {
     const initialSession = createQaSession(localeRef.current);
 
+    // Allow the next opened document, including reopening the same workspace item,
+    // to restore cached reading history before any auto-generation runs.
+    restoredHistoryRef.current = '';
     setMineruPath('');
     setMineruPages([]);
     setFlatBlocks([]);
@@ -2110,7 +2119,7 @@ function DocumentReaderTab({
     const blocksToTranslate = flatBlocks
       .map((block) => ({
         blockId: block.blockId,
-        text: extractTextFromMineruBlock(block),
+        text: extractTranslatableMarkdownFromMineruBlock(block),
       }))
       .filter((block) => block.text.trim().length > 0);
 
@@ -2222,6 +2231,7 @@ function DocumentReaderTab({
             blocks: batch,
             batchSize: batch.length,
             concurrency: 1,
+            requestsPerMinute: settings.translationRequestsPerMinute,
           });
 
           for (const translation of translations) {
@@ -2293,6 +2303,7 @@ function DocumentReaderTab({
     saveTranslationCache,
     settings.translationBatchSize,
     settings.translationConcurrency,
+    settings.translationRequestsPerMinute,
     settings.translationSourceLanguage,
     settings.translationTargetLanguage,
     translating,
@@ -2785,6 +2796,7 @@ function DocumentReaderTab({
             },
           ],
           batchSize: 1,
+          requestsPerMinute: settings.translationRequestsPerMinute,
         });
 
         if (selectedExcerptRequestIdRef.current !== requestId) {
@@ -2827,6 +2839,7 @@ function DocumentReaderTab({
     [
       onOpenPreferences,
       selectedExcerpt,
+      settings.translationRequestsPerMinute,
       settings.translationSourceLanguage,
       settings.translationTargetLanguage,
       selectionTranslationModelPreset,
@@ -4011,7 +4024,8 @@ function DocumentReaderTab({
         pdfData={pdfData}
         blocks={flatBlocks}
         translations={blockTranslations}
-        translationDisplayMode="translated"
+        translationDisplayMode={settings.translationDisplayMode}
+        translationLanguageLabel={translationTargetLanguageLabel}
         activeBlockId={activeBlockId}
         hoveredBlockId={hoveredBlockId}
         activePdfHighlight={activePdfHighlight}
@@ -4028,6 +4042,7 @@ function DocumentReaderTab({
         onPdfBlockHover={handlePdfBlockHover}
         onPdfBlockSelect={handlePdfBlockSelect}
         onBlockClick={handleBlockClick}
+        onTranslationDisplayModeChange={onTranslationDisplayModeChange}
         onTextSelect={handleTextSelect}
         onOpenStandalonePdf={onOpenStandalonePdf}
         onOpenMineruJson={() => void handleOpenMineruJson()}

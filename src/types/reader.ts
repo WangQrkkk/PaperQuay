@@ -103,6 +103,7 @@ export interface OpenAICompatibleTranslateOptions {
   blocks: TranslationBlockInput[];
   batchSize?: number;
   concurrency?: number;
+  requestsPerMinute?: number;
 }
 
 export interface OpenAICompatibleTestOptions {
@@ -343,6 +344,7 @@ export interface ReaderSettings {
   remotePdfDownloadDir: string;
   translationBatchSize: number;
   translationConcurrency: number;
+  translationRequestsPerMinute: number;
   translationBaseUrl: string;
   translationModel: string;
   summaryBaseUrl: string;

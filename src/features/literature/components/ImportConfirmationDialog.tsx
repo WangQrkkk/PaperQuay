@@ -4,17 +4,8 @@ import { useAppLocale, useLocaleText } from '../../../i18n/uiLanguage';
 import { useWheelScrollDelegate } from '../../../hooks/useWheelScrollDelegate';
 import type { LiteratureCategory } from '../../../types/library';
 import { getFileNameFromPath, truncateMiddle } from '../../../utils/text';
+import type { ImportDraftItem } from '../importTypes';
 import { categoryDisplayName } from '../literatureUi';
-
-export interface ImportDraftItem {
-  path: string;
-  title: string;
-  authors: string;
-  year: string;
-  publication: string;
-  doi: string;
-  categoryId: string;
-}
 
 interface ImportConfirmationDialogProps {
   open: boolean;
@@ -99,8 +90,8 @@ export default function ImportConfirmationDialog({
             </h2>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-500 dark:text-[#a0a0a0]">
               {l(
-                '系统会尝试通过 DOI 或标题从 Crossref 自动补全标题、作者、年份和期刊；你仍然可以在导入前手动修改。',
-                'The app tries to enrich title, authors, year, and venue from Crossref by DOI or title. You can still edit everything before import.',
+                '系统会先从 PDF 本地信息里提取标题和 DOI，再按需通过 Crossref 补全年份、作者和期刊；导入前你仍然可以手动修改。',
+                'The app extracts title and DOI from the local PDF first, then uses Crossref when needed to fill authors, year, and venue. You can still edit everything before import.',
               )}
             </p>
           </div>
