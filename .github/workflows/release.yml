@@ -192,7 +192,16 @@ jobs:
       - name: Create source tarball
         run: |
           version="${{ needs.create-release.outputs.version }}"
-          git archive --format=tar.gz --prefix="PaperQuay-${version}/" -o "packaging/arch/PaperQuay-${version}.tar.gz" HEAD
+          stage_dir="${RUNNER_TEMP}/PaperQuay-${version}"
+          rm -rf "${stage_dir}"
+          mkdir -p "${stage_dir}"
+          tar \
+            --exclude-vcs \
+            --exclude='./packaging/arch/PaperQuay-*.tar.gz' \
+            --exclude='./src-tauri/target' \
+            --exclude='./dist' \
+            -cf - . | tar -C "${stage_dir}" -xf -
+          tar -C "${RUNNER_TEMP}" -czf "packaging/arch/PaperQuay-${version}.tar.gz" "PaperQuay-${version}"
           sed -i "s/^pkgver=.*/pkgver=${version}/" packaging/arch/PKGBUILD
 
       - name: Build package with makepkg
