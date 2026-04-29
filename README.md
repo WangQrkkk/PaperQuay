@@ -67,6 +67,14 @@ Many paper tools force the user to choose between fragmented workflows: one app 
 
 ## What Makes PaperQuay Different
 
+<p align="center">
+  <img src="./docs/assets/show.gif" alt="PaperQuay workflow demo" width="1200">
+</p>
+
+<p align="center">
+  <em>Live workflow demo: browse the library, open papers, inspect structured reading, and move into the Agent workspace without leaving the same desktop flow.</em>
+</p>
+
 ### Instant Block-Level Translation
 
 PaperQuay uses a translation workflow designed for long paper reading sessions. It can translate and cache MinerU-parsed structural blocks in advance. Later, when reading, clicking a source block can instantly jump to its translated counterpart. Translation no longer needs to happen only after each click or selection.
@@ -84,25 +92,6 @@ PaperQuay can build an independent local library with PDF import, a configurable
 The agent workspace is designed for library operations, not just conversation. It can assist with batch renaming, metadata completion, smart tagging, tag cleanup, automatic classification, and paper summarization while exposing tool calls and results for user review.
 
 ---
-## PaperQuay Screenshots
-
-<p align="center">
-  <img src="./pictures/main.png" alt="PaperQuay literature library workspace" width="1200">
-</p>
-
-<p align="center">
-  <em>Main library workspace: manage papers, categories, metadata, reading progress, and AI-generated overviews in one desktop view.</em>
-</p>
-
-<p align="center">
-  <img src="./pictures/agent.png" alt="PaperQuay agent workspace" width="1200">
-</p>
-
-<p align="center">
-  <em>Agent workspace: chat with the paper assistant, inspect execution traces, review tool calls, and run batch library operations with human confirmation.</em>
-</p>
-
----
 
 ## Core Workflow
 
@@ -116,6 +105,27 @@ The agent workspace is designed for library operations, not just conversation. I
 | 6. Translate full text | Cache translated blocks so reading can jump instantly between source and translation. |
 | 7. Read and annotate   | Highlight, write, add notes, jump to annotations, and export annotated PDFs.          |
 | 8. Use the agent       | Ask the agent to rename, classify, tag, clean metadata, or summarize selected papers. |
+
+---
+
+## PaperQuay Screenshots
+
+<p align="center">
+  <img src="./docs/assets/main.png" alt="PaperQuay literature library workspace" width="1200">
+</p>
+
+<p align="center">
+  <em>Main library workspace: manage papers, categories, metadata, reading progress, and AI-generated overviews in one desktop view.</em>
+</p>
+
+<p align="center">
+  <img src="./docs/assets/agent.png" alt="PaperQuay agent workspace" width="1200">
+</p>
+
+<p align="center">
+  <em>Agent workspace: chat with the paper assistant, inspect execution traces, review tool calls, and run batch library operations with human confirmation.</em>
+</p>
+
 
 ---
 
