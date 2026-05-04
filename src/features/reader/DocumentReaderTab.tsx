@@ -5,7 +5,6 @@ import {
   downloadRemoteFileToPath,
   loadPdfBinary,
   listLocalDirectoryFiles,
-  readLocalBinaryFile,
   readLocalTextFile,
   runMineruCloudParse,
   selectChatAttachmentPaths,
@@ -45,8 +44,6 @@ import type {
   DocumentChatAttachment,
   DocumentChatMessage,
   DocumentChatSession,
-  ModelRuntimeConfig,
-  ModelRuntimeRole,
   MineruPage,
   PaperAnnotation,
   PaperSummary,
@@ -62,12 +59,10 @@ import type {
   TextSelectionSource,
   TranslationDisplayMode,
   TranslationMap,
-  UiLanguage,
   WorkspaceItem,
   WorkspaceStage,
   ZoteroRelatedNote,
 } from '../../types/reader';
-import { bytesToDataUrl, decodeUtf8, formatFileSize, guessMimeTypeFromPath, isImagePath, isTextLikePath } from '../../utils/files';
 import {
   buildMineruCachePathCandidates,
   buildMineruCachePaths,
@@ -77,75 +72,51 @@ import {
   buildMineruTranslationCachePath,
   guessSiblingJsonPath,
   guessSiblingMarkdownPath,
-  type MineruCachePaths,
 } from '../../utils/mineruCache';
 import { loadPaperHistory, savePaperHistory } from '../../utils/paperHistory';
-import { buildPathInDirectory, getParentDirectory, normalizePathForCompare } from '../../utils/path';
-import { getFileNameFromPath, normalizeSelectionText as normalizeTextSelection } from '../../utils/text';
-
-const MIN_LEFT_PANE_RATIO = 0.28;
-const MAX_LEFT_PANE_RATIO = 0.72;
-const PANE_RATIO_STORAGE_KEY = 'paper-reader-pane-ratio-v2';
-const ONBOARDING_WELCOME_CACHE_DIR = '/onboarding/mineru-cache/welcome-bfc1ec86';
-const ONBOARDING_WELCOME_PDF_URL = '/onboarding/welcome.pdf';
-
-function isOnboardingWelcomeItem(item: WorkspaceItem | null | undefined): boolean {
-  return item?.workspaceId === 'onboarding:welcome';
-}
-
-function pickLocaleText<T>(locale: UiLanguage, zh: T, en: T): T {
-  return locale === 'en-US' ? en : zh;
-}
-
-interface MineruCacheManifest {
-  version: number;
-  documentKey: string;
-  title: string;
-  pdfPath: string;
-  savedAt: string;
-  sourceKind: 'cloud' | 'manual-json' | 'sibling-json';
-  batchId?: string;
-  dataId?: string;
-  fileName?: string;
-  zipEntries?: string[];
-}
-
-interface TranslationCacheEnvelope {
-  version: number;
-  sourceLanguage: string;
-  targetLanguage: string;
-  translatedAt: string;
-  translations: TranslationMap;
-}
-
-interface SummaryCacheEnvelope {
-  version: number;
-  sourceKey: string;
-  summarizedAt: string;
-  summary: PaperSummary;
-}
-
-interface ScreenshotBounds {
-  left: number;
-  top: number;
-  width: number;
-  height: number;
-}
-
-interface ScreenshotSelectionRect {
-  left: number;
-  top: number;
-  width: number;
-  height: number;
-}
-
-interface ScreenshotSelectionState {
-  bounds: ScreenshotBounds;
-  startX: number | null;
-  startY: number | null;
-  currentX: number | null;
-  currentY: number | null;
-}
+import { getParentDirectory } from '../../utils/path';
+import { getFileNameFromPath } from '../../utils/text';
+import {
+  appendMarkdownSection,
+  appendUniqueLocalPath,
+  buildAttachmentFromPath,
+  buildQaSessionTitle,
+  buildRemotePdfDownloadPath,
+  buildScreenshotAttachmentFromPath,
+  clampPaneRatio,
+  blobToDataUrl,
+  createAttachmentId,
+  createChatMessage,
+  createQaSession,
+  cropScreenshotBlob,
+  getMineruJsonDisplayName,
+  getPreviewPdfName,
+  isEditableTarget,
+  isSameLocalPath,
+  LibraryPreviewSyncPayload,
+  loadPaneRatio,
+  normalizeSelectedText,
+  ONBOARDING_WELCOME_PDF_URL,
+  PANE_RATIO_STORAGE_KEY,
+  ReaderDocumentTranslationSnapshot,
+  ReaderTabBridgeState,
+  ScreenshotSelectionRect,
+  ScreenshotSelectionState,
+  updateQaSession,
+  waitForNextPaint,
+  formatQuoteMarkdown,
+} from './documentReaderShared';
+import {
+  chunkItems,
+  getModelRuntimeConfig,
+  isOnboardingWelcomeItem,
+  ONBOARDING_WELCOME_CACHE_DIR,
+  pickLocaleText,
+  resolveModelPreset,
+  type MineruCacheManifest,
+  type SummaryCacheEnvelope,
+  type TranslationCacheEnvelope,
+} from './readerShared';
 
 function isManifestShape(value: unknown): value is MineruCacheManifest {
   return Boolean(
@@ -154,35 +125,6 @@ function isManifestShape(value: unknown): value is MineruCacheManifest {
       typeof (value as MineruCacheManifest).documentKey === 'string' &&
       typeof (value as MineruCacheManifest).pdfPath === 'string',
   );
-}
-
-export interface ReaderTabBridgeState {
-  translating: boolean;
-  translatedCount: number;
-  onTranslate: () => void;
-  onClearTranslations: () => void;
-  onCloudParse: () => void;
-  onGenerateSummary: () => void;
-}
-
-export interface ReaderDocumentTranslationSnapshot {
-  targetLanguage: string;
-  translations: TranslationMap;
-  updatedAt: number;
-}
-
-export interface LibraryPreviewSyncPayload {
-  item: WorkspaceItem;
-  hasBlocks: boolean;
-  blockCount: number;
-  currentPdfName: string;
-  currentJsonName: string;
-  statusMessage: string;
-  sourceKey: string;
-  summary?: PaperSummary | null;
-  loading?: boolean;
-  error?: string;
-  operation?: LiteraturePaperTaskState | null;
 }
 
 interface DocumentReaderTabProps {
@@ -215,389 +157,6 @@ interface DocumentReaderTabProps {
   };
 }
 
-function clampPaneRatio(nextRatio: number): number {
-  return Math.min(MAX_LEFT_PANE_RATIO, Math.max(MIN_LEFT_PANE_RATIO, nextRatio));
-}
-
-function loadPaneRatio(): number {
-  try {
-    const storedRatio = Number(localStorage.getItem(PANE_RATIO_STORAGE_KEY));
-
-    return Number.isFinite(storedRatio) ? clampPaneRatio(storedRatio) : 0.5;
-  } catch {
-    return 0.5;
-  }
-}
-
-function loadStoredBoolean(key: string, fallback = false): boolean {
-  try {
-    const rawValue = localStorage.getItem(key);
-
-    return rawValue === null ? fallback : rawValue === 'true';
-  } catch {
-    return fallback;
-  }
-}
-
-function isEditableTarget(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) {
-    return false;
-  }
-
-  return Boolean(target.closest('input, textarea, select, [contenteditable="true"]'));
-}
-
-function normalizeSelectedText(text: string): string {
-  return normalizeTextSelection(text).slice(0, 2_000);
-}
-
-function formatQuoteMarkdown(text: string): string {
-  return text
-    .trim()
-    .split(/\r?\n/)
-    .map((line) => `> ${line}`)
-    .join('\n');
-}
-
-function appendMarkdownSection(current: string, section: string): string {
-  const nextSection = section.trim();
-
-  if (!nextSection) {
-    return current;
-  }
-
-  const trimmedCurrent = current.trimEnd();
-
-  return trimmedCurrent ? `${trimmedCurrent}\n\n${nextSection}\n` : `${nextSection}\n`;
-}
-
-function createChatMessage(
-  role: DocumentChatMessage['role'],
-  content: string,
-  options?: {
-    attachments?: DocumentChatAttachment[];
-    modelId?: string;
-    modelLabel?: string;
-  },
-): DocumentChatMessage {
-  return {
-    id: crypto.randomUUID(),
-    role,
-    content,
-    createdAt: Date.now(),
-    attachments: options?.attachments,
-    modelId: options?.modelId,
-    modelLabel: options?.modelLabel,
-  };
-}
-
-function buildQaSessionTitle(
-  locale: UiLanguage,
-  messages: DocumentChatMessage[],
-): string {
-  const firstUserMessage = messages.find(
-    (message) => message.role === 'user' && message.content.trim(),
-  );
-
-  if (!firstUserMessage) {
-    return pickLocaleText(locale, '新会话', 'New chat');
-  }
-
-  const normalizedContent = firstUserMessage.content.replace(/\s+/g, ' ').trim();
-
-  return normalizedContent.length > 36
-    ? `${normalizedContent.slice(0, 36)}…`
-    : normalizedContent;
-}
-
-function createQaSession(
-  locale: UiLanguage,
-  options?: Partial<Pick<DocumentChatSession, 'title' | 'createdAt' | 'updatedAt' | 'messages'>>,
-): DocumentChatSession {
-  const messages = options?.messages ?? [];
-  const firstMessage = messages[0];
-  const lastMessage = messages[messages.length - 1];
-  const createdAt = options?.createdAt ?? firstMessage?.createdAt ?? Date.now();
-  const updatedAt = options?.updatedAt ?? lastMessage?.createdAt ?? createdAt;
-
-  return {
-    id: crypto.randomUUID(),
-    title: options?.title?.trim() || buildQaSessionTitle(locale, messages),
-    createdAt,
-    updatedAt,
-    messages,
-  };
-}
-
-function updateQaSession(
-  sessions: DocumentChatSession[],
-  nextSession: DocumentChatSession,
-): DocumentChatSession[] {
-  const nextSessions = sessions.map((session) =>
-    session.id === nextSession.id ? nextSession : session,
-  );
-
-  return nextSessions.some((session) => session.id === nextSession.id)
-    ? nextSessions
-    : [...sessions, nextSession];
-}
-
-function createAttachmentId() {
-  return `attachment-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
-}
-
-function blobToDataUrlRemoved(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-
-    reader.onload = () => {
-      if (typeof reader.result === 'string') {
-        resolve(reader.result);
-        return;
-      }
-
-      reject(new Error('截图数据转换失败'));
-    };
-    reader.onerror = () => reject(reader.error ?? new Error('截图数据转换失败'));
-    reader.readAsDataURL(blob);
-  });
-}
-
-async function buildAttachmentFromPath(
-  path: string,
-  kind: 'image' | 'file',
-  locale: UiLanguage = 'zh-CN',
-): Promise<DocumentChatAttachment> {
-  const bytes = await readLocalBinaryFile(path);
-  const mimeType = guessMimeTypeFromPath(path);
-  const fileName = getFileNameFromPath(path);
-  const imageFile = isImagePath(path);
-  const textFile = isTextLikePath(path);
-
-  return {
-    id: createAttachmentId(),
-    kind: imageFile ? 'image' : kind,
-    name: fileName,
-    mimeType,
-    size: bytes.byteLength,
-    filePath: path,
-    dataUrl: imageFile ? bytesToDataUrl(bytes, mimeType) : undefined,
-    textContent: textFile ? decodeUtf8(bytes).slice(0, 12_000) : undefined,
-    summary: textFile
-      ? `${pickLocaleText(locale, '文本附件', 'Text attachment')} · ${formatFileSize(bytes.byteLength)}`
-      : imageFile
-        ? `${pickLocaleText(locale, '图片附件', 'Image attachment')} · ${formatFileSize(bytes.byteLength)}`
-        : `${pickLocaleText(locale, '文件附件', 'File attachment')} · ${formatFileSize(bytes.byteLength)}`,
-  };
-}
-
-async function buildScreenshotAttachmentFromPath(
-  path: string,
-  locale: UiLanguage = 'zh-CN',
-): Promise<DocumentChatAttachment> {
-  const attachment = await buildAttachmentFromPath(path, 'image', locale);
-
-  return {
-    ...attachment,
-    kind: 'screenshot',
-    summary: `${pickLocaleText(locale, '系统截图', 'System screenshot')} · ${formatFileSize(attachment.size)}`,
-  };
-}
-
-function sanitizeFilename(filename: string): string {
-  const sanitized = filename
-    .replace(/[<>:"/\\|?*\u0000-\u001F]/g, '_')
-    .replace(/\s+/g, ' ')
-    .trim();
-
-  return sanitized || 'document.pdf';
-}
-
-function ensurePdfExtension(filename: string): string {
-  return filename.toLowerCase().endsWith('.pdf') ? filename : `${filename}.pdf`;
-}
-
-function getMineruJsonDisplayName(path: string): string {
-  return path.startsWith('cloud:') ? path.replace(/^cloud:/, '') : getFileNameFromPath(path);
-}
-
-function resolveModelPreset(
-  presets: QaModelPreset[],
-  presetId: string | undefined,
-): QaModelPreset | null {
-  return presets.find((preset) => preset.id === presetId) ?? presets[0] ?? null;
-}
-
-function normalizeDocumentModelRuntimeConfig(value: unknown): ModelRuntimeConfig {
-  if (!value || typeof value !== 'object') {
-    return { reasoningEffort: 'auto' };
-  }
-
-  const config = value as Partial<ModelRuntimeConfig>;
-  const temperature =
-    typeof config.temperature === 'number' && Number.isFinite(config.temperature)
-      ? Math.min(2, Math.max(0, config.temperature))
-      : undefined;
-  const reasoningEffort =
-    config.reasoningEffort === 'low' ||
-    config.reasoningEffort === 'medium' ||
-    config.reasoningEffort === 'high'
-      ? config.reasoningEffort
-      : 'auto';
-
-  return { temperature, reasoningEffort };
-}
-
-function getDocumentModelRuntimeConfig(
-  settings: ReaderSettings,
-  role: ModelRuntimeRole,
-): ModelRuntimeConfig {
-  return normalizeDocumentModelRuntimeConfig(settings.modelRuntimeConfigs?.[role]);
-}
-
-function getPreviewPdfName(item: WorkspaceItem, pdfPath: string, source: PdfSource): string {
-  if (pdfPath) {
-    return getFileNameFromPath(pdfPath);
-  }
-
-  if (source?.kind === 'remote-url') {
-    return (
-      source.fileName ||
-      item.attachmentFilename ||
-      item.attachmentTitle ||
-      `${item.title}.pdf`
-    );
-  }
-
-  if (item.localPdfPath) {
-    return getFileNameFromPath(item.localPdfPath);
-  }
-
-  return item.attachmentFilename || item.attachmentTitle || `${item.title}.pdf`;
-}
-
-function getSummarySourceLabel(mode: ReaderSettings['summarySourceMode']): string {
-  return mode === 'pdf-text' ? 'PDF 文本' : 'MinerU Markdown';
-}
-
-function joinLocalPath(directory: string, filename: string): string {
-  return buildPathInDirectory(directory, filename);
-}
-
-function buildRemotePdfDownloadPath(directory: string, item: WorkspaceItem, source?: Exclude<PdfSource, null>) {
-  const rawName =
-    (source?.kind === 'remote-url' ? source.fileName : '') ||
-    item.attachmentFilename ||
-    item.attachmentTitle ||
-    item.title ||
-    item.itemKey;
-  const filename = ensurePdfExtension(sanitizeFilename(rawName));
-  const prefix = sanitizeFilename(item.itemKey || item.workspaceId);
-
-  return joinLocalPath(directory, `${prefix}-${filename}`);
-}
-
-function isSameLocalPath(left: string, right: string): boolean {
-  return normalizePathForCompare(left) === normalizePathForCompare(right);
-}
-
-function appendUniqueLocalPath(targets: string[], nextPath: string): void {
-  if (!nextPath.trim()) {
-    return;
-  }
-
-  if (targets.some((candidate) => isSameLocalPath(candidate, nextPath))) {
-    return;
-  }
-
-  targets.push(nextPath);
-}
-
-function waitForNextPaint(): Promise<void> {
-  return new Promise((resolve) => {
-    window.requestAnimationFrame(() => {
-      window.requestAnimationFrame(() => resolve());
-    });
-  });
-}
-
-function chunkItems<T>(items: T[], size: number): T[][] {
-  if (size <= 0) {
-    return [items];
-  }
-
-  const output: T[][] = [];
-
-  for (let index = 0; index < items.length; index += size) {
-    output.push(items.slice(index, index + size));
-  }
-
-  return output;
-}
-
-function loadBlobImage(blob: Blob): Promise<HTMLImageElement> {
-  return new Promise((resolve, reject) => {
-    const image = new Image();
-    const objectUrl = URL.createObjectURL(blob);
-
-    image.onload = () => {
-      URL.revokeObjectURL(objectUrl);
-      resolve(image);
-    };
-    image.onerror = () => {
-      URL.revokeObjectURL(objectUrl);
-      reject(new Error('截图图像解码失败'));
-    };
-    image.src = objectUrl;
-  });
-}
-
-async function cropScreenshotBlob(
-  blob: Blob,
-  selectionRect: ScreenshotSelectionRect,
-  captureWidth: number,
-  captureHeight: number,
-): Promise<Blob> {
-  const image = await loadBlobImage(blob);
-  const scaleX = image.naturalWidth / captureWidth;
-  const scaleY = image.naturalHeight / captureHeight;
-  const sourceLeft = Math.max(0, Math.round(selectionRect.left * scaleX));
-  const sourceTop = Math.max(0, Math.round(selectionRect.top * scaleY));
-  const sourceWidth = Math.max(1, Math.round(selectionRect.width * scaleX));
-  const sourceHeight = Math.max(1, Math.round(selectionRect.height * scaleY));
-  const canvas = document.createElement('canvas');
-
-  canvas.width = sourceWidth;
-  canvas.height = sourceHeight;
-
-  const context = canvas.getContext('2d');
-
-  if (!context) {
-    throw new Error('无法创建截图画布');
-  }
-
-  context.drawImage(
-    image,
-    sourceLeft,
-    sourceTop,
-    sourceWidth,
-    sourceHeight,
-    0,
-    0,
-    sourceWidth,
-    sourceHeight,
-  );
-
-  const nextBlob = await new Promise<Blob | null>((resolve) => {
-    canvas.toBlob((value) => resolve(value), 'image/png');
-  });
-
-  if (!nextBlob) {
-    throw new Error('截图裁剪失败');
-  }
-
-  return nextBlob;
-}
 
 function DocumentReaderTab({
   tabId,
@@ -2224,8 +1783,8 @@ function DocumentReaderTab({
           baseUrl: translationModelPreset.baseUrl,
           apiKey: translationModelPreset.apiKey.trim(),
           model: translationModelPreset.model,
-          temperature: getDocumentModelRuntimeConfig(settings, 'translation').temperature,
-          reasoningEffort: getDocumentModelRuntimeConfig(settings, 'translation').reasoningEffort,
+          temperature: getModelRuntimeConfig(settings, 'translation').temperature,
+          reasoningEffort: getModelRuntimeConfig(settings, 'translation').reasoningEffort,
           sourceLanguage: settings.translationSourceLanguage,
             targetLanguage: settings.translationTargetLanguage,
             blocks: batch,
@@ -2604,8 +2163,8 @@ function DocumentReaderTab({
           baseUrl: summaryModelPreset.baseUrl,
           apiKey: summaryModelPreset.apiKey.trim(),
           model: summaryModelPreset.model,
-          temperature: getDocumentModelRuntimeConfig(settings, 'summary').temperature,
-          reasoningEffort: getDocumentModelRuntimeConfig(settings, 'summary').reasoningEffort,
+          temperature: getModelRuntimeConfig(settings, 'summary').temperature,
+          reasoningEffort: getModelRuntimeConfig(settings, 'summary').reasoningEffort,
           title: currentDocument.title,
           authors: currentDocument.creators || undefined,
           year: currentDocument.year || undefined,
@@ -2785,8 +2344,8 @@ function DocumentReaderTab({
           baseUrl: selectionTranslationModelPreset.baseUrl,
           apiKey: selectionTranslationModelPreset.apiKey.trim(),
           model: selectionTranslationModelPreset.model,
-          temperature: getDocumentModelRuntimeConfig(settings, 'selectionTranslation').temperature,
-          reasoningEffort: getDocumentModelRuntimeConfig(settings, 'selectionTranslation').reasoningEffort,
+          temperature: getModelRuntimeConfig(settings, 'selectionTranslation').temperature,
+          reasoningEffort: getModelRuntimeConfig(settings, 'selectionTranslation').reasoningEffort,
           sourceLanguage: settings.translationSourceLanguage,
           targetLanguage: settings.translationTargetLanguage,
           blocks: [
@@ -3572,8 +3131,8 @@ function DocumentReaderTab({
           baseUrl: activeQaPreset.baseUrl,
           apiKey: activeQaPreset.apiKey.trim(),
           model: activeQaPreset.model,
-          temperature: getDocumentModelRuntimeConfig(settings, 'qa').temperature,
-          reasoningEffort: getDocumentModelRuntimeConfig(settings, 'qa').reasoningEffort,
+          temperature: getModelRuntimeConfig(settings, 'qa').temperature,
+          reasoningEffort: getModelRuntimeConfig(settings, 'qa').reasoningEffort,
           responseLanguage: settings.uiLanguage === 'en-US' ? 'English' : 'Simplified Chinese',
           title: currentDocument.title,
           authors: currentDocument.creators || undefined,
