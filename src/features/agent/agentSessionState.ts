@@ -1,12 +1,15 @@
 import { buildAgentHistorySession } from './AgentWorkspace.model.ts';
 import type { AgentChatMessage, AgentHistorySession } from './AgentWorkspace.types.ts';
-import type { UiLanguage } from '../../types/reader.ts';
+import type { DocumentChatAttachment, UiLanguage } from '../../types/reader.ts';
 
 interface SessionSnapshotInput {
   sessionId: string;
   messages: AgentChatMessage[];
   selectedPaperIds: string[];
   lastInstruction: string;
+  ragEnabled?: boolean;
+  selectedModelPresetId?: string;
+  attachments?: DocumentChatAttachment[];
   locale: UiLanguage;
 }
 
@@ -19,6 +22,9 @@ export function upsertAgentHistorySession(
     messages: input.messages,
     selectedPaperIds: input.selectedPaperIds,
     lastInstruction: input.lastInstruction,
+    ragEnabled: input.ragEnabled,
+    selectedModelPresetId: input.selectedModelPresetId,
+    attachments: input.attachments,
     locale: input.locale,
   });
   const otherSessions = sessions.filter((session) => session.id !== input.sessionId);
@@ -55,6 +61,9 @@ export function patchAgentHistorySessionMessage(
     messages: nextMessages,
     selectedPaperIds: targetSession.selectedPaperIds,
     lastInstruction: targetSession.lastInstruction,
+    ragEnabled: targetSession.ragEnabled,
+    selectedModelPresetId: targetSession.selectedModelPresetId,
+    attachments: targetSession.attachments,
     locale,
   });
 }

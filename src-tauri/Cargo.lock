@@ -2753,7 +2753,7 @@ dependencies = [
 
 [[package]]
 name = "paperquay"
-version = "0.1.3"
+version = "0.1.5"
 dependencies = [
  "arboard",
  "base64 0.22.1",
@@ -2764,9 +2764,11 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
+ "sqlite-vec",
  "tauri",
  "tauri-build",
  "tokio",
+ "zerocopy",
  "zip",
 ]
 
@@ -4107,6 +4109,13 @@ dependencies = [
  "gobject-sys",
  "libc",
  "system-deps",
+]
+
+[[package]]
+name = "sqlite-vec"
+version = "0.1.10-alpha.3"
+dependencies = [
+ "cc",
 ]
 
 [[package]]

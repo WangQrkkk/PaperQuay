@@ -119,7 +119,11 @@ pub(crate) fn save_library_settings(
         "folder_watch_enabled",
         settings.folder_watch_enabled.to_string(),
     )?;
-    save_setting(connection, "backup_enabled", settings.backup_enabled.to_string())?;
+    save_setting(
+        connection,
+        "backup_enabled",
+        settings.backup_enabled.to_string(),
+    )?;
     save_setting(
         connection,
         "preserve_original_path",

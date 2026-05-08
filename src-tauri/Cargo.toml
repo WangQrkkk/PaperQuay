@@ -1,6 +1,6 @@
 [package]
 name = "paperquay"
-version = "0.1.3"
+version = "0.1.5"
 description = "Desktop-first AI workspace for reading research papers"
 authors = ["OpenAI Codex"]
 edition = "2021"
@@ -23,6 +23,8 @@ rfd = "0.15.1"
 rusqlite = { version = "0.32.1", features = ["bundled"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+sqlite-vec = { path = "vendor/sqlite-vec" }
 tauri = { version = "2.0.0", features = [] }
 tokio = { version = "1.41.1", features = ["time", "rt", "macros"] }
+zerocopy = "0.8.27"
 zip = "2.2.2"

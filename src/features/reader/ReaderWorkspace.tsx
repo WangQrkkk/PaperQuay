@@ -18,6 +18,7 @@ import {
 import type {
   AssistantPanelKey,
   DocumentChatAttachment,
+  DocumentChatCitation,
   DocumentChatMessage,
   DocumentChatSession,
   PaperAnnotation,
@@ -116,10 +117,12 @@ interface ReaderWorkspaceProps {
   qaAttachments: DocumentChatAttachment[];
   qaModelPresets: QaModelPreset[];
   selectedQaPresetId: string;
+  qaRagEnabled: boolean;
   screenshotLoading: boolean;
   onQaInputChange: (value: string) => void;
   onQaSubmit: () => void;
   onQaPresetChange: (presetId: string) => void;
+  onQaRagEnabledChange: (value: boolean) => void;
   onQaSessionCreate: () => void;
   onQaSessionSelect: (sessionId: string) => void;
   onQaSessionDelete: (sessionId: string) => void;
@@ -127,6 +130,7 @@ interface ReaderWorkspaceProps {
   onSelectFileAttachments: () => void;
   onCaptureScreenshot: () => void;
   onRemoveAttachment: (attachmentId: string) => void;
+  onCitationClick: (citation: DocumentChatCitation) => void;
   qaLoading: boolean;
   qaError: string;
   selectedExcerpt: SelectedExcerpt | null;
@@ -195,6 +199,7 @@ function ReadingStage(props: ReaderWorkspaceProps) {
     qaAttachments,
     qaModelPresets,
     selectedQaPresetId,
+    qaRagEnabled,
     qaLoading,
     qaError,
     screenshotLoading,
@@ -211,6 +216,7 @@ function ReadingStage(props: ReaderWorkspaceProps) {
     onQaInputChange,
     onQaSubmit,
     onQaPresetChange,
+    onQaRagEnabledChange,
     onQaSessionCreate,
     onQaSessionSelect,
     onQaSessionDelete,
@@ -218,6 +224,7 @@ function ReadingStage(props: ReaderWorkspaceProps) {
     onSelectFileAttachments,
     onCaptureScreenshot,
     onRemoveAttachment,
+    onCitationClick,
     onAppendSelectedExcerptToQa,
     onAppendSelectedExcerptToNote,
     onTranslateSelectedExcerpt,
@@ -329,12 +336,14 @@ function ReadingStage(props: ReaderWorkspaceProps) {
     qaAttachments,
     qaModelPresets,
     selectedQaPresetId,
+    qaRagEnabled,
     qaLoading,
     qaError,
     screenshotLoading,
     onQaInputChange,
     onQaSubmit,
     onQaPresetChange,
+    onQaRagEnabledChange,
     onQaSessionCreate,
     onQaSessionSelect,
     onQaSessionDelete,
@@ -342,6 +351,7 @@ function ReadingStage(props: ReaderWorkspaceProps) {
     onSelectFileAttachments,
     onCaptureScreenshot,
     onRemoveAttachment,
+    onCitationClick,
     selectedExcerpt,
     selectedExcerptTranslation,
     selectedExcerptTranslating,
@@ -533,12 +543,14 @@ function ReaderWorkspace(props: ReaderWorkspaceProps) {
     qaAttachments: props.qaAttachments,
     qaModelPresets: props.qaModelPresets,
     selectedQaPresetId: props.selectedQaPresetId,
+    qaRagEnabled: props.qaRagEnabled,
     qaLoading: props.qaLoading,
     qaError: props.qaError,
     screenshotLoading: props.screenshotLoading,
     onQaInputChange: props.onQaInputChange,
     onQaSubmit: props.onQaSubmit,
     onQaPresetChange: props.onQaPresetChange,
+    onQaRagEnabledChange: props.onQaRagEnabledChange,
     onQaSessionCreate: props.onQaSessionCreate,
     onQaSessionSelect: props.onQaSessionSelect,
     onQaSessionDelete: props.onQaSessionDelete,
@@ -546,6 +558,7 @@ function ReaderWorkspace(props: ReaderWorkspaceProps) {
     onSelectFileAttachments: props.onSelectFileAttachments,
     onCaptureScreenshot: props.onCaptureScreenshot,
     onRemoveAttachment: props.onRemoveAttachment,
+    onCitationClick: props.onCitationClick,
     selectedExcerpt: props.selectedExcerpt,
     selectedExcerptTranslation: props.selectedExcerptTranslation,
     selectedExcerptTranslating: props.selectedExcerptTranslating,

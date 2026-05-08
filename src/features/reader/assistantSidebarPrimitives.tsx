@@ -1,5 +1,6 @@
 import { Component, useMemo, useState, type ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
+import type { Components } from 'react-markdown';
 import rehypeKatex from 'rehype-katex';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
@@ -161,10 +162,12 @@ function MarkdownPreview({
   content,
   className,
   normalizeMath = true,
+  components,
 }: {
   content: string;
   className?: string;
   normalizeMath?: boolean;
+  components?: Components;
 }) {
   const normalized = useMemo(() => {
     try {
@@ -207,6 +210,7 @@ function MarkdownPreview({
         )}
         remarkPlugins={[remarkGfm, remarkMath]}
         rehypePlugins={[[rehypeKatex, { strict: 'ignore', throwOnError: true }]]}
+        components={components}
       >
         {normalized.content}
       </ReactMarkdown>

@@ -1,13 +1,13 @@
 export type BBox = [number, number, number, number];
 
-export type BBoxCoordinateSystem = 'pdf' | 'normalized-1000';
+export type BBoxCoordinateSystem = "pdf" | "normalized-1000";
 
 export type BBoxPageSize = [number, number];
 
 export type PdfSource =
-  | { kind: 'local-path'; path: string }
+  | { kind: "local-path"; path: string }
   | {
-      kind: 'remote-url';
+      kind: "remote-url";
       url: string;
       headers?: Record<string, string>;
       fileName?: string;
@@ -15,17 +15,17 @@ export type PdfSource =
   | null;
 
 export type MineruKnownBlockType =
-  | 'paragraph'
-  | 'title'
-  | 'list'
-  | 'image'
-  | 'table'
-  | 'caption'
-  | 'equation'
-  | 'page_header'
-  | 'page_footer'
-  | 'page_number'
-  | 'page_footnote'
+  | "paragraph"
+  | "title"
+  | "list"
+  | "image"
+  | "table"
+  | "caption"
+  | "equation"
+  | "page_header"
+  | "page_footer"
+  | "page_number"
+  | "page_footnote"
   | (string & {});
 
 export interface MineruBlockBase {
@@ -63,9 +63,9 @@ export interface RenderableMineruBlock {
   isInteractive: boolean;
 }
 
-export type TranslationDisplayMode = 'original' | 'translated' | 'bilingual';
+export type TranslationDisplayMode = "original" | "translated" | "bilingual";
 
-export type UiLanguage = 'zh-CN' | 'en-US';
+export type UiLanguage = "zh-CN" | "en-US";
 
 export interface TranslationMap {
   [blockId: string]: string;
@@ -88,9 +88,9 @@ export interface TranslationBlockOutput {
   translatedText: string;
 }
 
-export type SummarySourceMode = 'pdf-text' | 'mineru-markdown';
+export type SummarySourceMode = "pdf-text" | "mineru-markdown";
 
-export type QaSourceMode = 'pdf-text' | 'mineru-markdown';
+export type QaSourceMode = "pdf-text" | "mineru-markdown";
 
 export interface OpenAICompatibleTranslateOptions {
   baseUrl: string;
@@ -103,6 +103,18 @@ export interface OpenAICompatibleTranslateOptions {
   blocks: TranslationBlockInput[];
   batchSize?: number;
   concurrency?: number;
+  requestsPerMinute?: number;
+}
+
+export interface OpenAICompatibleTranslateTextOptions {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+  temperature?: number;
+  reasoningEffort?: ModelReasoningEffort;
+  sourceLanguage: string;
+  targetLanguage: string;
+  text: string;
   requestsPerMinute?: number;
 }
 
@@ -121,6 +133,69 @@ export interface OpenAICompatibleTestResult {
   message: string;
 }
 
+export type RagSourceMode = "off" | "mineru-markdown" | "pdf-text" | "hybrid";
+
+export interface RagChunkInput {
+  chunkId: string;
+  chunkIndex: number;
+  pageIndex: number | null;
+  blockId?: string | null;
+  text: string;
+}
+
+export interface RagIndexedChunkInput extends RagChunkInput {
+  embedding: number[];
+}
+
+export interface RagIndexDocumentRequest {
+  documentKey: string;
+  title: string;
+  sourceType: RagSourceMode;
+  sourceSignature: string;
+  embeddingModelKey: string;
+  totalChunkCount: number;
+  chunks: RagIndexedChunkInput[];
+}
+
+export type RagDocumentIndexState = "pending" | "ready" | "failed";
+
+export interface RagDocumentIndexStatus {
+  documentKey: string;
+  sourceType: Exclude<RagSourceMode, "off" | "hybrid">;
+  sourceSignature: string;
+  embeddingModelKey: string;
+  embeddingDimension: number;
+  totalChunkCount: number;
+  chunkCount: number;
+  indexedChunkCount: number;
+  indexedAt: number;
+  status: RagDocumentIndexState;
+  lastError?: string | null;
+  failedAt?: number | null;
+  retryAfterMs?: number | null;
+  cooldownUntil?: number | null;
+}
+
+export interface RagRetrievalResult {
+  chunkId: string;
+  sourceType: Exclude<RagSourceMode, "off" | "hybrid">;
+  pageIndex: number | null;
+  blockId?: string | null;
+  text: string;
+  score: number;
+}
+
+export interface RagReportDocumentIndexFailureRequest {
+  documentKey: string;
+  title: string;
+  sourceType: Exclude<RagSourceMode, "off" | "hybrid">;
+  sourceSignature: string;
+  embeddingModelKey: string;
+  totalChunkCount: number;
+  errorMessage: string;
+  retryAfterMs?: number | null;
+}
+
 export interface QaModelPreset {
   id: string;
   label: string;
@@ -130,14 +205,14 @@ export interface QaModelPreset {
   labelCustomized?: boolean;
 }
 
-export type ModelReasoningEffort = 'auto' | 'low' | 'medium' | 'high';
+export type ModelReasoningEffort = "auto" | "low" | "medium" | "high";
 
 export type ModelRuntimeRole =
-  | 'translation'
-  | 'selectionTranslation'
-  | 'summary'
-  | 'agent'
-  | 'qa';
+  | "translation"
+  | "selectionTranslation"
+  | "summary"
+  | "agent"
+  | "qa";
 
 export interface ModelRuntimeConfig {
   temperature?: number;
@@ -178,15 +253,9 @@ export interface PaperAnnotation {
   updatedAt: number;
 }
 
-export type ZoteroRelatedNoteKind =
-  | 'zotero-note'
-  | 'markdown'
-  | 'text';
+export type ZoteroRelatedNoteKind = "zotero-note" | "markdown" | "text";
 
-export type ZoteroRelatedNoteFormat =
-  | 'html'
-  | 'markdown'
-  | 'plain';
+export type ZoteroRelatedNoteFormat = "html" | "markdown" | "plain";
 
 export interface ZoteroRelatedNote {
   id: string;
@@ -199,10 +268,7 @@ export interface ZoteroRelatedNote {
   filePath?: string;
 }
 
-export type DocumentChatAttachmentKind =
-  | 'image'
-  | 'file'
-  | 'screenshot';
+export type DocumentChatAttachmentKind = "image" | "file" | "screenshot";
 
 export interface DocumentChatAttachment {
   id: string;
@@ -216,13 +282,47 @@ export interface DocumentChatAttachment {
   summary?: string;
 }
 
+export type DocumentChatQaContextOrigin =
+  | "local-rag"
+  | "pdf-text"
+  | "mineru-markdown";
+
+export type DocumentChatQaContextState =
+  | "retrieved"
+  | "disabled"
+  | "missing-embedding-config"
+  | "no-sources"
+  | "indexing"
+  | "empty"
+  | "failed";
+
+export interface DocumentChatQaContext {
+  origin: DocumentChatQaContextOrigin;
+  retrievalState: DocumentChatQaContextState;
+  retrievedChunkCount?: number;
+  indexedChunkCount?: number;
+  totalChunkCount?: number;
+  errorMessage?: string | null;
+}
+
+export interface DocumentChatCitation {
+  id: string;
+  label: string;
+  sourceType: Exclude<RagSourceMode, "off" | "hybrid">;
+  pageIndex: number | null;
+  blockId?: string | null;
+  previewText?: string;
+}
+
 export interface DocumentChatMessage {
   id: string;
-  role: 'user' | 'assistant';
+  role: "user" | "assistant";
   content: string;
   createdAt: number;
   modelId?: string;
   modelLabel?: string;
+  qaContext?: DocumentChatQaContext;
+  citations?: DocumentChatCitation[];
   attachments?: DocumentChatAttachment[];
 }
 
@@ -234,15 +334,21 @@ export interface DocumentChatSession {
   messages: DocumentChatMessage[];
 }
 
-export type AssistantPanelKey = 'chat' | 'translate' | 'info' | 'notes' | 'annotations' | null;
+export type AssistantPanelKey =
+  | "chat"
+  | "translate"
+  | "info"
+  | "notes"
+  | "annotations"
+  | null;
 
-export type WorkspaceStage = 'overview' | 'reading';
+export type WorkspaceStage = "overview" | "reading";
 
-export type ReaderViewMode = 'dual-pane' | 'pdf-only';
+export type ReaderViewMode = "dual-pane" | "pdf-only";
 
-export type TextSelectionSource = 'pdf' | 'blocks';
+export type TextSelectionSource = "pdf" | "blocks";
 
-export type TextSelectionPlacement = 'top' | 'bottom';
+export type TextSelectionPlacement = "top" | "bottom";
 
 export interface TextSelectionPayload {
   text: string;
@@ -320,7 +426,11 @@ export interface ZoteroDownloadResult {
   filename: string;
 }
 
-export type WorkspaceItemSource = 'zotero-local' | 'standalone' | 'onboarding' | 'native-library';
+export type WorkspaceItemSource =
+  | "zotero-local"
+  | "standalone"
+  | "onboarding"
+  | "native-library";
 
 export interface WorkspaceItem extends ZoteroLibraryItem {
   source: WorkspaceItemSource;
@@ -333,6 +443,9 @@ export interface ReaderSettings {
   autoLoadSiblingJson: boolean;
   autoMineruParse: boolean;
   autoGenerateSummary: boolean;
+  localRagEnabled: boolean;
+  localRagTopK: number;
+  ragSourceMode: RagSourceMode;
   libraryBatchConcurrency: number;
   autoTranslateSelection: boolean;
   smoothScroll: boolean;
@@ -353,7 +466,13 @@ export interface ReaderSettings {
   selectionTranslationModelPresetId: string;
   summaryModelPresetId: string;
   agentModelPresetId: string;
+  embeddingBaseUrl: string;
+  embeddingModel: string;
+  embeddingDimensions: number | null;
+  embeddingRequestTimeoutSeconds: number;
+  embeddingBatchSize: number;
   modelRuntimeConfigs: Partial<Record<ModelRuntimeRole, ModelRuntimeConfig>>;
+  ragEmbeddingModelPresetId: string;
   summarySourceMode: SummarySourceMode;
   summaryOutputLanguage: string;
   qaSourceMode: QaSourceMode;
@@ -367,6 +486,7 @@ export interface ReaderSecrets {
   mineruApiToken: string;
   translationApiKey: string;
   summaryApiKey: string;
+  embeddingApiKey: string;
   zoteroApiKey: string;
   zoteroUserId: string;
   qaModelPresets: QaModelPreset[];

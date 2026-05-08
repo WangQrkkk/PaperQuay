@@ -1,5 +1,6 @@
 import type { FormEvent, Ref, WheelEventHandler } from 'react';
 import {
+  Camera,
   BookOpen,
   Bot,
   BrainCircuit,
@@ -7,12 +8,14 @@ import {
   CheckCircle2,
   Clock3,
   Database,
+  ImagePlus,
   GitBranch,
   Layers3,
   Loader2,
   MessageSquareText,
   Minus,
   Moon,
+  Paperclip,
   PanelLeftClose,
   PanelLeftOpen,
   PlayCircle,
@@ -29,7 +32,7 @@ import {
 } from 'lucide-react';
 import type { LibraryAgentPlan } from '../../services/libraryAgent';
 import type { LiteraturePaper } from '../../types/library';
-import type { UiLanguage } from '../../types/reader';
+import type { DocumentChatAttachment, QaModelPreset, UiLanguage } from '../../types/reader';
 import { toolFunctionName } from './AgentWorkspace.model';
 import type {
   AgentCapability,
@@ -39,14 +42,18 @@ import type {
 } from './AgentWorkspace.types';
 import { PlanDiffCard } from './AgentExecutionCards';
 import { AssistantMessageCard, UserMessageCard } from './AgentWorkspaceMessages';
+import { formatFileSize } from '../../utils/files';
 
 type ThemeMode = 'light' | 'dark' | 'system';
 
 interface AgentWorkspaceViewProps {
   activeSessionId: string;
   activeSessionRunning: boolean;
+  agentAttachments: DocumentChatAttachment[];
   agentCapabilities: AgentCapability[];
+  agentModelPresets: QaModelPreset[];
   agentPresetName: string;
+  agentRagEnabled: boolean;
   applyingPlan: boolean;
   approvedItemIds: Set<string>;
   chatScrollRef: Ref<HTMLDivElement>;
@@ -86,7 +93,9 @@ interface AgentWorkspaceViewProps {
   localizedToolLabel: (tool: LibraryAgentPlan['tool']) => string;
   messages: AgentChatMessage[];
   onApplyPlan: () => void;
+  onAgentPresetChange: (presetId: string) => void;
   onCancelPlan: () => void;
+  onCaptureScreenshot: () => void;
   onClearSelection: () => void;
   onComposerChange: (value: string) => void;
   onCopyToolParameters: (toolCall: AgentToolCallView) => void;
@@ -94,8 +103,12 @@ interface AgentWorkspaceViewProps {
   onInspectPlanItem: (itemId: string, paperTitle: string) => void;
   onPaperSearchQueryChange: (value: string) => void;
   onRefreshPapers: () => void;
+  onRemoveAttachment: (attachmentId: string) => void;
   onSelectAllVisible: () => void;
+  onSelectFileAttachments: () => void;
+  onSelectImageAttachments: () => void;
   onSubmitPrompt: (event: FormEvent<HTMLFormElement>) => void;
+  onToggleAgentRag: () => void;
   onTogglePaper: (paperId: string) => void;
   onTogglePlanItem: (itemId: string) => void;
   onToggleStep: (stepKey: string) => void;
@@ -106,10 +119,12 @@ interface AgentWorkspaceViewProps {
   plan: LibraryAgentPlan | null;
   promptSuggestions: string[];
   selectedInspectorItem: LibraryAgentPlan['items'][number] | null;
+  selectedAgentPresetId: string;
   selectedPaperIds: Set<string>;
   selectedPapers: LiteraturePaper[];
   selectedPlanItems: LibraryAgentPlan['items'];
   selectedTags: string[];
+  screenshotLoading: boolean;
   setStatusMessage: (message: string) => void;
   sortedHistorySessions: AgentHistorySession[];
   statusMessage: string;
@@ -120,8 +135,11 @@ interface AgentWorkspaceViewProps {
 export default function AgentWorkspaceView({
   activeSessionId,
   activeSessionRunning,
+  agentAttachments,
   agentCapabilities,
+  agentModelPresets,
   agentPresetName,
+  agentRagEnabled,
   applyingPlan,
   approvedItemIds,
   chatScrollRef,
@@ -161,7 +179,9 @@ export default function AgentWorkspaceView({
   localizedToolLabel,
   messages,
   onApplyPlan,
+  onAgentPresetChange,
   onCancelPlan,
+  onCaptureScreenshot,
   onClearSelection,
   onComposerChange,
   onCopyToolParameters,
@@ -169,8 +189,12 @@ export default function AgentWorkspaceView({
   onInspectPlanItem,
   onPaperSearchQueryChange,
   onRefreshPapers,
+  onRemoveAttachment,
   onSelectAllVisible,
+  onSelectFileAttachments,
+  onSelectImageAttachments,
   onSubmitPrompt,
+  onToggleAgentRag,
   onTogglePaper,
   onTogglePlanItem,
   onToggleStep,
@@ -181,10 +205,12 @@ export default function AgentWorkspaceView({
   plan,
   promptSuggestions,
   selectedInspectorItem,
+  selectedAgentPresetId,
   selectedPaperIds,
   selectedPapers,
   selectedPlanItems,
   selectedTags,
+  screenshotLoading,
   setStatusMessage,
   sortedHistorySessions,
   statusMessage,
@@ -737,7 +763,56 @@ export default function AgentWorkspaceView({
                   </div>
                 ) : null}
 
-                <form onSubmit={onSubmitPrompt} className="flex items-end gap-3">
+                {agentAttachments.length > 0 ? (
+                  <div className="mb-3 flex flex-wrap gap-2">
+                    {agentAttachments.map((attachment) => {
+                      const AttachmentIcon =
+                        attachment.kind === 'image'
+                          ? ImagePlus
+                          : attachment.kind === 'screenshot'
+                            ? Camera
+                            : Paperclip;
+
+                      return (
+                        <div
+                          key={attachment.id}
+                          className="group inline-flex items-center gap-3 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600 shadow-[0_8px_18px_rgba(15,23,42,0.04)] dark:border-white/10 dark:bg-chrome-900 dark:text-chrome-300"
+                        >
+                          {attachment.dataUrl &&
+                          (attachment.kind === 'image' || attachment.kind === 'screenshot') ? (
+                            <img
+                              src={attachment.dataUrl}
+                              alt={attachment.name}
+                              className="h-10 w-10 rounded-xl border border-slate-200 object-cover dark:border-white/10"
+                            />
+                          ) : (
+                            <span className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 text-slate-500 dark:bg-chrome-800 dark:text-chrome-400">
+                              <AttachmentIcon className="h-4 w-4" strokeWidth={1.8} />
+                            </span>
+                          )}
+                          <div className="min-w-0">
+                            <div className="max-w-[180px] truncate font-medium text-slate-700 dark:text-chrome-200">
+                              {attachment.name}
+                            </div>
+                            <div className="mt-0.5 text-[11px] text-slate-400 dark:text-chrome-500">
+                              {formatFileSize(attachment.size)}
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => onRemoveAttachment(attachment.id)}
+                            className="rounded-full p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-chrome-800 dark:hover:text-chrome-200"
+                            aria-label={l('移除附件', 'Remove attachment')}
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : null}
+
+                <form onSubmit={onSubmitPrompt} className="rounded-[28px] border border-slate-200 bg-white/92 p-3 shadow-[0_20px_44px_rgba(15,23,42,0.07)] dark:border-white/10 dark:bg-chrome-900/90 dark:shadow-none">
                   <textarea
                     value={composerValue}
                     onChange={(event) => onComposerChange(event.target.value)}
@@ -747,21 +822,87 @@ export default function AgentWorkspaceView({
                         submitPromptFromEnter();
                       }
                     }}
-                    className="min-h-[58px] flex-1 resize-none rounded-[24px] border border-slate-200 bg-white/95 px-4 py-3 text-sm leading-6 text-slate-800 shadow-sm outline-none transition focus:border-teal-300 focus:bg-white dark:border-white/10 dark:bg-chrome-900 dark:text-chrome-100 dark:focus:border-teal-300/50"
+                    className="min-h-[96px] w-full resize-none rounded-2xl border-0 bg-transparent px-1 py-1 text-sm leading-7 text-slate-800 outline-none dark:text-chrome-100"
                     placeholder={l('在此处发送消息...', 'Send a message here...')}
                   />
-                  <button
-                    type="submit"
-                    disabled={activeSessionRunning || !composerValue.trim()}
-                    className="inline-flex h-[58px] items-center gap-2 rounded-[22px] bg-slate-950 px-5 text-sm font-black text-white shadow-[0_18px_40px_rgba(15,23,42,0.18)] transition hover:-translate-y-0.5 hover:bg-slate-800 disabled:translate-y-0 disabled:opacity-50 dark:bg-teal-300 dark:text-slate-950 dark:hover:bg-teal-200"
-                  >
-                    {activeSessionRunning ? (
-                      <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2} />
-                    ) : (
-                      <Send className="h-4 w-4" strokeWidth={2} />
-                    )}
-                    {l('发送', 'Send')}
-                  </button>
+                  <div className="mt-3 flex flex-wrap items-end justify-between gap-3">
+                    <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={onSelectImageAttachments}
+                        title={l('添加图片', 'Add images')}
+                        aria-label={l('添加图片', 'Add images')}
+                        className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-slate-50 text-slate-600 transition hover:border-slate-300 hover:bg-white hover:text-slate-900 dark:border-white/10 dark:bg-chrome-800 dark:text-chrome-300 dark:hover:border-white/20 dark:hover:bg-chrome-700 dark:hover:text-chrome-100"
+                      >
+                        <ImagePlus className="h-4 w-4" strokeWidth={1.8} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={onSelectFileAttachments}
+                        title={l('添加文件', 'Add files')}
+                        aria-label={l('添加文件', 'Add files')}
+                        className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-slate-50 text-slate-600 transition hover:border-slate-300 hover:bg-white hover:text-slate-900 dark:border-white/10 dark:bg-chrome-800 dark:text-chrome-300 dark:hover:border-white/20 dark:hover:bg-chrome-700 dark:hover:text-chrome-100"
+                      >
+                        <Paperclip className="h-4 w-4" strokeWidth={1.8} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={onCaptureScreenshot}
+                        disabled={screenshotLoading}
+                        title={screenshotLoading ? l('截图中...', 'Capturing...') : l('截图', 'Screenshot')}
+                        aria-label={screenshotLoading ? l('截图中...', 'Capturing...') : l('截图', 'Screenshot')}
+                        className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-slate-50 text-slate-600 transition hover:border-slate-300 hover:bg-white hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-50 dark:border-white/10 dark:bg-chrome-800 dark:text-chrome-300 dark:hover:border-white/20 dark:hover:bg-chrome-700 dark:hover:text-chrome-100"
+                      >
+                        {screenshotLoading ? (
+                          <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.8} />
+                        ) : (
+                          <Camera className="h-4 w-4" strokeWidth={1.8} />
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={onToggleAgentRag}
+                        title={agentRagEnabled ? l('关闭 RAG', 'Disable RAG') : l('开启 RAG', 'Enable RAG')}
+                        aria-label={agentRagEnabled ? l('关闭 RAG', 'Disable RAG') : l('开启 RAG', 'Enable RAG')}
+                        className={[
+                          'inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border transition',
+                          agentRagEnabled
+                            ? 'border-teal-200 bg-teal-50 text-teal-700 dark:border-teal-300/30 dark:bg-teal-300/10 dark:text-teal-200'
+                            : 'border-slate-200 bg-slate-50 text-slate-600 hover:border-slate-300 hover:bg-white hover:text-slate-900 dark:border-white/10 dark:bg-chrome-800 dark:text-chrome-300 dark:hover:border-white/20 dark:hover:bg-chrome-700 dark:hover:text-chrome-100',
+                        ].join(' ')}
+                      >
+                        <Database className="h-4 w-4" strokeWidth={1.8} />
+                      </button>
+                      <label className="flex h-10 min-w-[210px] items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600 dark:border-white/10 dark:bg-chrome-800 dark:text-chrome-300">
+                        <Bot className="h-4 w-4 shrink-0 text-slate-400 dark:text-chrome-500" strokeWidth={1.8} />
+                        <select
+                          value={selectedAgentPresetId}
+                          onChange={(event) => onAgentPresetChange(event.target.value)}
+                          className="min-w-0 flex-1 bg-transparent text-sm text-slate-700 outline-none dark:text-chrome-100"
+                          title={l('选择 Agent 模型', 'Choose Agent model')}
+                        >
+                          {agentModelPresets.map((preset) => (
+                            <option key={preset.id} value={preset.id}>
+                              {preset.label || preset.model}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+
+                    <button
+                      type="submit"
+                      disabled={activeSessionRunning || !composerValue.trim()}
+                      className="inline-flex h-11 shrink-0 items-center gap-2 rounded-full bg-slate-950 px-5 text-sm font-black text-white shadow-[0_18px_40px_rgba(15,23,42,0.18)] transition hover:-translate-y-0.5 hover:bg-slate-800 disabled:translate-y-0 disabled:opacity-50 dark:bg-teal-300 dark:text-slate-950 dark:hover:bg-teal-200"
+                    >
+                      {activeSessionRunning ? (
+                        <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2} />
+                      ) : (
+                        <Send className="h-4 w-4" strokeWidth={2} />
+                      )}
+                      {l('发送', 'Send')}
+                    </button>
+                  </div>
                 </form>
               </div>
             </div>

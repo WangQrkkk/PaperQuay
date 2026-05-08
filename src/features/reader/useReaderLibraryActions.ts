@@ -14,7 +14,6 @@ import {
   extractTranslatableMarkdownFromMineruBlock,
 } from '../../services/mineru';
 import { resolveSummaryOutputLanguage } from '../../services/summarySource';
-import { translateBlocksOpenAICompatible } from '../../services/translation';
 import type {
   OpenAICompatibleTestResult,
   QaModelPreset,
@@ -30,7 +29,6 @@ import { buildMineruCachePaths } from '../../utils/mineruCache';
 import {
   createNativeLibraryWorkspaceItem,
   createStandaloneItem,
-  chunkItems,
   getModelRuntimeConfig,
   EMPTY_LIBRARY_PREVIEW_STATE,
   type BatchProgressState,
@@ -39,6 +37,12 @@ import { isPaperPipelineBusy } from './paperTaskState';
 import {
   writeLibraryTranslationCache,
 } from './readerLibraryPreview';
+import {
+  mergeReaderTranslations,
+  readTranslationCache,
+  sanitizeTranslationErrorMessage,
+  translateBlocksBestEffort,
+} from './readerTranslation';
 import type { UseReaderLibraryActionsOptions } from './readerLibraryActionTypes';
 import { useReaderLibraryBatchActions } from './useReaderLibraryBatchActions';
 
@@ -80,6 +84,7 @@ export function useReaderLibraryActions({
   itemParseStatusMap,
   l,
   libraryPreviewStates,
+  libraryTranslationSnapshots,
   loadLibraryPreviewBlocks,
   mineruApiToken,
   settings,
@@ -167,6 +172,16 @@ export function useReaderLibraryActions({
       settings.translationSourceLanguage,
       settings.translationTargetLanguage,
     ],
+  );
+
+  const readExistingLibraryTranslations = useCallback(
+    async (item: WorkspaceItem) =>
+      readTranslationCache({
+        item,
+        mineruCacheDir: settings.mineruCacheDir,
+        targetLanguage: settings.translationTargetLanguage,
+      }),
+    [settings.mineruCacheDir, settings.translationTargetLanguage],
   );
 
   const runLibraryItemMineruParse = useCallback(
@@ -470,81 +485,82 @@ export function useReaderLibraryActions({
 
         const batchSize = Math.max(1, settings.translationBatchSize);
         const concurrency = Math.max(1, settings.translationConcurrency);
-        const batches = chunkItems(blocksToTranslate, batchSize);
-        const collectedTranslations = new Map<string, string>();
-        let completedBlocks = 0;
-        let cursor = 0;
+        const cachedTranslationResult = await readExistingLibraryTranslations(item).catch(
+          () => null,
+        );
+        const currentSnapshot = libraryTranslationSnapshots[item.workspaceId] ?? null;
+        const resumedTranslations = mergeReaderTranslations(
+          cachedTranslationResult?.translations,
+          currentSnapshot?.translations,
+        );
+        const resumedCount = Object.keys(resumedTranslations).length;
 
-        const runWorker = async () => {
-          while (true) {
-            const currentIndex = cursor;
-            cursor += 1;
-
-            if (currentIndex >= batches.length) {
-              return;
-            }
-
-            const batch = batches[currentIndex];
-            const translations = await translateBlocksOpenAICompatible({
-              baseUrl: translationModelPreset.baseUrl,
-              apiKey: translationModelPreset.apiKey.trim(),
-              model: translationModelPreset.model,
-              temperature: getModelRuntimeConfig(settings, 'translation').temperature,
-              reasoningEffort: getModelRuntimeConfig(settings, 'translation').reasoningEffort,
-              sourceLanguage: settings.translationSourceLanguage,
+        if (resumedCount > 0) {
+          setLibraryTranslationSnapshots((current) => ({
+            ...current,
+            [item.workspaceId]: {
               targetLanguage: settings.translationTargetLanguage,
-              blocks: batch,
-              batchSize: batch.length,
-              concurrency: 1,
-              requestsPerMinute: settings.translationRequestsPerMinute,
-            });
+              translations: resumedTranslations,
+              updatedAt: Date.now(),
+            },
+          }));
+        }
 
-            for (const translation of translations) {
-              if (translation.translatedText.trim()) {
-                collectedTranslations.set(translation.blockId, translation.translatedText);
+        const result = await translateBlocksBestEffort({
+          apiKey: translationModelPreset.apiKey.trim(),
+          baseUrl: translationModelPreset.baseUrl,
+          batchSize,
+          blocks: blocksToTranslate,
+          concurrency,
+          existingTranslations: resumedTranslations,
+          model: translationModelPreset.model,
+          onProgress: async (progress) => {
+            setLibraryTranslationSnapshots((current) => ({
+              ...current,
+              [item.workspaceId]: {
+                targetLanguage: settings.translationTargetLanguage,
+                translations: progress.translations,
+                updatedAt: Date.now(),
+              },
+            }));
+
+            if (Object.keys(progress.translations).length > 0) {
+              try {
+                await saveLibraryTranslationCache(item, progress.translations);
+              } catch (cacheError) {
+                console.warn('Failed to save library translation cache', cacheError);
               }
             }
 
-            completedBlocks = Math.min(blocksToTranslate.length, completedBlocks + batch.length);
-            setStatusMessage(
-              l(
-                `正在翻译 ${completedBlocks}/${blocksToTranslate.length} 个块`,
-                `Translating ${completedBlocks}/${blocksToTranslate.length} blocks`,
-              ),
+            const progressMessage = l(
+              `正在翻译 ${progress.translatedCount}/${progress.totalBlocks} 个块`,
+              `Translating ${progress.translatedCount}/${progress.totalBlocks} blocks`,
             );
+
+            setStatusMessage(progressMessage);
             updateLibraryPreviewOperation(
               item,
               createPaperTaskState(
                 'translation',
                 'running',
-                l(
-                  `正在翻译 ${completedBlocks}/${blocksToTranslate.length} 个块`,
-                  `Translating ${completedBlocks}/${blocksToTranslate.length} blocks`,
-                ),
-                completedBlocks,
-                blocksToTranslate.length,
+                progressMessage,
+                progress.translatedCount,
+                progress.totalBlocks,
               ),
               {
                 loading: true,
                 error: '',
-                statusMessage: l(
-                  `正在翻译 ${completedBlocks}/${blocksToTranslate.length} 个块`,
-                  `Translating ${completedBlocks}/${blocksToTranslate.length} blocks`,
-                ),
+                statusMessage: progressMessage,
               },
             );
-          }
-        };
-
-        await Promise.all(
-          Array.from({ length: Math.min(concurrency, batches.length) }, () => runWorker()),
-        );
-
-        const translations: TranslationMap = {};
-
-        for (const [blockId, translatedText] of collectedTranslations.entries()) {
-          translations[blockId] = translatedText;
-        }
+          },
+          reasoningEffort: getModelRuntimeConfig(settings, 'translation').reasoningEffort,
+          requestsPerMinute: settings.translationRequestsPerMinute,
+          sourceLanguage: settings.translationSourceLanguage,
+          targetLanguage: settings.translationTargetLanguage,
+          temperature: getModelRuntimeConfig(settings, 'translation').temperature,
+        });
+        const translations = result.translations;
 
         setLibraryTranslationSnapshots((current) => ({
           ...current,
@@ -571,41 +587,49 @@ export function useReaderLibraryActions({
           console.warn('Failed to save library translation cache', cacheError);
         }
 
+        const translatedCount = Object.keys(translations).length;
+        const failedCount = result.failedBlocks.length;
+        const translationFinishedMessage =
+          failedCount > 0
+            ? l(
+                `全文翻译已部分完成，已保存 ${translatedCount} 段译文，剩余 ${failedCount} 段可稍后重试${cacheStatusSuffix}`,
+                `Full translation partially completed. Saved ${translatedCount} translated blocks, with ${failedCount} remaining for retry${cacheStatusSuffix}`,
+              )
+            : l(
+                `全文翻译完成，已生成 ${translatedCount} 段译文${cacheStatusSuffix}`,
+                `Full translation complete. Generated ${translatedCount} translated blocks${cacheStatusSuffix}`,
+              );
+
         setLibraryPreviewStates((current) => ({
           ...current,
           [item.workspaceId]: {
             ...(current[item.workspaceId] ?? EMPTY_LIBRARY_PREVIEW_STATE),
             loading: false,
-            error: '',
+            error:
+              failedCount > 0
+                ? sanitizeTranslationErrorMessage(
+                    result.failureMessages[0],
+                    l,
+                    'document',
+                  )
+                : '',
             operation: createPaperTaskState(
               'translation',
-              'success',
-              l(
-                `全文翻译完成，已生成 ${Object.keys(translations).length} 段译文${cacheStatusSuffix}`,
-                `Full translation complete. Generated ${Object.keys(translations).length} translated blocks${cacheStatusSuffix}`,
-              ),
-              blocksToTranslate.length,
+              failedCount > 0 ? 'error' : 'success',
+              translationFinishedMessage,
+              translatedCount,
               blocksToTranslate.length,
             ),
             hasBlocks: previewContext.blocks.length > 0,
             blockCount: previewContext.blocks.length,
             currentPdfName: previewContext.currentPdfName,
             currentJsonName: previewContext.currentJsonName,
-            statusMessage: l(
-              `全文翻译完成，已生成 ${Object.keys(translations).length} 段译文${cacheStatusSuffix}`,
-              `Full translation complete. Generated ${Object.keys(translations).length} translated blocks${cacheStatusSuffix}`,
-            ),
+            statusMessage: translationFinishedMessage,
           },
         }));
-        setStatusMessage(
-          l(
-            `全文翻译完成：${Object.keys(translations).length} 段${cacheStatusSuffix}`,
-            `Full translation complete: ${Object.keys(translations).length} blocks${cacheStatusSuffix}`,
-          ),
-        );
+        setStatusMessage(translationFinishedMessage);
       } catch (nextError) {
-        const message =
-          nextError instanceof Error ? nextError.message : l('全文翻译失败', 'Full translation failed');
+        const message = sanitizeTranslationErrorMessage(nextError, l, 'document');
         setError(message);
         setStatusMessage(message);
         setLibraryPreviewStates((current) => ({
@@ -634,6 +658,8 @@ export function useReaderLibraryActions({
       settings,
       translationModelPreset,
       updateLibraryPreviewOperation,
+      libraryTranslationSnapshots,
+      readExistingLibraryTranslations,
     ],
   );
   const {

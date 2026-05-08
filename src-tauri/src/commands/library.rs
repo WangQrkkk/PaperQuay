@@ -15,6 +15,8 @@ pub use models::*;
 use rusqlite::Connection;
 use tauri::{AppHandle, Manager};
 
+use crate::commands::rag::{migrate_rag_schema, register_sqlite_vec_once};
+
 use categories::{category_id_for_system_key, library_list_categories};
 use papers::list_papers_inner;
 use schema::{migrate_library_schema, seed_system_categories};
@@ -41,8 +43,10 @@ mod tests {
     use rusqlite::params;
 
     fn test_connection() -> Connection {
+        register_sqlite_vec_once();
         let connection = Connection::open_in_memory().expect("open sqlite");
         migrate_library_schema(&connection).expect("migrate");
+        migrate_rag_schema(&connection).expect("migrate rag");
         seed_system_categories(&connection).expect("seed categories");
         connection
     }
@@ -58,8 +62,11 @@ mod tests {
     }
 
     fn write_test_pdf(path: &Path) {
-        fs::write(path, b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF")
-            .expect("write test pdf");
+        fs::write(
+            path,
+            b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF",
+        )
+        .expect("write test pdf");
     }
 
     #[test]
@@ -95,8 +102,14 @@ mod tests {
         .expect("list recent papers");
 
         assert_eq!(recent_papers.len() as i64, RECENT_IMPORT_LIMIT);
-        assert_eq!(recent_papers.first().map(|paper| paper.title.as_str()), Some("Paper 54"));
-        assert_eq!(recent_papers.last().map(|paper| paper.title.as_str()), Some("Paper 5"));
+        assert_eq!(
+            recent_papers.first().map(|paper| paper.title.as_str()),
+            Some("Paper 54")
+        );
+        assert_eq!(
+            recent_papers.last().map(|paper| paper.title.as_str()),
+            Some("Paper 5")
+        );
 
         assert_eq!(
             recent_import_count(&connection).expect("count recent papers"),
@@ -135,7 +148,10 @@ mod tests {
         .expect_err("import should fail");
 
         assert!(error.contains("分类") || error.contains("category") || error.contains("FOREIGN"));
-        assert!(source_path.exists(), "source file should be restored after rollback");
+        assert!(
+            source_path.exists(),
+            "source file should be restored after rollback"
+        );
         assert_eq!(
             fs::read_dir(&storage_dir)
                 .ok()
@@ -200,7 +216,8 @@ fn default_storage_dir(app: &AppHandle) -> Result<String, String> {
     path_to_string(app_data_dir(app)?.join("Papers"))
 }
 
-fn open_library_connection(app: &AppHandle) -> Result<Connection, String> {
+pub(crate) fn open_library_connection(app: &AppHandle) -> Result<Connection, String> {
+    register_sqlite_vec_once();
     let database_path = library_database_path(app)?;
 
     if let Some(parent) = database_path.parent() {
@@ -217,6 +234,7 @@ fn open_library_connection(app: &AppHandle) -> Result<Connection, String> {
     })?;
 
     migrate_library_schema(&connection)?;
+    migrate_rag_schema(&connection)?;
     seed_system_categories(&connection)?;
     seed_default_settings(&connection, app)?;
 

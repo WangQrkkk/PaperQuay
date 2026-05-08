@@ -30,6 +30,7 @@ export interface ReaderPreferencesWindowProps {
   mineruApiToken: string;
   translationApiKey: string;
   summaryApiKey: string;
+  embeddingApiKey: string;
   qaModelPresets: QaModelPreset[];
   zoteroApiKey: string;
   zoteroUserId: string;
@@ -41,6 +42,7 @@ export interface ReaderPreferencesWindowProps {
   onMineruApiTokenChange: (value: string) => void;
   onTranslationApiKeyChange: (value: string) => void;
   onSummaryApiKeyChange: (value: string) => void;
+  onEmbeddingApiKeyChange: (value: string) => void;
   onZoteroApiKeyChange: (value: string) => void;
   onZoteroUserIdChange: (value: string) => void;
   onDetectLocalZotero: () => void;

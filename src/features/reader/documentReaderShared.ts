@@ -1,5 +1,7 @@
 import type {
   DocumentChatAttachment,
+  DocumentChatCitation,
+  DocumentChatQaContext,
   DocumentChatMessage,
   DocumentChatSession,
   PaperSummary,
@@ -135,6 +137,8 @@ export function createChatMessage(
     attachments?: DocumentChatAttachment[];
     modelId?: string;
     modelLabel?: string;
+    qaContext?: DocumentChatQaContext;
+    citations?: DocumentChatCitation[];
   },
 ): DocumentChatMessage {
   return {
@@ -145,6 +149,8 @@ export function createChatMessage(
     attachments: options?.attachments,
     modelId: options?.modelId,
     modelLabel: options?.modelLabel,
+    qaContext: options?.qaContext,
+    citations: options?.citations,
   };
 }
 

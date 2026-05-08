@@ -23,12 +23,14 @@ export interface BuildReaderAssistantSidebarInput {
   qaAttachments: AssistantSidebarCoreProps['qaAttachments'];
   qaModelPresets: AssistantSidebarCoreProps['qaModelPresets'];
   selectedQaPresetId: AssistantSidebarCoreProps['selectedQaPresetId'];
+  qaRagEnabled: AssistantSidebarCoreProps['qaRagEnabled'];
   qaLoading: AssistantSidebarCoreProps['qaLoading'];
   qaError: AssistantSidebarCoreProps['qaError'];
   screenshotLoading: NonNullable<AssistantSidebarCoreProps['screenshotLoading']>;
   onQaInputChange: AssistantSidebarCoreProps['onQaInputChange'];
   onQaSubmit: AssistantSidebarCoreProps['onQaSubmit'];
   onQaPresetChange: AssistantSidebarCoreProps['onQaPresetChange'];
+  onQaRagEnabledChange: AssistantSidebarCoreProps['onQaRagEnabledChange'];
   onQaSessionCreate: AssistantSidebarCoreProps['onQaSessionCreate'];
   onQaSessionSelect: AssistantSidebarCoreProps['onQaSessionSelect'];
   onQaSessionDelete: AssistantSidebarCoreProps['onQaSessionDelete'];
@@ -36,6 +38,7 @@ export interface BuildReaderAssistantSidebarInput {
   onSelectFileAttachments: AssistantSidebarCoreProps['onSelectFileAttachments'];
   onCaptureScreenshot: AssistantSidebarCoreProps['onCaptureScreenshot'];
   onRemoveAttachment: AssistantSidebarCoreProps['onRemoveAttachment'];
+  onCitationClick: AssistantSidebarCoreProps['onCitationClick'];
   selectedExcerpt: AssistantSidebarCoreProps['selectedExcerpt'];
   selectedExcerptTranslation: AssistantSidebarCoreProps['selectedExcerptTranslation'];
   selectedExcerptTranslating: AssistantSidebarCoreProps['selectedExcerptTranslating'];
@@ -80,12 +83,14 @@ export function buildReaderAssistantSidebarProps(
     qaAttachments: input.qaAttachments,
     qaModelPresets: input.qaModelPresets,
     selectedQaPresetId: input.selectedQaPresetId,
+    qaRagEnabled: input.qaRagEnabled,
     qaLoading: input.qaLoading,
     qaError: input.qaError,
     screenshotLoading: input.screenshotLoading,
     onQaInputChange: input.onQaInputChange,
     onQaSubmit: input.onQaSubmit,
     onQaPresetChange: input.onQaPresetChange,
+    onQaRagEnabledChange: input.onQaRagEnabledChange,
     onQaSessionCreate: input.onQaSessionCreate,
     onQaSessionSelect: input.onQaSessionSelect,
     onQaSessionDelete: input.onQaSessionDelete,
@@ -93,6 +98,7 @@ export function buildReaderAssistantSidebarProps(
     onSelectFileAttachments: input.onSelectFileAttachments,
     onCaptureScreenshot: input.onCaptureScreenshot,
     onRemoveAttachment: input.onRemoveAttachment,
+    onCitationClick: input.onCitationClick,
     selectedExcerpt: input.selectedExcerpt,
     selectedExcerptTranslation: input.selectedExcerptTranslation,
     selectedExcerptTranslating: input.selectedExcerptTranslating,

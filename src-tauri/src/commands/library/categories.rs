@@ -120,7 +120,9 @@ fn apply_category_paper_counts(
     categories: &mut [LiteratureCategory],
 ) -> Result<(), String> {
     let all_papers = connection
-        .query_row("select count(*) from papers", [], |row| row.get::<_, i64>(0))
+        .query_row("select count(*) from papers", [], |row| {
+            row.get::<_, i64>(0)
+        })
         .map_err(|error| format!("统计全部文献失败: {}", error))?;
     let uncategorized_papers = connection
         .query_row(
@@ -131,9 +133,11 @@ fn apply_category_paper_counts(
         )
         .map_err(|error| format!("统计未分类文献失败: {}", error))?;
     let favorite_papers = connection
-        .query_row("select count(*) from papers where is_favorite = 1", [], |row| {
-            row.get::<_, i64>(0)
-        })
+        .query_row(
+            "select count(*) from papers where is_favorite = 1",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
         .map_err(|error| format!("统计收藏文献失败: {}", error))?;
     let recent_papers = recent_import_count(connection)?;
     let mut children_map = HashMap::<String, Vec<String>>::new();
@@ -152,13 +156,18 @@ fn apply_category_paper_counts(
         .prepare("select paper_id, category_id from paper_categories")
         .map_err(|error| format!("准备分类文献关系查询失败: {}", error))?;
     let rows = statement
-        .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
         .map_err(|error| format!("查询分类文献关系失败: {}", error))?;
 
     for row in rows {
         let (paper_id, category_id) =
             row.map_err(|error| format!("读取分类文献关系失败: {}", error))?;
-        direct_papers.entry(category_id).or_default().insert(paper_id);
+        direct_papers
+            .entry(category_id)
+            .or_default()
+            .insert(paper_id);
     }
 
     let mut memo = HashMap::<String, HashSet<String>>::new();

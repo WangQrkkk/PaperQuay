@@ -14,11 +14,11 @@ import {
 import type { LocalDirectoryFileEntry } from '../../services/desktop';
 import {
   extractTextFromMineruBlock,
-  extractTranslatableMarkdownFromMineruBlock,
   flattenMineruPages,
   parseMineruPages,
 } from '../../services/mineru';
 import { askDocumentOpenAICompatibleStream } from '../../services/qa';
+import { resolveLocalRag } from '../../services/localRag';
 import { summarizeDocumentOpenAICompatible } from '../../services/summary';
 import {
   buildMineruMarkdownDocument,
@@ -27,7 +27,6 @@ import {
   resolveSummaryOutputLanguage,
   SUMMARY_PROMPT_VERSION,
 } from '../../services/summarySource';
-import { translateBlocksOpenAICompatible } from '../../services/translation';
 import {
   buildZoteroAttachmentPdfUrl,
   listLocalZoteroRelatedNotes,
@@ -42,6 +41,7 @@ import {
 import type {
   AssistantPanelKey,
   DocumentChatAttachment,
+  DocumentChatCitation,
   DocumentChatMessage,
   DocumentChatSession,
   MineruPage,
@@ -58,7 +58,6 @@ import type {
   TextSelectionPayload,
   TextSelectionSource,
   TranslationDisplayMode,
-  TranslationMap,
   WorkspaceItem,
   WorkspaceStage,
   ZoteroRelatedNote,
@@ -68,8 +67,6 @@ import {
   buildMineruCachePaths,
   buildMineruSummaryCachePathCandidates,
   buildMineruSummaryCachePath,
-  buildMineruTranslationCachePathCandidates,
-  buildMineruTranslationCachePath,
   guessSiblingJsonPath,
   guessSiblingMarkdownPath,
 } from '../../utils/mineruCache';
@@ -103,7 +100,6 @@ import {
   ScreenshotSelectionRect,
   ScreenshotSelectionState,
   updateQaSession,
-  waitForNextPaint,
   formatQuoteMarkdown,
 } from './documentReaderShared';
 import {
@@ -115,8 +111,10 @@ import {
   resolveModelPreset,
   type MineruCacheManifest,
   type SummaryCacheEnvelope,
-  type TranslationCacheEnvelope,
 } from './readerShared';
+import type { LocalRagResolution } from './readerQaContext';
+import { buildQaContext, formatQaContextStatus } from './readerQaContext';
+import { useDocumentTranslation } from './useDocumentTranslation';
 
 function isManifestShape(value: unknown): value is MineruCacheManifest {
   return Boolean(
@@ -132,6 +130,7 @@ interface DocumentReaderTabProps {
   document: WorkspaceItem;
   isActive: boolean;
   settings: ReaderSettings;
+  embeddingApiKey: string;
   zoteroLocalDataDir: string;
   mineruApiToken: string;
   translationApiKey: string;
@@ -163,6 +162,7 @@ function DocumentReaderTab({
   document,
   isActive,
   settings,
+  embeddingApiKey,
   zoteroLocalDataDir,
   mineruApiToken,
   translationApiKey,
@@ -189,7 +189,6 @@ function DocumentReaderTab({
   const screenshotSelectionRef = useRef<ScreenshotSelectionState | null>(null);
   const screenshotPointerIdRef = useRef<number | null>(null);
   const summaryRequestIdRef = useRef(0);
-  const selectedExcerptRequestIdRef = useRef(0);
   const lastDocumentSignatureRef = useRef('');
   const lastCapturedSelectionRef = useRef<{
     source: TextSelectionSource;
@@ -198,10 +197,14 @@ function DocumentReaderTab({
   } | null>(null);
   const paperOpenedAtRef = useRef(Date.now());
   const restoredHistoryRef = useRef('');
-  const selectionRequestKeyRef = useRef('');
   const autoTranslatedSelectionKeyRef = useRef('');
   const autoSummarySourceKeyRef = useRef('');
   const pendingHistoryActiveBlockIdRef = useRef<string | null>(null);
+  const pdfTextCacheRef = useRef<{
+    key: string;
+    text: string;
+  } | null>(null);
+  const pdfTextPendingRef = useRef<Promise<string> | null>(null);
   const localeRef = useRef(locale);
   const lRef = useRef(l);
 
@@ -212,8 +215,6 @@ function DocumentReaderTab({
   const [mineruPath, setMineruPath] = useState('');
   const [mineruPages, setMineruPages] = useState<MineruPage[]>([]);
   const [flatBlocks, setFlatBlocks] = useState<PositionedMineruBlock[]>([]);
-  const [blockTranslations, setBlockTranslations] = useState<TranslationMap>({});
-  const [blockTranslationTargetLanguage, setBlockTranslationTargetLanguage] = useState('');
   const [activeBlockId, setActiveBlockId] = useState<string | null>(null);
   const [hoveredBlockId, setHoveredBlockId] = useState<string | null>(null);
   const [activePdfHighlight, setActivePdfHighlight] = useState<PdfHighlightTarget | null>(null);
@@ -224,9 +225,6 @@ function DocumentReaderTab({
   const [workspaceStage, setWorkspaceStage] = useState<WorkspaceStage>('reading');
   const [readingViewMode, setReadingViewMode] = useState<ReaderViewMode>('dual-pane');
   const [loading, setLoading] = useState(false);
-  const [translating, setTranslating] = useState(false);
-  const [translationProgressCompleted, setTranslationProgressCompleted] = useState(0);
-  const [translationProgressTotal, setTranslationProgressTotal] = useState(0);
   const [error, setError] = useState('');
   const [statusMessage, setStatusMessage] = useState(() => l('就绪', 'Ready'));
   const [paperSummary, setPaperSummary] = useState<PaperSummary | null>(null);
@@ -245,14 +243,12 @@ function DocumentReaderTab({
   const [qaInput, setQaInput] = useState('');
   const [qaAttachments, setQaAttachments] = useState<DocumentChatAttachment[]>([]);
   const [selectedQaPresetId, setSelectedQaPresetId] = useState(settings.qaActivePresetId);
+  const [qaRagEnabled, setQaRagEnabled] = useState(true);
   const [qaLoading, setQaLoading] = useState(false);
   const [qaError, setQaError] = useState('');
   const [capturingScreenshot, setCapturingScreenshot] = useState(false);
   const [screenshotSelection, setScreenshotSelection] = useState<ScreenshotSelectionState | null>(null);
   const [selectedExcerpt, setSelectedExcerpt] = useState<SelectedExcerpt | null>(null);
-  const [selectedExcerptTranslation, setSelectedExcerptTranslation] = useState('');
-  const [selectedExcerptTranslating, setSelectedExcerptTranslating] = useState(false);
-  const [selectedExcerptError, setSelectedExcerptError] = useState('');
   const [assistantDetached, setAssistantDetached] = useState(false);
   const updateLibraryOperation = useCallback(
     (
@@ -300,7 +296,6 @@ function DocumentReaderTab({
   }, [isActive, onboardingWorkspaceStage]);
 
   const hasDocument = Boolean(currentDocument && pdfSource);
-  const translatedCount = useMemo(() => Object.keys(blockTranslations).length, [blockTranslations]);
   const translationModelPreset =
     resolveModelPreset(qaModelPresets, settings.translationModelPresetId) ?? qaModelPresets[0] ?? null;
   const selectionTranslationModelPreset =
@@ -337,6 +332,36 @@ function DocumentReaderTab({
   );
   const aiConfigured = translationConfigured || summaryConfigured || qaConfigured;
   const screenshotBusy = capturingScreenshot;
+  const {
+    blockTranslations,
+    handleClearTranslations,
+    handleTranslateDocument,
+    handleTranslateSelectedExcerpt,
+    resetDocumentTranslationState,
+    resetSelectedExcerptTranslationState,
+    selectedExcerptError,
+    selectedExcerptTranslation,
+    selectedExcerptTranslating,
+    translatedCount,
+    translating,
+    translationProgressCompleted,
+    translationProgressTotal,
+  } = useDocumentTranslation({
+    currentDocument,
+    flatBlocks,
+    libraryOperationRunning: isPaperTaskRunning(libraryOperation, 'translation'),
+    onOpenPreferences,
+    onboardingDemoReveal,
+    selectedExcerpt,
+    selectionTranslationModelPreset,
+    settings,
+    setError,
+    setStatusMessage,
+    translationModelPreset,
+    translationSnapshot,
+    updateLibraryOperation,
+    lRef,
+  });
   const currentPdfName =
     pdfSource?.kind === 'remote-url'
       ? pdfSource.fileName ||
@@ -524,181 +549,6 @@ function DocumentReaderTab({
     paperSummaryNextSourceKey ||
     `${currentDocument.workspaceId}::preview::${currentJsonName}::${flatBlocks.length}`;
 
-  const tryLoadSavedTranslations = useCallback(
-    async (item: WorkspaceItem) => {
-      if (!settings.mineruCacheDir.trim()) {
-        return null;
-      }
-
-      const candidatePaths = buildMineruTranslationCachePathCandidates(
-        settings.mineruCacheDir.trim(),
-        item,
-        settings.translationTargetLanguage,
-      );
-
-      for (const candidatePath of candidatePaths) {
-        try {
-          const raw = await readLocalTextFile(candidatePath);
-          const parsed = JSON.parse(raw) as Partial<TranslationCacheEnvelope>;
-
-          if (!parsed || typeof parsed !== 'object' || !parsed.translations) {
-            continue;
-          }
-
-          return parsed.translations as TranslationMap;
-        } catch {
-          continue;
-        }
-      }
-
-      return null;
-    },
-    [settings.mineruCacheDir, settings.translationTargetLanguage],
-  );
-
-  useEffect(() => {
-    if (
-      blockTranslationTargetLanguage &&
-      blockTranslationTargetLanguage !== settings.translationTargetLanguage
-    ) {
-      setBlockTranslations({});
-      setBlockTranslationTargetLanguage('');
-    }
-  }, [blockTranslationTargetLanguage, settings.translationTargetLanguage]);
-
-  useEffect(() => {
-    if (
-      !currentDocument ||
-      !translationSnapshot ||
-      translationSnapshot.targetLanguage !== settings.translationTargetLanguage
-    ) {
-      return;
-    }
-
-    const incomingCount = Object.keys(translationSnapshot.translations).length;
-
-    if (incomingCount === 0) {
-      return;
-    }
-
-    if (
-      blockTranslationTargetLanguage === translationSnapshot.targetLanguage &&
-      translatedCount >= incomingCount
-    ) {
-      return;
-    }
-
-    setBlockTranslations(translationSnapshot.translations);
-    setBlockTranslationTargetLanguage(translationSnapshot.targetLanguage);
-    setStatusMessage(
-      lRef.current(
-        `已加载文库页刚生成的全文翻译 ${incomingCount} 条`,
-        `Loaded ${incomingCount} translations generated from the library page`,
-      ),
-    );
-  }, [
-    blockTranslationTargetLanguage,
-    currentDocument,
-    settings.translationTargetLanguage,
-    translatedCount,
-    translationSnapshot,
-  ]);
-
-  useEffect(() => {
-    if (!currentDocument || flatBlocks.length === 0 || !settings.mineruCacheDir.trim()) {
-      return;
-    }
-
-    if (
-      blockTranslationTargetLanguage === settings.translationTargetLanguage &&
-      translatedCount > 0
-    ) {
-      return;
-    }
-
-    let cancelled = false;
-
-    void (async () => {
-      await waitForNextPaint();
-
-      if (cancelled) {
-        return;
-      }
-
-      const cachedTranslations = await tryLoadSavedTranslations(currentDocument);
-
-      if (cancelled || !cachedTranslations) {
-        return;
-      }
-
-      setBlockTranslations(cachedTranslations);
-      setBlockTranslationTargetLanguage(settings.translationTargetLanguage);
-      setStatusMessage(
-        lRef.current(
-          `已恢复历史翻译 ${Object.keys(cachedTranslations).length} 条（${settings.translationTargetLanguage}）`,
-          `Restored ${Object.keys(cachedTranslations).length} saved translations (${settings.translationTargetLanguage})`,
-        ),
-      );
-    })().catch(() => undefined);
-
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    blockTranslationTargetLanguage,
-    currentDocument,
-    flatBlocks.length,
-    settings.mineruCacheDir,
-    settings.translationTargetLanguage,
-    translatedCount,
-    tryLoadSavedTranslations,
-  ]);
-
-  useEffect(() => {
-    if (
-      !isOnboardingWelcomeItem(currentDocument) ||
-      flatBlocks.length === 0 ||
-      !onboardingDemoReveal?.translated
-    ) {
-      return;
-    }
-
-    if (
-      blockTranslationTargetLanguage === settings.translationTargetLanguage &&
-      translatedCount > 0
-    ) {
-      return;
-    }
-
-    let cancelled = false;
-
-    void fetch(`${ONBOARDING_WELCOME_CACHE_DIR}/translations/chinese.json`)
-      .then((response) => (response.ok ? response.json() : null))
-      .then((parsed: Partial<TranslationCacheEnvelope> | null) => {
-        if (cancelled || !parsed?.translations) {
-          return;
-        }
-
-        setBlockTranslations(parsed.translations);
-        setBlockTranslationTargetLanguage(settings.translationTargetLanguage);
-        setStatusMessage(
-          lRef.current('已加载 Welcome 内置全文翻译', 'Loaded the built-in Welcome translation'),
-        );
-      })
-      .catch(() => undefined);
-
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    blockTranslationTargetLanguage,
-    currentDocument,
-    flatBlocks.length,
-    onboardingDemoReveal?.translated,
-    settings.translationTargetLanguage,
-    translatedCount,
-  ]);
-
   useEffect(() => {
     if (!currentDocument.workspaceId) {
       return;
@@ -776,8 +626,7 @@ function DocumentReaderTab({
     setMineruPath('');
     setMineruPages([]);
     setFlatBlocks([]);
-    setBlockTranslations({});
-    setBlockTranslationTargetLanguage('');
+    resetDocumentTranslationState();
     setActiveBlockId(null);
     setHoveredBlockId(null);
     setActivePdfHighlight(null);
@@ -799,19 +648,15 @@ function DocumentReaderTab({
     setScreenshotSelection(null);
     screenshotPointerIdRef.current = null;
     setSelectedExcerpt(null);
-    setSelectedExcerptTranslation('');
-    setSelectedExcerptTranslating(false);
-    setSelectedExcerptError('');
     setWorkspaceNoteMarkdown('');
     setAnnotations([]);
     setZoteroRelatedNotes([]);
     setZoteroRelatedNotesLoading(false);
     setZoteroRelatedNotesError('');
     lastCapturedSelectionRef.current = null;
-    selectionRequestKeyRef.current = '';
     autoTranslatedSelectionKeyRef.current = '';
     setAssistantDetached(false);
-  }, []);
+  }, [resetDocumentTranslationState]);
 
   const applyMineruPages = useCallback(
     (
@@ -931,34 +776,6 @@ function DocumentReaderTab({
       return cachePaths;
     },
     [settings.mineruCacheDir],
-  );
-
-  const saveTranslationCache = useCallback(
-    async (item: WorkspaceItem, translations: TranslationMap) => {
-      if (!settings.mineruCacheDir.trim()) {
-        return;
-      }
-
-      const cachePath = buildMineruTranslationCachePath(
-        settings.mineruCacheDir.trim(),
-        item,
-        settings.translationTargetLanguage,
-      );
-      const payload: TranslationCacheEnvelope = {
-        version: 1,
-        sourceLanguage: settings.translationSourceLanguage,
-        targetLanguage: settings.translationTargetLanguage,
-        translatedAt: new Date().toISOString(),
-        translations,
-      };
-
-      await writeLocalTextFile(cachePath, JSON.stringify(payload, null, 2));
-    },
-    [
-      settings.mineruCacheDir,
-      settings.translationSourceLanguage,
-      settings.translationTargetLanguage,
-    ],
   );
 
   const saveSummaryCache = useCallback(
@@ -1670,211 +1487,6 @@ function DocumentReaderTab({
     updateLibraryOperation,
   ]);
 
-  const handleTranslateDocument = useCallback(async () => {
-    if (translating || isPaperTaskRunning(libraryOperation, 'translation')) {
-      return;
-    }
-
-    const blocksToTranslate = flatBlocks
-      .map((block) => ({
-        blockId: block.blockId,
-        text: extractTranslatableMarkdownFromMineruBlock(block),
-      }))
-      .filter((block) => block.text.trim().length > 0);
-
-    if (blocksToTranslate.length === 0) {
-      const message = lRef.current('当前没有可翻译的结构化文本', 'There is no structured text available to translate');
-      setStatusMessage(message);
-      updateLibraryOperation('translation', 'error', message, 100, 100);
-      return;
-    }
-
-    if (isOnboardingWelcomeItem(currentDocument)) {
-      try {
-        setTranslating(true);
-        setError('');
-        updateLibraryOperation(
-          'translation',
-          'running',
-          lRef.current('正在加载 Welcome 内置全文翻译...', 'Loading the built-in Welcome translation...'),
-          0,
-          blocksToTranslate.length,
-        );
-        const response = await fetch(`${ONBOARDING_WELCOME_CACHE_DIR}/translations/chinese.json`);
-        const parsed = response.ok ? (await response.json()) as Partial<TranslationCacheEnvelope> : null;
-
-        if (!parsed?.translations) {
-          throw new Error(lRef.current('未找到 Welcome 内置译文', 'The built-in Welcome translation was not found'));
-        }
-
-        setBlockTranslations(parsed.translations);
-        setBlockTranslationTargetLanguage(settings.translationTargetLanguage);
-        setTranslationProgressCompleted(Object.keys(parsed.translations).length);
-        const successMessage = lRef.current(
-          '已显示 Welcome 内置全文翻译，没有调用 API。',
-          'Displayed the built-in Welcome full translation without calling any API.',
-        );
-        setStatusMessage(successMessage);
-        updateLibraryOperation(
-          'translation',
-          'success',
-          successMessage,
-          Object.keys(parsed.translations).length,
-          blocksToTranslate.length,
-        );
-      } catch (nextError) {
-        const message =
-          nextError instanceof Error ? nextError.message : lRef.current('加载内置译文失败', 'Failed to load the built-in translation');
-        setError(message);
-        setStatusMessage(lRef.current('加载内置译文失败', 'Failed to load the built-in translation'));
-        updateLibraryOperation('translation', 'error', message, 100, 100);
-      } finally {
-        setTranslating(false);
-        setTranslationProgressTotal(0);
-      }
-
-      return;
-    }
-
-    if (!translationModelPreset || !translationModelPreset.apiKey.trim()) {
-      onOpenPreferences();
-      const message = lRef.current('请先在设置中填写 AI 接口 API Key', 'Configure the AI API key in Settings first');
-      setError(message);
-      updateLibraryOperation('translation', 'error', message, 100, 100);
-      return;
-    }
-
-    setTranslating(true);
-    setTranslationProgressCompleted(0);
-    setTranslationProgressTotal(blocksToTranslate.length);
-    setError('');
-    const translationStartMessage = lRef.current(
-      `正在翻译 ${blocksToTranslate.length} 个结构块`,
-      `Translating ${blocksToTranslate.length} structured blocks`,
-    );
-    setStatusMessage(translationStartMessage);
-    updateLibraryOperation(
-      'translation',
-      'running',
-      translationStartMessage,
-      0,
-      blocksToTranslate.length,
-    );
-
-    try {
-      const batchSize = Math.max(1, settings.translationBatchSize);
-      const concurrency = Math.max(1, settings.translationConcurrency);
-      const batches = chunkItems(blocksToTranslate, batchSize);
-      const collectedTranslations = new Map<string, string>();
-      let completedBlocks = 0;
-      let cursor = 0;
-
-      const runWorker = async () => {
-        while (true) {
-          const currentIndex = cursor;
-          cursor += 1;
-
-          if (currentIndex >= batches.length) {
-            return;
-          }
-
-          const batch = batches[currentIndex];
-          const translations = await translateBlocksOpenAICompatible({
-          baseUrl: translationModelPreset.baseUrl,
-          apiKey: translationModelPreset.apiKey.trim(),
-          model: translationModelPreset.model,
-          temperature: getModelRuntimeConfig(settings, 'translation').temperature,
-          reasoningEffort: getModelRuntimeConfig(settings, 'translation').reasoningEffort,
-          sourceLanguage: settings.translationSourceLanguage,
-            targetLanguage: settings.translationTargetLanguage,
-            blocks: batch,
-            batchSize: batch.length,
-            concurrency: 1,
-            requestsPerMinute: settings.translationRequestsPerMinute,
-          });
-
-          for (const translation of translations) {
-            if (translation.translatedText.trim()) {
-              collectedTranslations.set(translation.blockId, translation.translatedText);
-            }
-          }
-
-          completedBlocks = Math.min(blocksToTranslate.length, completedBlocks + batch.length);
-          setTranslationProgressCompleted(completedBlocks);
-          const progressMessage = lRef.current(
-            `正在翻译 ${completedBlocks}/${blocksToTranslate.length} 个块`,
-            `Translating ${completedBlocks}/${blocksToTranslate.length} blocks`,
-          );
-          setStatusMessage(progressMessage);
-          updateLibraryOperation(
-            'translation',
-            'running',
-            progressMessage,
-            completedBlocks,
-            blocksToTranslate.length,
-          );
-        }
-      };
-
-      await Promise.all(
-        Array.from({ length: Math.min(concurrency, batches.length) }, () => runWorker()),
-      );
-      const nextTranslations: TranslationMap = {};
-
-      for (const [blockId, translatedText] of collectedTranslations.entries()) {
-        nextTranslations[blockId] = translatedText;
-      }
-
-      setBlockTranslations(nextTranslations);
-      setBlockTranslationTargetLanguage(settings.translationTargetLanguage);
-      setTranslationProgressCompleted(blocksToTranslate.length);
-
-      if (currentDocument) {
-        await saveTranslationCache(currentDocument, nextTranslations).catch(() => undefined);
-      }
-      const successMessage = lRef.current(
-        `翻译完成，已生成 ${Object.keys(nextTranslations).length} 段译文`,
-        `Translation complete. Generated ${Object.keys(nextTranslations).length} translated blocks`,
-      );
-      setStatusMessage(successMessage);
-      updateLibraryOperation(
-        'translation',
-        'success',
-        successMessage,
-        blocksToTranslate.length,
-        blocksToTranslate.length,
-      );
-    } catch (nextError) {
-      const message =
-        nextError instanceof Error ? nextError.message : lRef.current('翻译失败', 'Translation failed');
-      setError(message);
-      setStatusMessage(lRef.current('翻译失败', 'Translation failed'));
-      updateLibraryOperation('translation', 'error', message, 100, 100);
-    } finally {
-      setTranslating(false);
-      setTranslationProgressTotal(0);
-    }
-  }, [
-    currentDocument,
-    flatBlocks,
-    libraryOperation,
-    onOpenPreferences,
-    saveTranslationCache,
-    settings.translationBatchSize,
-    settings.translationConcurrency,
-    settings.translationRequestsPerMinute,
-    settings.translationSourceLanguage,
-    settings.translationTargetLanguage,
-    translating,
-    translationModelPreset,
-    updateLibraryOperation,
-  ]);
-
-  const handleClearTranslations = useCallback(() => {
-    setBlockTranslations({});
-    setStatusMessage(lRef.current('已清空当前文稿的译文缓存', 'Cleared the translation cache for the current paper'));
-  }, []);
-
   const loadMineruMarkdownForSummary = useCallback(async () => {
     const candidatePaths = new Set<string>();
 
@@ -1961,37 +1573,67 @@ function DocumentReaderTab({
     summaryBlockInputs,
   ]);
 
-  const resolveQaRequest = useCallback(async () => {
-    if (settings.qaSourceMode === 'pdf-text') {
-      if (!pdfData) {
-        throw new Error(
-          lRef.current(
-            '请先加载 PDF，或切换到 MinerU 内容问答。',
-            'Load a PDF first, or switch back to MinerU-based QA.',
-          ),
-        );
-      }
-
-      const documentText = await extractPdfTextByPdfJs(pdfData);
-
-      if (!documentText.trim()) {
-        throw new Error(
-          lRef.current(
-            '当前 PDF 未提取到可用文本，请改用 MinerU 内容问答，或确认 PDF 可被本地文本层读取。',
-            'No usable text was extracted from the current PDF. Use MinerU-based QA instead, or confirm the local PDF text layer is readable.',
-          ),
-        );
-      }
-
-      return {
-        blocks: summaryBlockInputs,
-        documentText,
-      };
+  const loadCachedPdfDocumentText = useCallback(async () => {
+    if (!pdfData) {
+      return '';
     }
 
-    const documentText = await loadMineruMarkdownForSummary();
+    const cacheKey = `${currentDocument.workspaceId}::${pdfData.byteLength}`;
 
-    if (!documentText.trim() && summaryBlockInputs.length === 0) {
+    if (pdfTextCacheRef.current?.key === cacheKey) {
+      return pdfTextCacheRef.current.text;
+    }
+
+    if (!pdfTextPendingRef.current) {
+      pdfTextPendingRef.current = extractPdfTextByPdfJs(pdfData)
+        .then((text) => {
+          pdfTextCacheRef.current = {
+            key: cacheKey,
+            text,
+          };
+          return text;
+        })
+        .finally(() => {
+          pdfTextPendingRef.current = null;
+        });
+    }
+
+    return pdfTextPendingRef.current;
+  }, [currentDocument.workspaceId, pdfData]);
+
+  const resolveQaRequest = useCallback(async () => {
+    let pdfDocumentText = '';
+    let mineruDocumentText = '';
+
+    if (settings.ragSourceMode === 'pdf-text' || settings.ragSourceMode === 'hybrid' || settings.qaSourceMode === 'pdf-text') {
+      if (!pdfData) {
+        if (settings.qaSourceMode === 'pdf-text') {
+          throw new Error(
+            lRef.current(
+              '请先加载 PDF，或切换到 MinerU 内容问答。',
+              'Load a PDF first, or switch back to MinerU-based QA.',
+            ),
+          );
+        }
+      } else {
+        pdfDocumentText = await loadCachedPdfDocumentText();
+
+        if (settings.qaSourceMode === 'pdf-text' && !pdfDocumentText.trim()) {
+          throw new Error(
+            lRef.current(
+              '当前 PDF 未提取到可用文本，请改用 MinerU 内容问答，或确认 PDF 可被本地文本层读取。',
+              'No usable text was extracted from the current PDF. Use MinerU-based QA instead, or confirm the local PDF text layer is readable.',
+            ),
+          );
+        }
+      }
+    }
+
+    if (settings.ragSourceMode === 'mineru-markdown' || settings.ragSourceMode === 'hybrid' || settings.qaSourceMode === 'mineru-markdown') {
+      mineruDocumentText = await loadMineruMarkdownForSummary();
+    }
+
+    if (settings.qaSourceMode === 'mineru-markdown' && !mineruDocumentText.trim() && summaryBlockInputs.length === 0) {
       throw new Error(
         lRef.current(
           '请先加载 MinerU JSON，再进行基于 MinerU 内容的文档问答。',
@@ -2000,14 +1642,89 @@ function DocumentReaderTab({
       );
     }
 
+    const ragEnabledForQa =
+      qaRagEnabled && settings.localRagEnabled && settings.ragSourceMode !== 'off';
+
+    let ragResolution: LocalRagResolution =
+      ragEnabledForQa
+        ? {
+            kind: 'missing-embedding-config' as const,
+          }
+        : {
+            kind: 'disabled' as const,
+          };
+
+    if (
+      ragEnabledForQa &&
+      currentDocument &&
+      embeddingApiKey.trim() &&
+      settings.embeddingBaseUrl.trim() &&
+      settings.embeddingModel.trim()
+    ) {
+      ragResolution = await resolveLocalRag({
+        item: currentDocument,
+        settings,
+        embedding: {
+          baseUrl: settings.embeddingBaseUrl,
+          apiKey: embeddingApiKey.trim(),
+          model: settings.embeddingModel,
+          dimensions: settings.embeddingDimensions,
+          timeoutSeconds: settings.embeddingRequestTimeoutSeconds,
+        },
+        question: qaInput.trim(),
+        excerptText: selectedExcerpt?.text,
+        mineruBlocks: flatBlocks,
+        mineruDocumentText,
+        pdfDocumentText,
+      });
+
+      if (ragResolution.kind === 'retrieved') {
+        return {
+          blocks: summaryBlockInputs,
+          documentText: ragResolution.documentText,
+          qaContext: buildQaContext({
+            origin: 'local-rag',
+            rag: ragResolution,
+          }),
+          citations: ragResolution.citations,
+        };
+      }
+    }
+
+    if (settings.qaSourceMode === 'pdf-text') {
+      return {
+        blocks: summaryBlockInputs,
+        documentText: pdfDocumentText,
+        qaContext: buildQaContext({
+          origin: 'pdf-text',
+          rag: ragResolution,
+        }),
+        citations: [],
+      };
+    }
+
     return {
       blocks: summaryBlockInputs,
-      documentText,
+      documentText: mineruDocumentText,
+      qaContext: buildQaContext({
+        origin: 'mineru-markdown',
+        rag: ragResolution,
+      }),
+      citations: [],
     };
   }, [
+    activeQaPreset,
     loadMineruMarkdownForSummary,
+    loadCachedPdfDocumentText,
+    currentDocument,
+    embeddingApiKey,
+    flatBlocks,
     pdfData,
+    qaInput,
+    selectedExcerpt?.text,
+    settings,
     settings.qaSourceMode,
+    summaryBlockInputs,
     summaryBlockInputs,
   ]);
 
@@ -2255,155 +1972,13 @@ function DocumentReaderTab({
       anchorClientY: selection.anchorClientY,
       placement: selection.placement,
     });
-    setSelectedExcerptTranslation('');
-    setSelectedExcerptError('');
+    resetSelectedExcerptTranslationState();
     setStatusMessage(
       source === 'pdf'
         ? lRef.current('已选中 PDF 划词', 'Selected text from the PDF')
         : lRef.current('已选中结构块文本', 'Selected text from the structured block'),
     );
-  }, []);
-
-  const handleTranslateSelectedExcerpt = useCallback(
-    async (openPreferencesOnMissingKey = true) => {
-      if (!selectedExcerpt) {
-        setStatusMessage(lRef.current('请先选中一段文本', 'Select a text passage first'));
-        setSelectedExcerptError(
-          lRef.current(
-            '请先在 PDF 或结构块视图中选中需要翻译的文本。',
-            'Select text in the PDF or structured block view before translating it.',
-          ),
-        );
-        return;
-      }
-
-      const selectionRequestKey = `${selectedExcerpt.source}::${selectedExcerpt.text}`;
-
-      if (selectionRequestKeyRef.current === selectionRequestKey) {
-        return;
-      }
-
-      if (!selectionTranslationModelPreset || !selectionTranslationModelPreset.baseUrl.trim()) {
-        setSelectedExcerptTranslation('');
-        setSelectedExcerptError(
-          lRef.current(
-            '请先在设置中填写 OpenAI 兼容 Base URL。',
-            'Configure the OpenAI-compatible Base URL in Settings first.',
-          ),
-        );
-        setStatusMessage(lRef.current('缺少翻译接口 Base URL', 'Missing translation Base URL'));
-
-        if (openPreferencesOnMissingKey) {
-          onOpenPreferences();
-        }
-
-        return;
-      }
-
-      if (!selectionTranslationModelPreset || !selectionTranslationModelPreset.apiKey.trim()) {
-        setSelectedExcerptTranslation('');
-        setSelectedExcerptError(
-          lRef.current(
-            '请先在设置中填写 AI 接口 API Key。',
-            'Configure the AI API key in Settings first.',
-          ),
-        );
-        setStatusMessage(lRef.current('缺少翻译接口 API Key', 'Missing translation API key'));
-
-        if (openPreferencesOnMissingKey) {
-          onOpenPreferences();
-        }
-
-        return;
-      }
-
-      if (!selectionTranslationModelPreset || !selectionTranslationModelPreset.model.trim()) {
-        setSelectedExcerptTranslation('');
-        setSelectedExcerptError(
-          lRef.current('请先在设置中填写模型名称。', 'Configure the model name in Settings first.'),
-        );
-        setStatusMessage(lRef.current('缺少翻译模型名称', 'Missing translation model name'));
-
-        if (openPreferencesOnMissingKey) {
-          onOpenPreferences();
-        }
-
-        return;
-      }
-
-      const requestId = selectedExcerptRequestIdRef.current + 1;
-      selectedExcerptRequestIdRef.current = requestId;
-      selectionRequestKeyRef.current = selectionRequestKey;
-
-      setSelectedExcerptTranslating(true);
-      setSelectedExcerptError('');
-      setStatusMessage(lRef.current('正在翻译划词内容…', 'Translating the selected excerpt...'));
-
-      try {
-        const result = await translateBlocksOpenAICompatible({
-          baseUrl: selectionTranslationModelPreset.baseUrl,
-          apiKey: selectionTranslationModelPreset.apiKey.trim(),
-          model: selectionTranslationModelPreset.model,
-          temperature: getModelRuntimeConfig(settings, 'selectionTranslation').temperature,
-          reasoningEffort: getModelRuntimeConfig(settings, 'selectionTranslation').reasoningEffort,
-          sourceLanguage: settings.translationSourceLanguage,
-          targetLanguage: settings.translationTargetLanguage,
-          blocks: [
-            {
-              blockId: 'selection',
-              text: selectedExcerpt.text,
-            },
-          ],
-          batchSize: 1,
-          requestsPerMinute: settings.translationRequestsPerMinute,
-        });
-
-        if (selectedExcerptRequestIdRef.current !== requestId) {
-          return;
-        }
-
-        const translatedText = result[0]?.translatedText?.trim() ?? '';
-
-        setSelectedExcerptTranslation(translatedText);
-
-        if (!translatedText) {
-          setSelectedExcerptError(
-            lRef.current('翻译结果为空，请稍后重试。', 'The translation result was empty. Please try again later.'),
-          );
-          setStatusMessage(lRef.current('划词翻译结果为空', 'Selected-text translation returned no content'));
-          return;
-        }
-
-        setStatusMessage(lRef.current('划词翻译完成', 'Selected-text translation complete'));
-      } catch (nextError) {
-        if (selectedExcerptRequestIdRef.current !== requestId) {
-          return;
-        }
-
-        setSelectedExcerptTranslation('');
-        setSelectedExcerptError(
-          nextError instanceof Error ? nextError.message : lRef.current('划词翻译失败', 'Selected-text translation failed'),
-        );
-        setStatusMessage(lRef.current('划词翻译失败', 'Selected-text translation failed'));
-      } finally {
-        if (selectionRequestKeyRef.current === selectionRequestKey) {
-          selectionRequestKeyRef.current = '';
-        }
-
-        if (selectedExcerptRequestIdRef.current === requestId) {
-          setSelectedExcerptTranslating(false);
-        }
-      }
-    },
-    [
-      onOpenPreferences,
-      selectedExcerpt,
-      settings.translationRequestsPerMinute,
-      settings.translationSourceLanguage,
-      settings.translationTargetLanguage,
-      selectionTranslationModelPreset,
-    ],
-  );
+  }, [resetSelectedExcerptTranslationState]);
 
   const handleAppendSelectedExcerptToQa = useCallback(() => {
     if (!selectedExcerpt) {
@@ -2421,14 +1996,11 @@ function DocumentReaderTab({
 
   const handleClearSelectedExcerpt = useCallback(() => {
     lastCapturedSelectionRef.current = null;
-    selectionRequestKeyRef.current = '';
     autoTranslatedSelectionKeyRef.current = '';
     setSelectedExcerpt(null);
-    setSelectedExcerptTranslation('');
-    setSelectedExcerptTranslating(false);
-    setSelectedExcerptError('');
+    resetSelectedExcerptTranslationState();
     setStatusMessage(lRef.current('已清除划词内容', 'Cleared the selected excerpt'));
-  }, []);
+  }, [resetSelectedExcerptTranslationState]);
 
   const legacyHandlePdfAnnotationSaveSuccess = useCallback((path: string) => {
     setStatusMessage(
@@ -2695,6 +2267,43 @@ function DocumentReaderTab({
       );
     },
     [activateBlock, annotations, flatBlocks],
+  );
+
+  const handleSelectQaCitation = useCallback(
+    (citation: DocumentChatCitation) => {
+      const samePageBlocks =
+        citation.pageIndex !== null && citation.pageIndex !== undefined
+          ? flatBlocks.filter((block) => block.pageIndex === citation.pageIndex)
+          : [];
+      const samePageBodyBlock =
+        samePageBlocks.find((block) => block.type !== 'title') ?? samePageBlocks[0] ?? null;
+      const targetBlock =
+        (citation.blockId
+          ? flatBlocks.find((block) => block.blockId === citation.blockId)
+          : null) ??
+        samePageBodyBlock;
+
+      if (!targetBlock) {
+        setStatusMessage(
+          lRef.current(
+            `未找到引用 ${citation.label} 对应的结构块`,
+            `Could not find the block for citation ${citation.label}`,
+          ),
+        );
+        return;
+      }
+
+      setWorkspaceStage('reading');
+      setAssistantActivePanel('chat');
+      activateBlock(
+        targetBlock,
+        lRef.current(
+          `已定位到引用 [${citation.label}] · ${targetBlock.blockId}`,
+          `Focused citation [${citation.label}] · ${targetBlock.blockId}`,
+        ),
+      );
+    },
+    [activateBlock, flatBlocks],
   );
 
   const handleSelectQaAttachments = useCallback(
@@ -3041,32 +2650,6 @@ function DocumentReaderTab({
       return;
     }
 
-    let qaRequest: {
-      blocks: SummaryBlockInput[];
-      documentText: string;
-    };
-
-    try {
-      qaRequest = await resolveQaRequest();
-    } catch (nextError) {
-      setQaError(
-        nextError instanceof Error
-          ? nextError.message
-          : lRef.current('当前没有可用于问答的文档上下文。', 'There is no document context available for QA right now.'),
-      );
-      return;
-    }
-
-    if (qaRequest.documentText === '__never__') {
-      setQaError(
-        lRef.current(
-          '请先加载 MinerU JSON，或先在 PDF / 结构块视图中选中文本。',
-          'Load MinerU JSON first, or select text in the PDF or block view.',
-        ),
-      );
-      return;
-    }
-
     const currentSession = activeQaSession ?? createQaSession(localeRef.current);
     const previousSessions = qaSessions;
     const previousSelectedSessionId = selectedQaSessionId;
@@ -3106,11 +2689,24 @@ function DocumentReaderTab({
     let streamedAnswer = '';
 
     try {
+      const qaRequest = await resolveQaRequest();
+
+      if (qaRequest.documentText === '__never__') {
+        throw new Error(
+          lRef.current(
+            '请先加载 MinerU JSON，或先在 PDF / 结构块视图中选中文本。',
+            'Load MinerU JSON first, or select text in the PDF or block view.',
+          ),
+        );
+      }
+
       const updateStreamingAnswer = (answer: string) => {
         streamedAnswer = answer;
         const updatedAssistantMessage: DocumentChatMessage = {
           ...nextAssistantMessage,
           content: answer,
+          qaContext: qaRequest.qaContext,
+          citations: qaRequest.citations,
           createdAt: Date.now(),
         };
 
@@ -3151,7 +2747,7 @@ function DocumentReaderTab({
         updateStreamingAnswer(answer);
       }
 
-      setStatusMessage(lRef.current('文档问答已完成', 'Document QA completed'));
+      setStatusMessage(formatQaContextStatus(qaRequest.qaContext, lRef.current));
     } catch (nextError) {
       if (!streamedAnswer.trim()) {
         setQaSessions(previousSessions);
@@ -3402,6 +2998,9 @@ function DocumentReaderTab({
     }
 
     lastDocumentSignatureRef.current = signature;
+    pdfTextCacheRef.current = null;
+    pdfTextPendingRef.current = null;
+    setQaRagEnabled(true);
     void openDocumentItem();
   }, [document.attachmentKey, document.workspaceId, openDocumentItem]);
 
@@ -3630,10 +3229,12 @@ function DocumentReaderTab({
         qaAttachments={qaAttachments}
         qaModelPresets={qaModelPresets}
         selectedQaPresetId={selectedQaPresetId}
+        qaRagEnabled={qaRagEnabled}
         screenshotLoading={screenshotBusy}
         onQaInputChange={setQaInput}
         onQaSubmit={() => void handleSubmitQa()}
         onQaPresetChange={handleQaPresetChange}
+        onQaRagEnabledChange={setQaRagEnabled}
         onQaSessionCreate={handleCreateQaSession}
         onQaSessionSelect={handleSelectQaSession}
         onQaSessionDelete={handleDeleteQaSession}
@@ -3641,6 +3242,7 @@ function DocumentReaderTab({
         onSelectFileAttachments={() => void handleSelectQaAttachments('file')}
         onCaptureScreenshot={() => void handleCaptureSystemScreenshotNative()}
         onRemoveAttachment={handleRemoveAttachment}
+        onCitationClick={handleSelectQaCitation}
         qaLoading={qaLoading}
         qaError={qaError}
         selectedExcerpt={selectedExcerpt}

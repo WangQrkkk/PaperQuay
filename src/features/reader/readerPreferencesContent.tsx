@@ -14,6 +14,7 @@ import type { ReaderSettings } from '../../types/reader';
 import {
   buildLanguageOptions,
   buildQaSourceOptions,
+  buildRagSourceOptions,
   buildSummaryLanguageOptions,
   buildSummarySourceOptions,
   clampBatchConcurrency,
@@ -40,6 +41,7 @@ interface ReaderPreferencesContentProps
     | 'settings'
     | 'zoteroLocalDataDir'
     | 'mineruApiToken'
+    | 'embeddingApiKey'
     | 'qaModelPresets'
     | 'zoteroApiKey'
     | 'zoteroUserId'
@@ -48,6 +50,7 @@ interface ReaderPreferencesContentProps
     | 'onSettingChange'
     | 'onZoteroLocalDataDirChange'
     | 'onMineruApiTokenChange'
+    | 'onEmbeddingApiKeyChange'
     | 'onZoteroApiKeyChange'
     | 'onZoteroUserIdChange'
     | 'onDetectLocalZotero'
@@ -135,6 +138,15 @@ export function buildReaderPreferencesSections(
       icon: <Sparkles className="h-4 w-4" strokeWidth={1.8} />,
     },
     {
+      key: 'embedding',
+      title: l('Embedding', 'Embedding'),
+      description: l(
+        '为本地 RAG 单独配置向量模型的 Base URL、API Key 和 Model',
+        'Configure a dedicated embedding Base URL, API key, and model for local RAG.',
+      ),
+      icon: <Database className="h-4 w-4" strokeWidth={1.8} />,
+    },
+    {
       key: 'summaryQa',
       title: l('概览与问答', 'Overview & QA'),
       description: l(
@@ -152,6 +164,7 @@ export function ReaderPreferencesContent({
   settings,
   zoteroLocalDataDir,
   mineruApiToken,
+  embeddingApiKey,
   qaModelPresets,
   zoteroApiKey,
   zoteroUserId,
@@ -160,6 +173,7 @@ export function ReaderPreferencesContent({
   onSettingChange,
   onZoteroLocalDataDirChange,
   onMineruApiTokenChange,
+  onEmbeddingApiKeyChange,
   onZoteroApiKeyChange,
   onZoteroUserIdChange,
   onDetectLocalZotero,
@@ -191,6 +205,7 @@ export function ReaderPreferencesContent({
   const summaryLanguageOptions = buildSummaryLanguageOptions(settings.uiLanguage);
   const summarySourceOptions = buildSummarySourceOptions(settings.uiLanguage);
   const qaSourceOptions = buildQaSourceOptions(settings.uiLanguage);
+  const ragSourceOptions = buildRagSourceOptions(settings.uiLanguage);
   const resolvedSummaryLanguage = resolveSummaryOutputLanguage(settings);
   const activeSummaryPreset = resolveModelPreset(
     qaModelPresets,
@@ -566,6 +581,135 @@ export function ReaderPreferencesContent({
         onQaModelPresetChange={onQaModelPresetChange}
       />
 
+      {activeSection === 'embedding' ? (
+        <SettingsField
+          label={l('本地 RAG Embedding 配置', 'Local RAG Embedding Configuration')}
+          description={l(
+            '本地 RAG 会只读取这里的 Base URL、API Key 和 Model，不再复用 AI 模型预设。',
+            'Local RAG reads only the Base URL, API key, and model configured here instead of the shared AI model presets.',
+          )}
+        >
+          <div className="grid gap-3 md:grid-cols-2">
+            <div className="space-y-2 md:col-span-2">
+              <div className="text-xs font-medium text-slate-500">
+                {l('Base URL', 'Base URL')}
+              </div>
+              <SettingsInput
+                value={settings.embeddingBaseUrl}
+                onChange={(event) => onSettingChange('embeddingBaseUrl', event.target.value)}
+                placeholder="https://api.openai.com"
+              />
+            </div>
+            <div className="space-y-2 md:col-span-2">
+              <div className="text-xs font-medium text-slate-500">API Key</div>
+              <SettingsInput
+                value={embeddingApiKey}
+                onChange={(event) => onEmbeddingApiKeyChange(event.target.value)}
+                type="password"
+                placeholder={l(
+                  '输入 embedding 服务对应的 API Key',
+                  'Enter the API key for the embedding service',
+                )}
+              />
+            </div>
+            <div className="space-y-2 md:col-span-2">
+              <div className="text-xs font-medium text-slate-500">
+                {l('Model', 'Model')}
+              </div>
+              <SettingsInput
+                value={settings.embeddingModel}
+                onChange={(event) => onSettingChange('embeddingModel', event.target.value)}
+                placeholder="text-embedding-3-small / Qwen/Qwen3-Embedding-8B"
+              />
+            </div>
+            <div className="space-y-2">
+              <div className="text-xs font-medium text-slate-500">
+                {l('Dimensions', 'Dimensions')}
+              </div>
+              <SettingsInput
+                type="number"
+                min={0}
+                max={4096}
+                value={settings.embeddingDimensions ?? ''}
+                onChange={(event) =>
+                  onSettingChange(
+                    'embeddingDimensions',
+                    event.target.value.trim()
+                      ? Math.max(1, Math.min(4096, Number(event.target.value) || 0))
+                      : null,
+                  )
+                }
+                placeholder={l('留空表示使用服务默认维度', 'Leave empty to use the provider default')}
+              />
+              <div className="text-[11px] leading-5 text-slate-400">
+                {l(
+                  '只有服务支持 `dimensions` 参数时才会生效；修改后会使用新的索引键。',
+                  'Only used when the provider supports the `dimensions` field. Changes produce a new index key.',
+                )}
+              </div>
+            </div>
+            <div className="space-y-2">
+              <div className="text-xs font-medium text-slate-500">
+                {l('请求超时（秒）', 'Request Timeout (s)')}
+              </div>
+              <SettingsInput
+                type="number"
+                min={10}
+                max={600}
+                value={String(settings.embeddingRequestTimeoutSeconds)}
+                onChange={(event) =>
+                  onSettingChange(
+                    'embeddingRequestTimeoutSeconds',
+                    Math.max(10, Math.min(600, Number(event.target.value) || 180)),
+                  )
+                }
+              />
+            </div>
+            <div className="space-y-2">
+              <div className="text-xs font-medium text-slate-500">
+                {l('索引批大小', 'Index Batch Size')}
+              </div>
+              <SettingsInput
+                type="number"
+                min={1}
+                max={128}
+                value={String(settings.embeddingBatchSize)}
+                onChange={(event) =>
+                  onSettingChange(
+                    'embeddingBatchSize',
+                    Math.max(1, Math.min(128, Number(event.target.value) || 24)),
+                  )
+                }
+              />
+              <div className="text-[11px] leading-5 text-slate-400">
+                {l(
+                  '控制索引阶段每批送去 embedding 接口的 chunk 数。数值越大通常越快，但更容易触发限流或超时。',
+                  'Controls how many chunks are sent to the embedding API per indexing batch. Larger values are usually faster but more likely to hit rate limits or timeouts.',
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-sky-200 bg-sky-50 px-3 py-2 text-xs leading-5 text-sky-800">
+            {l(
+              '建议填写专门的 embeddings 模型，而不是普通 chat 模型。Base URL 可填写服务根地址、`/v1`，或完整 `.../v1/embeddings`；软件会自动规范化后交给后端执行。这里的维度、超时和索引批大小也会真实影响本地 RAG 的 embedding 请求与索引行为。',
+              'Use a dedicated embeddings model instead of a regular chat model. The Base URL can be the provider root, `/v1`, or the full `.../v1/embeddings` endpoint; the app normalizes it before sending requests from the backend. The dimensions, timeout, and index batch size configured here also affect local RAG embedding requests and indexing behavior.',
+            )}
+          </div>
+
+          {!settings.embeddingBaseUrl.trim() ||
+          !settings.embeddingModel.trim() ||
+          !embeddingApiKey.trim() ? (
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-700">
+              {l(
+                'Base URL、API Key 和 Model 需要同时填写，本地 RAG 才能建立或查询向量索引。',
+                'Fill in the Base URL, API key, and model before local RAG can build or query the vector index.',
+              )}
+            </div>
+          ) : null}
+        </SettingsField>
+      ) : null}
+
       {activeSection === 'translation' ? (
         <>
           <SettingsField
@@ -847,6 +991,79 @@ export function ReaderPreferencesContent({
                   <div className="mt-1 text-xs leading-5 text-slate-500">{option.description}</div>
                 </button>
               ))}
+            </div>
+          </SettingsField>
+
+          <SettingsField
+            label={l('本地 RAG 检索', 'Local RAG Retrieval')}
+            description={l(
+              '先检索相关片段，再回退到整篇上下文，可减少长文档问答失败和重复消耗。',
+              'Retrieve relevant chunks first, then fall back to the original full-document context when needed.',
+            )}
+          >
+            <div className="space-y-3">
+              <ToggleRow
+                title={l('启用本地 RAG', 'Enable Local RAG')}
+                description={l(
+                  '为当前文档建立或复用本地向量索引，并优先将命中的片段发送给问答模型。',
+                  'Build or reuse a local vector index for the current document and prefer retrieved chunks for QA.',
+                )}
+                checked={settings.localRagEnabled}
+                onChange={(checked) => onSettingChange('localRagEnabled', checked)}
+              />
+              <div className="rounded-2xl border border-slate-200 bg-slate-50/80 px-3 py-2 text-xs leading-5 text-slate-500">
+                {l(
+                  'Embedding 模型请在单独的 “Embedding” 分区配置；这里仅控制检索策略和 Top-K。',
+                  'Configure the embedding model in the dedicated Embedding section. This panel controls only retrieval strategy and Top-K.',
+                )}
+              </div>
+              <div className="grid gap-3 md:grid-cols-2">
+                <div className="space-y-2">
+                  <div className="text-xs font-medium text-slate-500">
+                    {l('检索来源模式', 'Retrieval Source Mode')}
+                  </div>
+                  <div className="grid gap-2">
+                    {ragSourceOptions.map((option) => (
+                      <button
+                        key={option.value}
+                        type="button"
+                        onClick={() => onSettingChange('ragSourceMode', option.value)}
+                        className={
+                          settings.ragSourceMode === option.value
+                            ? 'rounded-2xl border border-indigo-200 bg-indigo-50/80 px-4 py-3 text-left text-indigo-700 transition'
+                            : 'rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-left text-slate-600 transition hover:border-slate-300 hover:bg-white'
+                        }
+                      >
+                        <div className="text-sm font-medium">{option.label}</div>
+                        <div className="mt-1 text-xs leading-5 text-slate-500">{option.description}</div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <div className="text-xs font-medium text-slate-500">
+                    {l('Top-K 片段数', 'Top-K Chunks')}
+                  </div>
+                  <SettingsInput
+                    type="number"
+                    min={1}
+                    max={12}
+                    value={String(settings.localRagTopK)}
+                    onChange={(event) =>
+                      onSettingChange(
+                        'localRagTopK',
+                        Math.max(1, Math.min(12, Number(event.target.value) || 1)),
+                      )
+                    }
+                  />
+                  <div className="text-[11px] leading-5 text-slate-400">
+                    {l(
+                      '建议范围 4-8。值越大，发送给模型的片段越多，也更容易撑大上下文。',
+                      'Recommended range: 4-8. Higher values send more chunks to the model and expand context faster.',
+                    )}
+                  </div>
+                </div>
+              </div>
             </div>
           </SettingsField>
 

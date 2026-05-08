@@ -13,6 +13,7 @@ import { useLocaleText } from '../../i18n/uiLanguage';
 import type {
   AssistantPanelKey,
   DocumentChatAttachment,
+  DocumentChatCitation,
   DocumentChatMessage,
   DocumentChatSession,
   PaperAnnotation,
@@ -50,6 +51,7 @@ export interface AssistantSidebarCoreProps {
   qaAttachments: DocumentChatAttachment[];
   qaModelPresets: QaModelPreset[];
   selectedQaPresetId: string;
+  qaRagEnabled: boolean;
   qaLoading: boolean;
   qaError: string;
   screenshotLoading?: boolean;
@@ -57,6 +59,7 @@ export interface AssistantSidebarCoreProps {
   onQaInputChange: (value: string) => void;
   onQaSubmit: () => void;
   onQaPresetChange: (presetId: string) => void;
+  onQaRagEnabledChange: (value: boolean) => void;
   onQaSessionCreate: () => void;
   onQaSessionSelect: (sessionId: string) => void;
   onQaSessionDelete: (sessionId: string) => void;
@@ -64,6 +67,7 @@ export interface AssistantSidebarCoreProps {
   onSelectFileAttachments: () => void;
   onCaptureScreenshot: () => void;
   onRemoveAttachment: (attachmentId: string) => void;
+  onCitationClick: (citation: DocumentChatCitation) => void;
   selectedExcerpt: SelectedExcerpt | null;
   selectedExcerptTranslation: string;
   selectedExcerptTranslating: boolean;
@@ -115,6 +119,7 @@ function AssistantSidebar({
   qaAttachments,
   qaModelPresets,
   selectedQaPresetId,
+  qaRagEnabled,
   qaLoading,
   qaError,
   screenshotLoading = false,
@@ -122,6 +127,7 @@ function AssistantSidebar({
   onQaInputChange,
   onQaSubmit,
   onQaPresetChange,
+  onQaRagEnabledChange,
   onQaSessionCreate,
   onQaSessionSelect,
   onQaSessionDelete,
@@ -129,6 +135,7 @@ function AssistantSidebar({
   onSelectFileAttachments,
   onCaptureScreenshot,
   onRemoveAttachment,
+  onCitationClick,
   selectedExcerpt,
   selectedExcerptTranslation,
   selectedExcerptTranslating,
@@ -255,11 +262,13 @@ function AssistantSidebar({
                 attachments={qaAttachments}
                 qaModelPresets={qaModelPresets}
                 selectedQaPresetId={selectedQaPresetId}
+                qaRagEnabled={qaRagEnabled}
                 screenshotLoading={screenshotLoading}
                 layoutMode={chatLayoutMode}
                 onInputChange={onQaInputChange}
                 onSubmit={onQaSubmit}
                 onQaPresetChange={onQaPresetChange}
+                onQaRagEnabledChange={onQaRagEnabledChange}
                 onSessionCreate={onQaSessionCreate}
                 onSessionSelect={onQaSessionSelect}
                 onSessionDelete={onQaSessionDelete}
@@ -268,6 +277,7 @@ function AssistantSidebar({
                 onSelectFileAttachments={onSelectFileAttachments}
                 onCaptureScreenshot={onCaptureScreenshot}
                 onRemoveAttachment={onRemoveAttachment}
+                onCitationClick={onCitationClick}
               />
             ) : null}
 

@@ -6,6 +6,7 @@ import type {
   PaperSummary,
   PositionedMineruBlock,
   QaModelPreset,
+  RagSourceMode,
   ReaderConfigFile,
   ReaderSecrets,
   ReaderSettings,
@@ -73,6 +74,7 @@ export type PreferencesSectionKey =
   | 'mineru'
   | 'translation'
   | 'models'
+  | 'embedding'
   | 'summaryQa';
 
 export const DEFAULT_QA_PRESET_ID = 'default';
@@ -166,11 +168,59 @@ export function buildQaSourceOptions(locale: UiLanguage): Array<{
   ];
 }
 
+export function buildRagSourceOptions(locale: UiLanguage): Array<{
+  value: RagSourceMode;
+  label: string;
+  description: string;
+}> {
+  return [
+    {
+      value: 'off',
+      label: pickLocaleText(locale, '关闭', 'Off'),
+      description: pickLocaleText(
+        locale,
+        '关闭本地检索增强，继续沿用现有整篇上下文回退逻辑。',
+        'Disable local retrieval augmentation and keep the existing full-context fallback behavior.',
+      ),
+    },
+    {
+      value: 'mineru-markdown',
+      label: 'MinerU Markdown',
+      description: pickLocaleText(
+        locale,
+        '仅为 MinerU Markdown / 结构化文本建立本地索引并检索。',
+        'Build and query the local index from MinerU Markdown or structured block text only.',
+      ),
+    },
+    {
+      value: 'pdf-text',
+      label: pickLocaleText(locale, 'PDF 文本', 'PDF Text'),
+      description: pickLocaleText(
+        locale,
+        '仅使用 pdf.js 抽取的全文文本建立本地索引并检索。',
+        'Build and query the local index from full PDF text extracted by pdf.js only.',
+      ),
+    },
+    {
+      value: 'hybrid',
+      label: pickLocaleText(locale, '混合模式', 'Hybrid'),
+      description: pickLocaleText(
+        locale,
+        '优先使用 MinerU Markdown，并在可用时同时补充 PDF 全文切块。',
+        'Prefer MinerU Markdown and supplement it with PDF text chunks when both are available.',
+      ),
+    },
+  ];
+}
+
 export const DEFAULT_SETTINGS: ReaderSettings = {
   uiLanguage: 'zh-CN',
   autoLoadSiblingJson: false,
   autoMineruParse: false,
   autoGenerateSummary: false,
+  localRagEnabled: true,
+  localRagTopK: 6,
+  ragSourceMode: 'hybrid',
   libraryBatchConcurrency: 1,
   autoTranslateSelection: false,
   smoothScroll: true,
@@ -191,6 +241,12 @@ export const DEFAULT_SETTINGS: ReaderSettings = {
   selectionTranslationModelPresetId: 'default',
   summaryModelPresetId: 'default',
   agentModelPresetId: 'default',
+  embeddingBaseUrl: 'https://api.openai.com',
+  embeddingModel: 'text-embedding-3-small',
+  embeddingDimensions: null,
+  embeddingRequestTimeoutSeconds: 180,
+  embeddingBatchSize: 24,
+  ragEmbeddingModelPresetId: 'default',
   modelRuntimeConfigs: {},
   summarySourceMode: 'mineru-markdown',
   summaryOutputLanguage: 'follow-ui',
@@ -214,6 +270,7 @@ export const DEFAULT_SECRETS: ReaderSecrets = {
   mineruApiToken: '',
   translationApiKey: '',
   summaryApiKey: '',
+  embeddingApiKey: '',
   zoteroApiKey: '',
   zoteroUserId: '',
   qaModelPresets: [DEFAULT_QA_PRESET],
@@ -640,6 +697,51 @@ function clampTranslationRequestsPerMinute(value: number): number {
   return Math.min(600, Math.max(0, Math.trunc(value)));
 }
 
+function clampLocalRagTopK(value: number): number {
+  if (!Number.isFinite(value)) {
+    return DEFAULT_SETTINGS.localRagTopK;
+  }
+
+  return Math.min(12, Math.max(1, Math.trunc(value)));
+}
+
+function clampEmbeddingDimensions(value: number | null | undefined): number | null {
+  if (value === null || value === undefined || value === 0) {
+    return null;
+  }
+
+  if (!Number.isFinite(value)) {
+    return DEFAULT_SETTINGS.embeddingDimensions;
+  }
+
+  return Math.min(4096, Math.max(1, Math.trunc(value)));
+}
+
+function clampEmbeddingRequestTimeoutSeconds(value: number): number {
+  if (!Number.isFinite(value)) {
+    return DEFAULT_SETTINGS.embeddingRequestTimeoutSeconds;
+  }
+
+  return Math.min(600, Math.max(10, Math.trunc(value)));
+}
+
+function clampEmbeddingBatchSize(value: number): number {
+  if (!Number.isFinite(value)) {
+    return DEFAULT_SETTINGS.embeddingBatchSize;
+  }
+
+  return Math.min(128, Math.max(1, Math.trunc(value)));
+}
+
+function normalizeRagSourceMode(value: unknown): RagSourceMode {
+  return value === 'off' ||
+    value === 'mineru-markdown' ||
+    value === 'pdf-text' ||
+    value === 'hybrid'
+    ? value
+    : DEFAULT_SETTINGS.ragSourceMode;
+}
+
 export function normalizeReaderSettings(value?: Partial<ReaderSettings> | null): ReaderSettings {
   const merged = {
     ...DEFAULT_SETTINGS,
@@ -649,12 +751,22 @@ export function normalizeReaderSettings(value?: Partial<ReaderSettings> | null):
   return {
     ...merged,
     uiLanguage: merged.uiLanguage === 'en-US' ? 'en-US' : 'zh-CN',
+    localRagEnabled: merged.localRagEnabled !== false,
+    localRagTopK: clampLocalRagTopK(merged.localRagTopK),
+    ragSourceMode: normalizeRagSourceMode(merged.ragSourceMode),
     libraryBatchConcurrency: clampBatchConcurrency(merged.libraryBatchConcurrency),
     translationBatchSize: clampTranslationBatchSize(merged.translationBatchSize),
     translationConcurrency: clampTranslationConcurrency(merged.translationConcurrency),
     translationRequestsPerMinute: clampTranslationRequestsPerMinute(
       merged.translationRequestsPerMinute,
     ),
+    embeddingBaseUrl: merged.embeddingBaseUrl?.trim() || DEFAULT_SETTINGS.embeddingBaseUrl,
+    embeddingModel: merged.embeddingModel?.trim() || DEFAULT_SETTINGS.embeddingModel,
+    embeddingDimensions: clampEmbeddingDimensions(merged.embeddingDimensions),
+    embeddingRequestTimeoutSeconds: clampEmbeddingRequestTimeoutSeconds(
+      merged.embeddingRequestTimeoutSeconds,
+    ),
+    embeddingBatchSize: clampEmbeddingBatchSize(merged.embeddingBatchSize),
     modelRuntimeConfigs: normalizeModelRuntimeConfigs(merged.modelRuntimeConfigs),
     summaryOutputLanguage: merged.summaryOutputLanguage?.trim() || 'follow-ui',
     translationDisplayMode:
@@ -689,6 +801,7 @@ export function loadSecrets(): ReaderSecrets {
     return {
       ...DEFAULT_SECRETS,
       ...parsed,
+      embeddingApiKey: parsed.embeddingApiKey?.trim() ?? '',
       qaModelPresets: normalizeQaModelPresets(parsed.qaModelPresets),
     };
   } catch {
@@ -710,10 +823,31 @@ export function mergeReaderConfigWithDefaults(
     ...DEFAULT_SECRETS,
     ...fallbackSecrets,
     ...(value?.secrets ?? {}),
+    embeddingApiKey: value?.secrets?.embeddingApiKey ?? fallbackSecrets.embeddingApiKey ?? '',
     qaModelPresets: normalizeQaModelPresets(
       value?.secrets?.qaModelPresets ?? fallbackSecrets.qaModelPresets,
     ),
   };
+
+  if (
+    (!nextSettings.embeddingBaseUrl.trim() ||
+      !nextSettings.embeddingModel.trim() ||
+      !nextSecrets.embeddingApiKey.trim()) &&
+    nextSettings.ragEmbeddingModelPresetId.trim()
+  ) {
+    const legacyEmbeddingPreset = normalizeQaModelPresets(nextSecrets.qaModelPresets).find(
+      (preset) => preset.id === nextSettings.ragEmbeddingModelPresetId,
+    );
+
+    if (legacyEmbeddingPreset) {
+      nextSettings.embeddingBaseUrl =
+        nextSettings.embeddingBaseUrl.trim() || legacyEmbeddingPreset.baseUrl.trim();
+      nextSettings.embeddingModel =
+        nextSettings.embeddingModel.trim() || legacyEmbeddingPreset.model.trim();
+      nextSecrets.embeddingApiKey =
+        nextSecrets.embeddingApiKey.trim() || legacyEmbeddingPreset.apiKey.trim();
+    }
+  }
 
   if (!nextSettings.mineruCacheDir.trim()) {
     nextSettings.mineruCacheDir = defaultPaths.mineruCacheDir;

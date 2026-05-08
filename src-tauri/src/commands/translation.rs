@@ -32,6 +32,20 @@ pub struct OpenAICompatibleTranslateOptions {
     requests_per_minute: Option<usize>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenAICompatibleTranslateTextOptions {
+    base_url: String,
+    api_key: String,
+    model: String,
+    temperature: Option<f32>,
+    reasoning_effort: Option<String>,
+    source_language: String,
+    target_language: String,
+    text: String,
+    requests_per_minute: Option<usize>,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct TranslateBlockOutput {
@@ -105,7 +119,9 @@ fn normalize_requests_per_minute(value: Option<usize>) -> Option<usize> {
 }
 
 fn estimated_char_count(text: &str) -> usize {
-    text.chars().filter(|character| !character.is_control()).count()
+    text.chars()
+        .filter(|character| !character.is_control())
+        .count()
 }
 
 fn estimate_translation_max_tokens(
@@ -178,7 +194,10 @@ fn translation_output_is_excessive(
             .copied()
             .unwrap_or_default();
         let translated_chars = estimated_char_count(&translation.translated_text);
-        let per_block_limit = source_chars.saturating_mul(8).saturating_add(400).max(1_200);
+        let per_block_limit = source_chars
+            .saturating_mul(8)
+            .saturating_add(400)
+            .max(1_200);
 
         translated_chars > per_block_limit
     })
@@ -477,6 +496,15 @@ fn clean_plaintext_translation(content: &str) -> String {
     cleaned.trim().to_string()
 }
 
+fn is_retryable_plaintext_translation_error(message: &str) -> bool {
+    let normalized = message.trim().to_ascii_lowercase();
+
+    normalized.contains("failed to parse chat/completions response")
+        || normalized.contains("eof while parsing")
+        || normalized.contains("message.content")
+        || normalized.contains("did not produce usable content")
+}
+
 async fn translate_batch(
     client: &reqwest::Client,
     endpoint: &str,
@@ -613,6 +641,56 @@ async fn translate_single_block_plaintext(
     block: &TranslateBlockInput,
     requests_per_minute: Option<usize>,
 ) -> Result<TranslateBlockOutput, String> {
+    match translate_single_block_plaintext_once(
+        client,
+        endpoint,
+        api_key,
+        model,
+        source_language,
+        target_language,
+        temperature,
+        reasoning_effort,
+        block,
+        requests_per_minute,
+    )
+    .await
+    {
+        Ok(translation) => Ok(translation),
+        Err(error) => {
+            if !is_retryable_plaintext_translation_error(&error) {
+                return Err(error);
+            }
+
+            translate_single_block_plaintext_once(
+                client,
+                endpoint,
+                api_key,
+                model,
+                source_language,
+                target_language,
+                temperature,
+                reasoning_effort,
+                block,
+                requests_per_minute,
+            )
+            .await
+            .map_err(|retry_error| format!("{error} | Retry failed: {retry_error}"))
+        }
+    }
+}
+
+async fn translate_single_block_plaintext_once(
+    client: &reqwest::Client,
+    endpoint: &str,
+    api_key: &str,
+    model: &str,
+    source_language: &str,
+    target_language: &str,
+    temperature: Option<f32>,
+    reasoning_effort: Option<&str>,
+    block: &TranslateBlockInput,
+    requests_per_minute: Option<usize>,
+) -> Result<TranslateBlockOutput, String> {
     let mut body = json!({
       "model": model,
       "temperature": model_temperature(temperature, 0.1),
@@ -621,7 +699,7 @@ async fn translate_single_block_plaintext(
         {
           "role": "system",
           "content": format!(
-            "You are a professional academic paper translator. Translate from {} to {}. The input may contain MinerU-derived Markdown or inline LaTeX. Translate only natural language. Preserve Markdown structure, line breaks, inline math, display math, citations, tags, symbols, variable names, underscores, braces, backslashes, and LaTeX commands exactly. Return only the translated text. Do not add explanations, bullet points, JSON, markdown fences, or surrounding quotes unless they are part of the source text.",
+            "You are a professional academic paper translator. Translate from {} to {}. The input may contain MinerU-derived Markdown or inline LaTeX. Translate only natural language. Preserve Markdown structure, line breaks, inline math, display math, citations, tags, symbols, variable names, underscores, braces, backslashes, and LaTeX commands exactly. Return only the translated text body. Do not add explanations, bullet points, JSON, markdown fences, or surrounding quotes unless they are part of the source text. If the input is already in the target language or is mostly formulas, notation, code, or symbols, return the original text unchanged. Never return an empty response for non-empty input.",
             source_language,
             target_language
           )
@@ -629,8 +707,7 @@ async fn translate_single_block_plaintext(
         {
           "role": "user",
           "content": format!(
-            "Block ID: {}\nTranslate the following text only:\n{}",
-            block.block_id,
+            "Translate only the text inside <source_text> tags and return only the translated text body.\n<source_text>\n{}\n</source_text>",
             block.text
           )
         }
@@ -644,7 +721,7 @@ async fn translate_single_block_plaintext(
 
     if translated_text.is_empty() {
         return Err(format!(
-            "Fallback translation returned empty text for block {}",
+            "Translation did not produce usable content for block {}",
             block.block_id
         ));
     }
@@ -666,6 +743,60 @@ async fn translate_single_block_plaintext(
         block_id: block.block_id.clone(),
         translated_text,
     })
+}
+
+#[tauri::command]
+pub async fn translate_text_openai_compatible(
+    options: OpenAICompatibleTranslateTextOptions,
+) -> Result<String, String> {
+    let base_url = options.base_url.trim();
+    let api_key = options.api_key.trim();
+    let model = options.model.trim();
+    let source_language = options.source_language.trim();
+    let target_language = options.target_language.trim();
+    let text = options.text.trim();
+
+    if base_url.is_empty() {
+        return Err("Translation Base URL cannot be empty.".to_string());
+    }
+
+    if api_key.is_empty() {
+        return Err("Translation API key cannot be empty.".to_string());
+    }
+
+    if model.is_empty() {
+        return Err("Translation model name cannot be empty.".to_string());
+    }
+
+    if text.is_empty() {
+        return Err("No translatable text was provided.".to_string());
+    }
+
+    let endpoint = build_chat_completions_url(base_url);
+    let requests_per_minute = normalize_requests_per_minute(options.requests_per_minute);
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(180))
+        .build()
+        .map_err(|error| format!("Failed to build translation HTTP client: {}", error))?;
+    let selection_block = TranslateBlockInput {
+        block_id: "selection".to_string(),
+        text: text.to_string(),
+    };
+    let translation = translate_single_block_plaintext(
+        &client,
+        &endpoint,
+        api_key,
+        model,
+        source_language,
+        target_language,
+        options.temperature,
+        options.reasoning_effort.as_deref(),
+        &selection_block,
+        requests_per_minute,
+    )
+    .await?;
+
+    Ok(translation.translated_text)
 }
 
 #[tauri::command]
@@ -723,6 +854,7 @@ pub async fn translate_blocks_openai_compatible(
         .build()
         .map_err(|error| format!("Failed to build translation HTTP client: {}", error))?;
     let mut translations = Vec::new();
+    let mut fallback_errors = Vec::new();
     let mut pending_batches = VecDeque::from(
         blocks
             .chunks(batch_size)
@@ -780,7 +912,7 @@ pub async fn translate_blocks_openai_compatible(
                 }
 
                 if batch.len() == 1 {
-                    let fallback_translation = translate_single_block_plaintext(
+                    match translate_single_block_plaintext(
                         &client,
                         &endpoint,
                         api_key,
@@ -792,8 +924,11 @@ pub async fn translate_blocks_openai_compatible(
                         &batch[0],
                         requests_per_minute,
                     )
-                    .await?;
-                    translations.push(fallback_translation);
+                    .await
+                    {
+                        Ok(fallback_translation) => translations.push(fallback_translation),
+                        Err(error) => fallback_errors.push(format!("{}: {}", batch[0].block_id, error)),
+                    }
                     continue;
                 }
 
@@ -808,7 +943,7 @@ pub async fn translate_blocks_openai_compatible(
             }
             Err(error) => {
                 if batch.len() == 1 {
-                    let fallback_translation = translate_single_block_plaintext(
+                    match translate_single_block_plaintext(
                         &client,
                         &endpoint,
                         api_key,
@@ -821,13 +956,13 @@ pub async fn translate_blocks_openai_compatible(
                         requests_per_minute,
                     )
                     .await
-                    .map_err(|fallback_error| {
-                        format!(
-                            "{} | Fallback translation failed: {}",
-                            error, fallback_error
-                        )
-                    })?;
-                    translations.push(fallback_translation);
+                    {
+                        Ok(fallback_translation) => translations.push(fallback_translation),
+                        Err(fallback_error) => fallback_errors.push(format!(
+                            "{}: {} | Fallback translation failed: {}",
+                            batch[0].block_id, error, fallback_error
+                        )),
+                    }
                     continue;
                 }
 
@@ -861,7 +996,7 @@ pub async fn translate_blocks_openai_compatible(
             continue;
         }
 
-        let fallback_translation = translate_single_block_plaintext(
+        match translate_single_block_plaintext(
             &client,
             &endpoint,
             api_key,
@@ -873,11 +1008,17 @@ pub async fn translate_blocks_openai_compatible(
             block,
             requests_per_minute,
         )
-        .await?;
-
-        translations_by_block_id
-            .entry(fallback_translation.block_id.clone())
-            .or_insert(fallback_translation);
+        .await
+        {
+            Ok(fallback_translation) => {
+                translations_by_block_id
+                    .entry(fallback_translation.block_id.clone())
+                    .or_insert(fallback_translation);
+            }
+            Err(error) => {
+                fallback_errors.push(format!("{}: {}", block.block_id, error));
+            }
+        }
     }
 
     let mut ordered_translations = Vec::new();
@@ -892,7 +1033,7 @@ pub async fn translate_blocks_openai_compatible(
         ordered_translations.push(translation);
     }
 
-    if !missing_block_ids.is_empty() {
+    if ordered_translations.is_empty() && !missing_block_ids.is_empty() {
         return Err(format!(
             "Translation response is still missing {} blocks after retries: {}",
             missing_block_ids.len(),
@@ -900,53 +1041,16 @@ pub async fn translate_blocks_openai_compatible(
         ));
     }
 
+    if !fallback_errors.is_empty() {
+        eprintln!(
+            "Partial translation completed with {} fallback failures: {}",
+            fallback_errors.len(),
+            fallback_errors.join(" | ")
+        );
+    }
+
     Ok(ordered_translations)
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn block(id: &str, text: &str) -> TranslateBlockInput {
-        TranslateBlockInput {
-            block_id: id.to_string(),
-            text: text.to_string(),
-        }
-    }
-
-    fn output(id: &str, translated_text: &str) -> TranslateBlockOutput {
-        TranslateBlockOutput {
-            block_id: id.to_string(),
-            translated_text: translated_text.to_string(),
-        }
-    }
-
-    #[test]
-    fn estimate_batch_translation_max_tokens_scales_with_source_size() {
-        let short_batch = vec![block("a", "Short source text.")];
-        let long_batch = vec![block(
-            "a",
-            "This is a significantly longer source passage that should require a noticeably larger completion token budget than the short example.",
-        )];
-
-        let short_budget = estimate_batch_translation_max_tokens(&short_batch);
-        let long_budget = estimate_batch_translation_max_tokens(&long_batch);
-
-        assert!(short_budget >= 256);
-        assert!(long_budget > short_budget);
-        assert!(long_budget <= 12_000);
-    }
-
-    #[test]
-    fn translation_output_guard_flags_excessive_expansion() {
-        let source_blocks = vec![block("a", "A concise source sentence.")];
-        let normal_outputs = vec![output("a", "A concise translated sentence.")];
-        let runaway_outputs = vec![output("a", &"translated ".repeat(800))];
-
-        assert!(!translation_output_is_excessive(&source_blocks, &normal_outputs));
-        assert!(translation_output_is_excessive(
-            &source_blocks,
-            &runaway_outputs
-        ));
-    }
-}
+mod tests;

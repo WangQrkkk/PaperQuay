@@ -1,7 +1,10 @@
 import {
   Bot,
+  Camera,
   Clipboard,
   FileText,
+  ImagePlus,
+  Paperclip,
   PlayCircle,
   RotateCcw,
   User,
@@ -11,12 +14,36 @@ import type { LibraryAgentPlan } from '../../services/libraryAgent';
 import type { AgentChatMessage, AgentToolCallView } from './AgentWorkspace.types';
 import AgentMarkdown from './AgentMarkdown';
 import { PlanDiffCard, ToolCallCard, TraceTimeline } from './AgentExecutionCards';
+import { formatFileSize } from '../../utils/files';
 
 export function UserMessageCard({ message }: { message: AgentChatMessage }) {
   return (
     <article className="flex items-start justify-end gap-3">
       <div className="max-w-[72%] rounded-[24px] border border-teal-300 bg-teal-600 px-4 py-3 text-sm leading-7 text-white shadow-[0_18px_40px_rgba(20,184,166,0.18)] dark:border-teal-300/30 dark:bg-teal-300 dark:text-slate-950">
         <div className="whitespace-pre-wrap">{message.content}</div>
+        {message.attachments && message.attachments.length > 0 ? (
+          <div className="mt-3 flex flex-wrap gap-2">
+            {message.attachments.map((attachment) => {
+              const AttachmentIcon =
+                attachment.kind === 'image'
+                  ? ImagePlus
+                  : attachment.kind === 'screenshot'
+                    ? Camera
+                    : Paperclip;
+
+              return (
+                <span
+                  key={attachment.id}
+                  className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3 py-1 text-xs text-teal-50 dark:border-slate-900/10 dark:bg-slate-950/10 dark:text-slate-800"
+                >
+                  <AttachmentIcon className="h-3.5 w-3.5" strokeWidth={1.8} />
+                  <span className="max-w-[180px] truncate">{attachment.name}</span>
+                  <span className="text-teal-50/80 dark:text-slate-700">{formatFileSize(attachment.size)}</span>
+                </span>
+              );
+            })}
+          </div>
+        ) : null}
         {message.meta ? (
           <div className="mt-2 text-xs text-teal-50/85 dark:text-slate-700">{message.meta}</div>
         ) : null}

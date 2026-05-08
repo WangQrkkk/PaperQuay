@@ -25,6 +25,26 @@ pub struct LibraryAgentPaperInput {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct DocumentChatAttachment {
+    kind: String,
+    name: String,
+    mime_type: String,
+    size: u64,
+    data_url: Option<String>,
+    text_content: Option<String>,
+    summary: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LibraryAgentConversationMessage {
+    role: String,
+    content: String,
+    attachments: Option<Vec<DocumentChatAttachment>>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct OpenAICompatibleLibraryAgentOptions {
     base_url: String,
     api_key: String,
@@ -35,6 +55,7 @@ pub struct OpenAICompatibleLibraryAgentOptions {
     allow_context_request: Option<bool>,
     tool: String,
     instruction: Option<String>,
+    messages: Option<Vec<LibraryAgentConversationMessage>>,
     papers: Vec<LibraryAgentPaperInput>,
 }
 
@@ -207,6 +228,74 @@ fn extract_message_text(content: Option<Value>) -> Option<String> {
         }
         other => Some(other.to_string()),
     }
+}
+
+fn trim_attachment_text(input: &str, max_chars: usize) -> String {
+    let trimmed = input.trim();
+
+    if trimmed.chars().count() <= max_chars {
+        return trimmed.to_string();
+    }
+
+    trimmed.chars().take(max_chars).collect::<String>()
+}
+
+fn build_attachment_text(attachment: &DocumentChatAttachment) -> Option<String> {
+    let text_content = attachment
+        .text_content
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .map(|value| trim_attachment_text(value, 10_000));
+
+    if let Some(text_content) = text_content {
+        return Some(format!("附件《{}》内容：\n{}", attachment.name, text_content));
+    }
+
+    attachment.summary.as_ref().map(|summary| {
+        format!(
+            "附件《{}》摘要：{}；MIME={}；大小约 {} 字节。",
+            attachment.name, summary, attachment.mime_type, attachment.size
+        )
+    })
+}
+
+fn build_user_message_content(message: &LibraryAgentConversationMessage) -> Value {
+    let mut parts = Vec::new();
+
+    parts.push(json!({
+      "type": "text",
+      "text": message.content
+    }));
+
+    for attachment in message.attachments.as_deref().unwrap_or(&[]) {
+        let kind = attachment.kind.trim().to_ascii_lowercase();
+
+        if (kind == "image" || kind == "screenshot")
+            && attachment
+                .data_url
+                .as_deref()
+                .filter(|value| !value.trim().is_empty())
+                .is_some()
+        {
+            if let Some(data_url) = attachment.data_url.as_deref() {
+                parts.push(json!({
+                  "type": "image_url",
+                  "image_url": {
+                    "url": data_url
+                  }
+                }));
+            }
+        }
+
+        if let Some(text_part) = build_attachment_text(attachment) {
+            parts.push(json!({
+              "type": "text",
+              "text": text_part
+            }));
+        }
+    }
+
+    Value::Array(parts)
 }
 
 fn build_agent_prompt(
@@ -577,16 +666,98 @@ fn json_string_array(value: &Value, key: &str) -> Option<Vec<String>> {
     }
 }
 
+fn repair_unescaped_quotes_in_json(input: &str) -> String {
+    let characters = input.chars().collect::<Vec<_>>();
+    let mut output = String::with_capacity(input.len() + 16);
+    let mut index = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+
+    while index < characters.len() {
+        let character = characters[index];
+
+        if !in_string {
+            if character == '"' {
+                in_string = true;
+            }
+
+            output.push(character);
+            index += 1;
+            continue;
+        }
+
+        if escaped {
+            output.push(character);
+            escaped = false;
+            index += 1;
+            continue;
+        }
+
+        if character == '\\' {
+            output.push(character);
+            escaped = true;
+            index += 1;
+            continue;
+        }
+
+        if character == '"' {
+            let next_non_whitespace = characters
+                .iter()
+                .skip(index + 1)
+                .find(|next| !next.is_whitespace())
+                .copied();
+
+            let looks_like_closing_quote = matches!(
+                next_non_whitespace,
+                None | Some(',') | Some('}') | Some(']') | Some(':')
+            );
+
+            if looks_like_closing_quote {
+                in_string = false;
+                output.push(character);
+            } else {
+                output.push('\\');
+                output.push(character);
+            }
+
+            index += 1;
+            continue;
+        }
+
+        output.push(character);
+        index += 1;
+    }
+
+    output
+}
+
+fn parse_tool_call_arguments_value(
+    function_name: &str,
+    arguments: &str,
+) -> Result<Value, String> {
+    match serde_json::from_str::<Value>(arguments) {
+        Ok(value) => Ok(value),
+        Err(primary_error) => {
+            let repaired = repair_unescaped_quotes_in_json(arguments);
+
+            serde_json::from_str::<Value>(&repaired).map_err(|secondary_error| {
+                format!(
+                    "Failed to parse Agent tool call arguments: {}; repaired parse also failed: {}; function: {}; arguments: {}",
+                    primary_error, secondary_error, function_name, arguments
+                )
+            })
+        }
+    }
+}
+
 fn parse_context_request_tool_call(
     tool_call: &ChatCompletionToolCall,
 ) -> Result<LibraryAgentContextRequest, String> {
-    let arguments =
-        serde_json::from_str::<Value>(&tool_call.function.arguments).map_err(|error| {
-            format!(
-                "Failed to parse Agent context tool arguments: {}; function: {}; arguments: {}",
-                error, tool_call.function.name, tool_call.function.arguments
-            )
-        })?;
+    let arguments = parse_tool_call_arguments_value(
+        &tool_call.function.name,
+        &tool_call.function.arguments,
+    )
+    .map_err(|error| format!("Failed to parse Agent context tool arguments: {}", error))?;
     let mut mode = json_string(&arguments, "mode").unwrap_or_else(|| "summary".to_string());
 
     if mode != "summary" && mode != "pdf-text" {
@@ -606,13 +777,11 @@ fn parse_context_request_tool_call(
 fn parse_user_choice_tool_call(
     tool_call: &ChatCompletionToolCall,
 ) -> Result<LibraryAgentUserChoiceRequest, String> {
-    let arguments =
-        serde_json::from_str::<Value>(&tool_call.function.arguments).map_err(|error| {
-            format!(
-                "Failed to parse Agent user-choice tool arguments: {}; function: {}; arguments: {}",
-                error, tool_call.function.name, tool_call.function.arguments
-            )
-        })?;
+    let arguments = parse_tool_call_arguments_value(
+        &tool_call.function.name,
+        &tool_call.function.arguments,
+    )
+    .map_err(|error| format!("Failed to parse Agent user-choice tool arguments: {}", error))?;
     let raw_options = arguments
         .get("options")
         .and_then(Value::as_array)
@@ -630,7 +799,11 @@ fn parse_user_choice_tool_call(
             });
 
             Some(LibraryAgentChoiceOption {
-                id: if id.is_empty() { format!("option-{}", label.len()) } else { id },
+                id: if id.is_empty() {
+                    format!("option-{}", label.len())
+                } else {
+                    id
+                },
                 label,
                 description: json_string(raw_option, "description").unwrap_or_default(),
                 instruction,
@@ -660,26 +833,26 @@ fn parse_tool_call_plan(
     let tool = tool_key_from_function_name(function_name)
         .ok_or_else(|| format!("Agent returned an unknown tool call: {}", function_name))?
         .to_string();
-    let arguments =
-        serde_json::from_str::<Value>(&tool_call.function.arguments).map_err(|error| {
-            format!(
-                "Failed to parse Agent tool call arguments: {}; function: {}; arguments: {}",
-                error, function_name, tool_call.function.arguments
-            )
-        })?;
+    let arguments = parse_tool_call_arguments_value(function_name, &tool_call.function.arguments)?;
     let summary =
         json_string(&arguments, "summary").unwrap_or_else(|| fallback_summary.to_string());
     let raw_items = arguments
         .get("items")
         .and_then(Value::as_array)
-        .ok_or_else(|| format!("Agent tool call is missing the items array: {}", function_name))?;
+        .ok_or_else(|| {
+            format!(
+                "Agent tool call is missing the items array: {}",
+                function_name
+            )
+        })?;
     let mut items = Vec::new();
 
     for raw_item in raw_items {
         let Some(paper_id) = json_string(raw_item, "paperId") else {
             continue;
         };
-        let reason = json_string(raw_item, "reason").unwrap_or_else(|| "Model suggestion".to_string());
+        let reason =
+            json_string(raw_item, "reason").unwrap_or_else(|| "Model suggestion".to_string());
 
         match function_name {
             "rename_papers" => {
@@ -832,7 +1005,10 @@ pub async fn generate_library_agent_plan_openai_compatible(
     let forced_tool_name = if tool == "auto" {
         None
     } else {
-        Some(preferred_tool_name(tool).ok_or_else(|| format!("Unsupported Agent tool type: {}", tool))?)
+        Some(
+            preferred_tool_name(tool)
+                .ok_or_else(|| format!("Unsupported Agent tool type: {}", tool))?,
+        )
     };
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(120))
@@ -852,21 +1028,51 @@ pub async fn generate_library_agent_plan_openai_compatible(
     } else {
         format!("You are a precise literature-library agent for a desktop literature manager. The app has already loaded the available reading context for this request. Do not ask for more context; answer directly in {} for ordinary Q&A, or use editing tools only for reviewable local library actions. Never claim that local edits were executed.", response_language)
     };
+    let mut payload_messages = vec![
+        json!({
+          "role": "system",
+          "content": system_content
+        }),
+        json!({
+          "role": "user",
+          "content": prompt
+        }),
+    ];
+
+    for message in options.messages.unwrap_or_default() {
+        let role = if message.role.trim() == "assistant" {
+            "assistant"
+        } else {
+            "user"
+        };
+
+        if role == "assistant" {
+            if !message.content.trim().is_empty() {
+                payload_messages.push(json!({
+                  "role": role,
+                  "content": message.content
+                }));
+            }
+        } else if !message.content.trim().is_empty()
+            || message
+                .attachments
+                .as_ref()
+                .map(|attachments| !attachments.is_empty())
+                .unwrap_or(false)
+        {
+            payload_messages.push(json!({
+              "role": role,
+              "content": build_user_message_content(&message)
+            }));
+        }
+    }
+
     let mut body = json!({
       "model": model,
       "temperature": model_temperature(options.temperature, 0.1),
       "tools": build_agent_tools(allow_context_request),
       "tool_choice": tool_choice,
-      "messages": [
-        {
-          "role": "system",
-          "content": system_content
-        },
-        {
-          "role": "user",
-          "content": prompt
-        }
-      ]
+      "messages": payload_messages
     });
     apply_reasoning_effort(&mut body, options.reasoning_effort.as_deref());
 
@@ -910,7 +1116,10 @@ pub async fn generate_library_agent_plan_openai_compatible(
         return Err(format!("Agent model refused the request: {}", refusal));
     }
 
-    let tool_calls = message.tool_calls.as_ref().filter(|items| !items.is_empty());
+    let tool_calls = message
+        .tool_calls
+        .as_ref()
+        .filter(|items| !items.is_empty());
 
     if tool_calls.is_none() {
         let content = extract_message_text(message.content.clone()).unwrap_or_default();
@@ -1011,13 +1220,8 @@ mod tests {
 
     #[test]
     fn prompt_allows_model_generated_dynamic_user_options() {
-        let prompt = build_agent_prompt(
-            "auto",
-            Some("explain these papers"),
-            "[]",
-            true,
-            "English",
-        );
+        let prompt =
+            build_agent_prompt("auto", Some("explain these papers"), "[]", true, "English");
 
         assert!(prompt.contains("present_user_options"));
         assert!(prompt.contains("Do not use a fixed option list"));

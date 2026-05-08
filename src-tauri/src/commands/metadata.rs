@@ -494,6 +494,9 @@ mod tests {
 
     #[test]
     fn title_match_rejects_empty_token_queries() {
-        assert!(!title_matches_query("无人机任务分配综述", "A Survey of UAV Scheduling"));
+        assert!(!title_matches_query(
+            "无人机任务分配综述",
+            "A Survey of UAV Scheduling"
+        ));
     }
 }

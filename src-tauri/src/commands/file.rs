@@ -116,10 +116,8 @@ fn is_within_path(parent: &Path, candidate: &Path) -> Result<bool, String> {
     let normalized_parent = normalize_absolute_path(parent)?;
     let normalized_candidate = normalize_absolute_path(candidate)?;
 
-    Ok(
-        normalized_candidate == normalized_parent
-            || normalized_candidate.starts_with(&normalized_parent),
-    )
+    Ok(normalized_candidate == normalized_parent
+        || normalized_candidate.starts_with(&normalized_parent))
 }
 
 fn app_managed_write_roots() -> Result<Vec<PathBuf>, String> {
@@ -764,7 +762,11 @@ mod tests {
     #[test]
     fn lexical_normalization_blocks_parent_traversal() {
         let base = unique_temp_dir("normalize");
-        let nested = base.join("allowed").join("..").join("allowed").join("file.txt");
+        let nested = base
+            .join("allowed")
+            .join("..")
+            .join("allowed")
+            .join("file.txt");
 
         assert!(is_within_path(&base, &nested).expect("path check"));
         assert!(!is_within_path(&base, &base.join("..").join("escape.txt")).expect("path check"));

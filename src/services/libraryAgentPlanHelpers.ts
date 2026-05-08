@@ -128,6 +128,27 @@ export function normalizeComparable(value: string): string {
     .toLocaleLowerCase();
 }
 
+const READ_PREFIXES = ['已读', '[已读]', '【已读】', '(已读)', '（已读）', 'read:', 'read '];
+
+function startsWithComparablePrefix(value: string, prefix: string): boolean {
+  return normalizeComparable(value).startsWith(normalizeComparable(prefix));
+}
+
+export function stripKnownReadPrefix(title: string): string {
+  let nextTitle = title.trimStart();
+
+  for (const prefix of READ_PREFIXES) {
+    if (!startsWithComparablePrefix(nextTitle, prefix)) {
+      continue;
+    }
+
+    nextTitle = nextTitle.slice(prefix.length).trimStart();
+    break;
+  }
+
+  return nextTitle;
+}
+
 function titleCaseEnglish(value: string): string {
   if (!/^[a-z][a-z0-9 -]+$/i.test(value)) {
     return value;
@@ -296,7 +317,14 @@ export function buildRenamePlan(
 ): LibraryAgentPlan {
   const items = papers
     .map((paper): LibraryAgentPlanItem | null => {
-      const nextTitle = renameTitle(paper.title, operation).trim();
+      const nextTitle =
+        operation.mode === 'replace' &&
+        normalizeComparable(operation.to) === '' &&
+        ['已读', '[已读]', '【已读】', '(已读)', '（已读）'].some((prefix) =>
+          startsWithComparablePrefix(operation.from, prefix),
+        )
+          ? stripKnownReadPrefix(paper.title).trim()
+          : renameTitle(paper.title, operation).trim();
 
       if (!nextTitle || nextTitle === paper.title) {
         return null;

@@ -409,6 +409,8 @@ export function useReaderSettings({
       resolveModelPreset(nextPresets, nextTranslationPresetId) ?? DEFAULT_QA_PRESET;
     const nextSummaryPreset =
       resolveModelPreset(nextPresets, nextSummaryPresetId) ?? DEFAULT_QA_PRESET;
+    const nextEmbeddingPreset =
+      resolveModelPreset(nextPresets, settings.ragEmbeddingModelPresetId) ?? DEFAULT_QA_PRESET;
 
     if (hasPresetMismatch) {
       setReaderSecrets((current) => ({
@@ -416,15 +418,18 @@ export function useReaderSettings({
         qaModelPresets: nextPresets,
         translationApiKey: nextTranslationPreset.apiKey,
         summaryApiKey: nextSummaryPreset.apiKey,
+        embeddingApiKey: current.embeddingApiKey || nextEmbeddingPreset.apiKey,
       }));
     } else if (
       readerSecrets.translationApiKey !== nextTranslationPreset.apiKey ||
-      readerSecrets.summaryApiKey !== nextSummaryPreset.apiKey
+      readerSecrets.summaryApiKey !== nextSummaryPreset.apiKey ||
+      (!readerSecrets.embeddingApiKey && nextEmbeddingPreset.apiKey)
     ) {
       setReaderSecrets((current) => ({
         ...current,
         translationApiKey: nextTranslationPreset.apiKey,
         summaryApiKey: nextSummaryPreset.apiKey,
+        embeddingApiKey: current.embeddingApiKey || nextEmbeddingPreset.apiKey,
       }));
     }
 
@@ -437,7 +442,9 @@ export function useReaderSettings({
       settings.translationBaseUrl !== nextTranslationPreset.baseUrl ||
       settings.translationModel !== nextTranslationPreset.model ||
       settings.summaryBaseUrl !== nextSummaryPreset.baseUrl ||
-      settings.summaryModel !== nextSummaryPreset.model
+      settings.summaryModel !== nextSummaryPreset.model ||
+      !settings.embeddingBaseUrl ||
+      !settings.embeddingModel
     ) {
       setSettings((current) => ({
         ...current,
@@ -450,6 +457,8 @@ export function useReaderSettings({
         translationModel: nextTranslationPreset.model,
         summaryBaseUrl: nextSummaryPreset.baseUrl,
         summaryModel: nextSummaryPreset.model,
+        embeddingBaseUrl: current.embeddingBaseUrl || nextEmbeddingPreset.baseUrl,
+        embeddingModel: current.embeddingModel || nextEmbeddingPreset.model,
       }));
     }
   }, [

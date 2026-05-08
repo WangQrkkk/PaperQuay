@@ -13,6 +13,7 @@ import type {
   LiteraturePaperTaskKind,
   LiteraturePaperTaskState,
 } from '../../types/library';
+import type { ReaderDocumentTranslationSnapshot } from './documentReaderShared';
 import type {
   BatchProgressState,
   LibraryPreviewLoadResult,
@@ -67,16 +68,10 @@ export interface UseReaderLibraryActionsOptions {
   >;
   setLibraryTranslationSnapshots: Dispatch<
     SetStateAction<
-      Record<
-        string,
-        {
-          targetLanguage: string;
-          translations: TranslationMap;
-          updatedAt: number;
-        }
-      >
+      Record<string, ReaderDocumentTranslationSnapshot>
     >
   >;
+  libraryTranslationSnapshots: Record<string, ReaderDocumentTranslationSnapshot>;
   setNativeLibraryItems: Dispatch<SetStateAction<WorkspaceItem[]>>;
   setPreferencesOpen: (value: boolean) => void;
   setPreferredPreferencesSection: (value: PreferencesSectionKey | undefined) => void;

@@ -3,11 +3,14 @@ import {
   ArrowUp,
   Bot,
   Camera,
+  Database,
+  ExternalLink,
   ImagePlus,
   Loader2,
   MessageSquare,
   MessageSquareText,
   Paperclip,
+  PanelRightOpen,
   Plus,
   Quote,
   X,
@@ -16,6 +19,7 @@ import { useWheelScrollDelegate } from '../../hooks/useWheelScrollDelegate';
 import { useLocaleText } from '../../i18n/uiLanguage';
 import type {
   DocumentChatAttachment,
+  DocumentChatCitation,
   DocumentChatMessage,
   DocumentChatSession,
   QaModelPreset,
@@ -24,6 +28,11 @@ import type {
 import { cn } from '../../utils/cn';
 import { formatFileSize } from '../../utils/files';
 import { MarkdownPreview, SectionCard } from './assistantSidebarPrimitives';
+import {
+  formatQaContextBadge,
+  formatQaContextHint,
+  getQaContextBadgeTone,
+} from './readerQaContext';
 
 function formatChatSessionTime(timestamp: number, locale: 'zh-CN' | 'en-US') {
   const date = new Date(timestamp);
@@ -34,6 +43,91 @@ function formatChatSessionTime(timestamp: number, locale: 'zh-CN' | 'en-US') {
   }
 
   return date.toLocaleDateString(locale, { month: 'numeric', day: 'numeric' });
+}
+
+function buildCitationHref(label: string): string {
+  return `#cite-${label}`;
+}
+
+function injectCitationLinks(
+  content: string,
+  citations: DocumentChatCitation[] | undefined,
+): string {
+  if (!content.trim() || !citations || citations.length === 0) {
+    return content;
+  }
+
+  const labels = new Set(citations.map((citation) => citation.label));
+  const normalizedContent = content
+    .replace(/\[(\d+(?:\s*[,，]\s*\d+)+)\]/g, (_match, group: string) =>
+      group
+        .split(/\s*[,，]\s*/)
+        .map((label) => `[${label}]`)
+        .join(' '),
+    )
+    .replace(/\](?=\[\d+\])/g, '] ');
+
+  return normalizedContent.replace(/\[(\d+)\](?!\()/g, (match, label: string) => {
+    if (!labels.has(label)) {
+      return match;
+    }
+
+    return `[${label}](${buildCitationHref(label)})`;
+  });
+}
+
+function normalizeCitationHref(href: string): string {
+  const trimmed = href.trim();
+
+  if (trimmed.startsWith('#cite-')) {
+    return trimmed;
+  }
+
+  if (trimmed.startsWith('cite:')) {
+    return `#cite-${trimmed.slice('cite:'.length)}`;
+  }
+
+  if (trimmed.startsWith('%23cite-')) {
+    return decodeURIComponent(trimmed);
+  }
+
+  if (trimmed.startsWith('cite%3A')) {
+    return `#cite-${decodeURIComponent(trimmed).slice('cite:'.length)}`;
+  }
+
+  try {
+    return decodeURIComponent(trimmed);
+  } catch {
+    return trimmed;
+  }
+}
+
+function findCitationByHref(
+  href: string,
+  citations: DocumentChatCitation[] | undefined,
+): DocumentChatCitation | null {
+  if (!citations || citations.length === 0) {
+    return null;
+  }
+
+  const normalizedHref = normalizeCitationHref(href);
+  const labelMatch = normalizedHref.match(/^#cite-(\d+)$/);
+
+  if (!labelMatch) {
+    return null;
+  }
+
+  const label = labelMatch[1];
+
+  return (
+    citations.find((citation) => citation.label === label) ??
+    citations.find((citation) => citation.id === `cite:${label}`) ??
+    null
+  );
+}
+
+function hasInlineCitationLinks(content: string): boolean {
+  return /\[\d+\]\(#cite-\d+\)/.test(content);
 }
 
 const CHAT_HISTORY_PANEL_WIDTH_STORAGE_KEY = 'paperquay.chat-history-panel-width';
@@ -67,11 +161,14 @@ export interface ChatWorkspacePanelProps {
   attachments: DocumentChatAttachment[];
   qaModelPresets: QaModelPreset[];
   selectedQaPresetId: string;
+  qaRagEnabled: boolean;
   screenshotLoading: boolean;
+  assistantDetached?: boolean;
   layoutMode?: 'compact' | 'workspace';
   onInputChange: (value: string) => void;
   onSubmit: () => void;
   onQaPresetChange: (presetId: string) => void;
+  onQaRagEnabledChange: (value: boolean) => void;
   onSessionCreate: () => void;
   onSessionSelect: (sessionId: string) => void;
   onSessionDelete: (sessionId: string) => void;
@@ -80,6 +177,9 @@ export interface ChatWorkspacePanelProps {
   onSelectFileAttachments: () => void;
   onCaptureScreenshot: () => void;
   onRemoveAttachment: (attachmentId: string) => void;
+  onDetachAssistant?: () => void;
+  onAttachAssistant?: () => void;
+  onCitationClick?: (citation: DocumentChatCitation) => void;
 }
 
 export function ChatWorkspacePanel({
@@ -94,11 +194,14 @@ export function ChatWorkspacePanel({
   attachments,
   qaModelPresets,
   selectedQaPresetId,
+  qaRagEnabled,
   screenshotLoading,
+  assistantDetached = false,
   layoutMode = 'compact',
   onInputChange,
   onSubmit,
   onQaPresetChange,
+  onQaRagEnabledChange,
   onSessionCreate,
   onSessionSelect,
   onSessionDelete,
@@ -107,6 +210,9 @@ export function ChatWorkspacePanel({
   onSelectFileAttachments,
   onCaptureScreenshot,
   onRemoveAttachment,
+  onDetachAssistant,
+  onAttachAssistant,
+  onCitationClick,
 }: ChatWorkspacePanelProps) {
   const l = useLocaleText();
   const locale = l('zh-CN', 'en-US') as 'zh-CN' | 'en-US';
@@ -439,6 +545,50 @@ export function ChatWorkspacePanel({
               </div>
             </div>
             <div className="flex shrink-0 items-center gap-2">
+              <button
+                type="button"
+                onClick={() => onQaRagEnabledChange(!qaRagEnabled)}
+                title={
+                  qaRagEnabled
+                    ? l('关闭本次问答 RAG', 'Turn off RAG for this chat')
+                    : l('开启本次问答 RAG', 'Turn on RAG for this chat')
+                }
+                aria-label={
+                  qaRagEnabled
+                    ? l('关闭本次问答 RAG', 'Turn off RAG for this chat')
+                    : l('开启本次问答 RAG', 'Turn on RAG for this chat')
+                }
+                className={cn(
+                  'inline-flex h-8 w-8 items-center justify-center rounded-full border transition',
+                  qaRagEnabled
+                    ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                    : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:text-slate-900',
+                )}
+              >
+                <Database className="h-3.5 w-3.5" strokeWidth={1.9} />
+              </button>
+              {assistantDetached && onAttachAssistant ? (
+                <button
+                  type="button"
+                  onClick={onAttachAssistant}
+                  title={l('停靠回侧边栏', 'Dock back to sidebar')}
+                  aria-label={l('停靠回侧边栏', 'Dock back to sidebar')}
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:border-slate-300 hover:text-slate-900"
+                >
+                  <PanelRightOpen className="h-3.5 w-3.5" strokeWidth={1.9} />
+                </button>
+              ) : null}
+              {!assistantDetached && onDetachAssistant ? (
+                <button
+                  type="button"
+                  onClick={onDetachAssistant}
+                  title={l('弹出为窗口', 'Open as floating window')}
+                  aria-label={l('弹出为窗口', 'Open as floating window')}
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:border-slate-300 hover:text-slate-900"
+                >
+                  <ExternalLink className="h-3.5 w-3.5" strokeWidth={1.9} />
+                </button>
+              ) : null}
               {historyCollapsed ? (
                 <button
                   type="button"
@@ -503,6 +653,14 @@ export function ChatWorkspacePanel({
             <div className="space-y-4">
               {messages.map((message) => {
                 const assistantMessage = message.role === 'assistant';
+                const qaContextBadge = assistantMessage ? formatQaContextBadge(message.qaContext, l) : null;
+                const qaContextHint = assistantMessage ? formatQaContextHint(message.qaContext, l) : null;
+                const qaContextBadgeTone = assistantMessage
+                  ? getQaContextBadgeTone(message.qaContext)
+                  : 'neutral';
+                const renderedMessageContent = assistantMessage
+                  ? injectCitationLinks(message.content.trim(), message.citations)
+                  : message.content.trim();
 
                 return (
                   <div
@@ -537,14 +695,64 @@ export function ChatWorkspacePanel({
                             {message.modelLabel}
                           </span>
                         ) : null}
+                        {assistantMessage && qaContextBadge ? (
+                          <span
+                            className={cn(
+                              'rounded-full px-2 py-0.5 text-[10px]',
+                              qaContextBadgeTone === 'success' &&
+                                'border border-emerald-200 bg-emerald-50 text-emerald-700',
+                              qaContextBadgeTone === 'warning' &&
+                                'border border-amber-200 bg-amber-50 text-amber-700',
+                              qaContextBadgeTone === 'neutral' &&
+                                'border border-slate-200 bg-slate-50 text-slate-500',
+                            )}
+                          >
+                            {qaContextBadge}
+                          </span>
+                        ) : null}
                         <span>{formatChatSessionTime(message.createdAt, locale)}</span>
                       </div>
 
                       <MarkdownPreview
                         content={
-                          message.content.trim() ||
+                          renderedMessageContent ||
                           (assistantMessage && loading ? l('正在思考...', 'Thinking...') : '')
                         }
+                        components={{
+                          a: ({ href, children, ...props }) => {
+                            const citation =
+                              href && onCitationClick
+                                ? findCitationByHref(href, message.citations)
+                                : null;
+
+                            if (citation && onCitationClick) {
+                              return (
+                                <button
+                                  type="button"
+                                  onClick={() => onCitationClick(citation)}
+                                  className="font-medium text-indigo-600 underline underline-offset-2 transition hover:text-indigo-800"
+                                >
+                                  [{children}]
+                                </button>
+                              );
+                            }
+
+                            if (href && message.citations && findCitationByHref(href, message.citations)) {
+                              return <span className="text-slate-400">[{children}]</span>;
+                            }
+
+                            return (
+                              <a
+                                href={href}
+                                target="_blank"
+                                rel="noreferrer"
+                                {...props}
+                              >
+                                {children}
+                              </a>
+                            );
+                          },
+                        }}
                         className={cn(
                           'text-sm leading-7',
                           assistantMessage && !message.content.trim() && loading && 'text-slate-400',
@@ -552,6 +760,39 @@ export function ChatWorkspacePanel({
                             '!text-slate-50 prose-p:text-slate-50 prose-strong:text-white prose-li:text-slate-100 prose-headings:text-white prose-code:bg-white/10 prose-code:text-white [&_.katex]:text-white',
                         )}
                       />
+
+                      {assistantMessage && qaContextHint ? (
+                        <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-500">
+                          {qaContextHint}
+                        </div>
+                      ) : null}
+
+                      {assistantMessage &&
+                      message.citations &&
+                      message.citations.length > 0 &&
+                      !hasInlineCitationLinks(renderedMessageContent) ? (
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          {message.citations.map((citation) => (
+                            <button
+                              key={citation.id}
+                              type="button"
+                              onClick={() => onCitationClick?.(citation)}
+                              className="inline-flex items-center gap-2 rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 text-[11px] text-indigo-700 transition hover:border-indigo-300 hover:bg-indigo-100"
+                              title={
+                                citation.previewText
+                                  ? `${
+                                      citation.pageIndex !== null && citation.pageIndex !== undefined
+                                        ? l(`第 ${citation.pageIndex + 1} 页`, `Page ${citation.pageIndex + 1}`)
+                                        : citation.sourceType
+                                    }\n${citation.previewText}`
+                                  : undefined
+                              }
+                            >
+                              <span>[{citation.label}]</span>
+                            </button>
+                          ))}
+                        </div>
+                      ) : null}
 
                       {message.attachments && message.attachments.length > 0 ? (
                         <div className="mt-3 flex flex-wrap gap-2">
@@ -811,8 +1052,12 @@ export function ChatWorkspacePanel({
             <span>
               {hasBlocks
                 ? l(
-                    '当前回复会优先参考文档结构块内容。',
-                    'Responses prioritize the current document blocks.',
+                    qaRagEnabled
+                      ? '当前回复会先尝试本地 RAG，再回退到文档内容。'
+                      : '当前回复会直接参考文档内容。',
+                    qaRagEnabled
+                      ? 'Responses try local RAG first, then fall back to document content.'
+                      : 'Responses use the document content directly.',
                   )
                 : l(
                     '建议先加载结构块再提问，回答会更准确。',

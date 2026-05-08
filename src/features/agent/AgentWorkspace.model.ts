@@ -1,7 +1,7 @@
 import { FileSearch, FolderTree, Sparkles, Tags, WandSparkles } from 'lucide-react';
 import type { LibraryAgentPlan, LibraryAgentTool } from '../../services/libraryAgent';
 import type { LiteraturePaper } from '../../types/library';
-import type { UiLanguage } from '../../types/reader';
+import type { DocumentChatAttachment, UiLanguage } from '../../types/reader';
 import type {
   AgentCapability,
   AgentChatMessage,
@@ -123,12 +123,18 @@ export function buildAgentHistorySession({
   messages,
   selectedPaperIds,
   lastInstruction,
+  ragEnabled = true,
+  selectedModelPresetId,
+  attachments = [],
   locale = 'zh-CN',
 }: {
   id: string;
   messages: AgentChatMessage[];
   selectedPaperIds: string[];
   lastInstruction: string;
+  ragEnabled?: boolean;
+  selectedModelPresetId?: string;
+  attachments?: DocumentChatAttachment[];
   locale?: UiLanguage;
 }): AgentHistorySession {
   const latestUserMessage = [...messages].reverse().find((message) => message.role === 'user');
@@ -148,6 +154,9 @@ export function buildAgentHistorySession({
     messages,
     selectedPaperIds,
     lastInstruction,
+    ragEnabled,
+    selectedModelPresetId,
+    attachments,
     status: sessionStatusFromMessages(messages),
   };
 }

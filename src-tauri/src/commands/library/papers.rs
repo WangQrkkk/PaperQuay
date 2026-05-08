@@ -64,7 +64,11 @@ pub(crate) fn insert_authors(
     Ok(())
 }
 
-fn replace_authors(connection: &Connection, paper_id: &str, authors: &[String]) -> Result<(), String> {
+fn replace_authors(
+    connection: &Connection,
+    paper_id: &str,
+    authors: &[String],
+) -> Result<(), String> {
     connection
         .execute(
             "delete from paper_authors where paper_id = ?1",
@@ -621,10 +625,7 @@ pub fn library_list_papers(
 }
 
 #[tauri::command]
-pub fn library_reorder_papers(
-    app: AppHandle,
-    request: ReorderPapersRequest,
-) -> Result<(), String> {
+pub fn library_reorder_papers(app: AppHandle, request: ReorderPapersRequest) -> Result<(), String> {
     let mut connection = open_library_connection(&app)?;
     let transaction = connection
         .transaction()

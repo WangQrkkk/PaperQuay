@@ -26,7 +26,6 @@ import {
   buildMineruCachePaths,
   buildMineruSummaryCachePath,
   buildMineruSummaryCachePathCandidates,
-  buildMineruTranslationCachePath,
   guessSiblingJsonPath,
   guessSiblingMarkdownPath,
 } from '../../utils/mineruCache';
@@ -36,8 +35,8 @@ import {
   type LibraryPreviewLoadResult,
   type MineruCacheManifest,
   type SummaryCacheEnvelope,
-  type TranslationCacheEnvelope,
 } from './readerShared';
+import { writeTranslationCache } from './readerTranslation';
 
 type LocaleTextFn = (zh: string, en: string) => string;
 
@@ -500,23 +499,11 @@ export async function writeLibraryTranslationCache({
   targetLanguage: string;
   translations: TranslationMap;
 }) {
-  if (!mineruCacheDir.trim()) {
-    return null;
-  }
-
-  const cachePath = buildMineruTranslationCachePath(
-    mineruCacheDir.trim(),
+  return writeTranslationCache({
     item,
-    targetLanguage,
-  );
-  const payload: TranslationCacheEnvelope = {
-    version: 1,
+    mineruCacheDir,
     sourceLanguage,
     targetLanguage,
-    translatedAt: new Date().toISOString(),
     translations,
-  };
-
-  await writeLocalTextFile(cachePath, JSON.stringify(payload, null, 2));
-  return cachePath;
+  });
 }

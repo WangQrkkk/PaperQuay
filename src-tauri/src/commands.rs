@@ -5,6 +5,7 @@ pub mod llm;
 pub mod metadata;
 pub mod mineru;
 pub mod qa;
+pub mod rag;
 pub mod summary;
 pub mod translation;
 pub mod zotero;

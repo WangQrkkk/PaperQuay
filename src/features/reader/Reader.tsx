@@ -113,6 +113,7 @@ function Reader() {
     mineruApiToken,
     translationApiKey,
     summaryApiKey,
+    embeddingApiKey,
     zoteroApiKey,
     zoteroUserId,
   } = readerSecrets;
@@ -296,6 +297,7 @@ function Reader() {
     l,
     libraryPreviewStates,
     loadLibraryPreviewBlocks,
+    libraryTranslationSnapshots,
     mineruApiToken,
     settings,
     setError,
@@ -865,6 +867,7 @@ function Reader() {
                     mineruApiToken={mineruApiToken}
                     translationApiKey={translationApiKey}
                     summaryApiKey={summaryApiKey}
+                    embeddingApiKey={embeddingApiKey}
                     qaModelPresets={qaModelPresets}
                     zoteroApiKey={zoteroApiKey}
                     zoteroUserId={zoteroUserId}
@@ -914,6 +917,7 @@ function Reader() {
           mineruApiToken={mineruApiToken}
           translationApiKey={translationApiKey}
           summaryApiKey={summaryApiKey}
+          embeddingApiKey={embeddingApiKey}
           qaModelPresets={qaModelPresets}
           zoteroApiKey={zoteroApiKey}
           zoteroUserId={zoteroUserId}
@@ -925,6 +929,7 @@ function Reader() {
           onMineruApiTokenChange={(value) => updateReaderSecret('mineruApiToken', value)}
           onTranslationApiKeyChange={(value) => updateReaderSecret('translationApiKey', value)}
           onSummaryApiKeyChange={(value) => updateReaderSecret('summaryApiKey', value)}
+          onEmbeddingApiKeyChange={(value) => updateReaderSecret('embeddingApiKey', value)}
           onZoteroApiKeyChange={(value) => updateReaderSecret('zoteroApiKey', value)}
           onZoteroUserIdChange={(value) => updateReaderSecret('zoteroUserId', value)}
           onDetectLocalZotero={() => void handleDetectLocalZotero()}

@@ -1,20 +1,25 @@
 import { invoke } from '@tauri-apps/api/core';
 import { readLocalBinaryFile } from './desktop';
+import { resolveLocalRagContext } from './localRag';
 import {
   paperAuthors,
   paperPdfPath,
+  normalizeComparable,
+  stripKnownReadPrefix,
   uniqueTags,
 } from './libraryAgentPlanHelpers';
 import { readReaderConfigFile } from './readerConfig';
 import { extractPdfTextByPdfJs } from './summarySource';
 import type { LiteraturePaper, UpdatePaperRequest } from '../types/library';
 import type {
+  DocumentChatAttachment,
   ModelRuntimeConfig,
   ModelReasoningEffort,
   QaModelPreset,
   ReaderConfigFile,
   ReaderSecrets,
   ReaderSettings,
+  WorkspaceItem,
 } from '../types/reader';
 
 export type LibraryAgentTool =
@@ -88,6 +93,7 @@ interface OpenAICompatibleLibraryAgentOptions {
   allowContextRequest?: boolean;
   tool: LibraryAgentToolChoice;
   instruction?: string | null;
+  messages?: LibraryAgentConversationMessage[];
   papers: LibraryAgentPaperInput[];
 }
 
@@ -166,6 +172,7 @@ interface LibraryAgentUserChoiceRequest {
 export interface LibraryAgentConversationMessage {
   role: 'assistant' | 'user';
   content: string;
+  attachments?: DocumentChatAttachment[];
 }
 
 export {
@@ -243,7 +250,55 @@ function normalizeAgentRuntimeConfig(settings: Partial<ReaderSettings>): ModelRu
   return { temperature, reasoningEffort };
 }
 
+function normalizeStoredReaderSettings(value: Partial<ReaderSettings>): Pick<
+  ReaderSettings,
+  | 'localRagEnabled'
+  | 'localRagTopK'
+  | 'ragSourceMode'
+  | 'embeddingBaseUrl'
+  | 'embeddingModel'
+  | 'embeddingDimensions'
+  | 'embeddingRequestTimeoutSeconds'
+  | 'embeddingBatchSize'
+> {
+  return {
+    localRagEnabled: value.localRagEnabled !== false,
+    localRagTopK:
+      typeof value.localRagTopK === 'number' && Number.isFinite(value.localRagTopK)
+        ? Math.max(1, Math.min(12, Math.trunc(value.localRagTopK)))
+        : 6,
+    ragSourceMode:
+      value.ragSourceMode === 'off' ||
+      value.ragSourceMode === 'mineru-markdown' ||
+      value.ragSourceMode === 'pdf-text' ||
+      value.ragSourceMode === 'hybrid'
+        ? value.ragSourceMode
+        : 'hybrid',
+    embeddingBaseUrl: value.embeddingBaseUrl?.trim() || 'https://api.openai.com',
+    embeddingModel: value.embeddingModel?.trim() || 'text-embedding-3-small',
+    embeddingDimensions:
+      typeof value.embeddingDimensions === 'number' && Number.isFinite(value.embeddingDimensions)
+        ? Math.max(1, Math.min(4096, Math.trunc(value.embeddingDimensions)))
+        : null,
+    embeddingRequestTimeoutSeconds:
+      typeof value.embeddingRequestTimeoutSeconds === 'number' &&
+      Number.isFinite(value.embeddingRequestTimeoutSeconds)
+        ? Math.max(10, Math.min(600, Math.trunc(value.embeddingRequestTimeoutSeconds)))
+        : 180,
+    embeddingBatchSize:
+      typeof value.embeddingBatchSize === 'number' && Number.isFinite(value.embeddingBatchSize)
+        ? Math.max(1, Math.min(128, Math.trunc(value.embeddingBatchSize)))
+        : 24,
+  };
+}
+
 export async function loadLibraryAgentModelPreset(): Promise<LibraryAgentModelPreset | null> {
+  return loadLibraryAgentModelPresetById();
+}
+
+export async function loadLibraryAgentModelPresetById(
+  preferredPresetId?: string | null,
+): Promise<LibraryAgentModelPreset | null> {
   const persistedConfig = await loadPersistedReaderConfig();
   const storedSettings = readStorageJson<ReaderSettings>(SETTINGS_STORAGE_KEY);
   const storedSecrets = readStorageJson<ReaderSecrets>(SECRETS_STORAGE_KEY);
@@ -257,6 +312,7 @@ export async function loadLibraryAgentModelPreset(): Promise<LibraryAgentModelPr
   };
   const presets = Array.isArray(secrets.qaModelPresets) ? secrets.qaModelPresets : [];
   const preferredId =
+    preferredPresetId ||
     settings.agentModelPresetId ||
     settings.qaActivePresetId ||
     settings.summaryModelPresetId ||
@@ -278,6 +334,17 @@ export async function loadLibraryAgentModelPreset(): Promise<LibraryAgentModelPr
   };
 }
 
+export async function loadLibraryAgentAvailableModelPresets(): Promise<QaModelPreset[]> {
+  const persistedConfig = await loadPersistedReaderConfig();
+  const storedSecrets = readStorageJson<ReaderSecrets>(SECRETS_STORAGE_KEY);
+  const secrets = {
+    ...(persistedConfig?.secrets ?? {}),
+    ...storedSecrets,
+  };
+
+  return Array.isArray(secrets.qaModelPresets) ? secrets.qaModelPresets : [];
+}
+
 function normalizeAgentContext(value: string): string {
   return value.replace(/\s+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
 }
@@ -289,7 +356,22 @@ function buildAgentInstructionWithHistory(
   const history = historyMessages
     .filter((message) => message.content.trim())
     .slice(-12)
-    .map((message) => `${message.role === 'assistant' ? 'Assistant' : 'User'}: ${message.content.trim()}`)
+    .map((message) => {
+      const attachmentSection = message.attachments?.length
+        ? `\n[Attachments]\n${message.attachments
+          .map((attachment) => {
+            const details = [
+              attachment.summary?.trim(),
+              attachment.textContent?.trim(),
+            ].filter(Boolean).join('\n');
+
+            return details ? `${attachment.name}\n${details}` : attachment.name;
+          })
+          .join('\n\n')}`
+        : '';
+
+      return `${message.role === 'assistant' ? 'Assistant' : 'User'}: ${message.content.trim()}${attachmentSection}`;
+    })
     .join('\n\n');
 
   if (!history) {
@@ -318,9 +400,35 @@ function fallbackSummaryContext(paper: LiteraturePaper): PaperContextPayload {
   };
 }
 
+function paperToWorkspaceItem(paper: LiteraturePaper): WorkspaceItem | null {
+  const pdfPath = paperPdfPath(paper);
+
+  if (!pdfPath) {
+    return null;
+  }
+
+  return {
+    itemKey: paper.id,
+    title: paper.title,
+    creators: paperAuthors(paper).join(', '),
+    year: paper.year ?? '',
+    itemType: 'pdf',
+    attachmentFilename: pdfPath.split(/[\\/]/).pop() || 'paper.pdf',
+    localPdfPath: pdfPath,
+    source: 'native-library',
+    workspaceId: `native-library:${paper.id}`,
+    groupKey: `native-library:${paper.id}`,
+  };
+}
+
 async function loadPaperContext(
   paper: LiteraturePaper,
   mode: LibraryAgentContextRequest['mode'],
+  requestReason: string,
+  preset: LibraryAgentModelPreset,
+  options?: {
+    ragEnabled?: boolean;
+  },
 ): Promise<PaperContextPayload> {
   if (mode === 'summary') {
     const context = fallbackSummaryContext(paper);
@@ -347,6 +455,55 @@ async function loadPaperContext(
     const pdfText = await extractPdfTextByPdfJs(pdfData);
     const normalizedPdfText = normalizeAgentContext(pdfText);
 
+    const persistedConfig = await loadPersistedReaderConfig();
+    const storedSettings = readStorageJson<ReaderSettings>(SETTINGS_STORAGE_KEY);
+    const storedSecrets = readStorageJson<ReaderSecrets>(SECRETS_STORAGE_KEY);
+    const secrets = {
+      ...(persistedConfig?.secrets ?? {}),
+      ...storedSecrets,
+    };
+    const ragSettings = normalizeStoredReaderSettings({
+      ...(persistedConfig?.settings ?? {}),
+      ...storedSettings,
+    });
+    const workspaceItem = paperToWorkspaceItem(paper);
+
+    if (
+      options?.ragEnabled !== false &&
+      workspaceItem &&
+      normalizedPdfText &&
+      secrets.embeddingApiKey?.trim() &&
+      ragSettings.embeddingBaseUrl.trim() &&
+      ragSettings.embeddingModel.trim()
+    ) {
+      try {
+        const ragText = await resolveLocalRagContext({
+          item: workspaceItem,
+          settings: ragSettings,
+          embedding: {
+            baseUrl: ragSettings.embeddingBaseUrl,
+            apiKey: secrets.embeddingApiKey.trim(),
+            model: ragSettings.embeddingModel,
+            dimensions: ragSettings.embeddingDimensions,
+            timeoutSeconds: ragSettings.embeddingRequestTimeoutSeconds,
+          },
+          question: requestReason,
+          mineruBlocks: [],
+          mineruDocumentText: '',
+          pdfDocumentText: normalizedPdfText,
+        });
+
+        if (ragText.trim()) {
+          return {
+            source: 'pdf-text-rag',
+            text: normalizeAgentContext(ragText),
+          };
+        }
+      } catch (error) {
+        console.warn('Failed to build local Agent RAG context', error);
+      }
+    }
+
     if (normalizedPdfText) {
       return {
         source: 'pdf-text',
@@ -368,6 +525,10 @@ async function loadPaperContext(
 async function buildPapersWithRequestedContext(
   papers: LiteraturePaper[],
   request: LibraryAgentContextRequest,
+  preset: LibraryAgentModelPreset,
+  options?: {
+    ragEnabled?: boolean;
+  },
 ): Promise<{ inputs: LibraryAgentPaperInput[]; label: string }> {
   const requestedIds = new Set(request.paperIds.filter(Boolean));
   const targetPapers = requestedIds.size > 0
@@ -377,7 +538,10 @@ async function buildPapersWithRequestedContext(
   const contextByPaperId = new Map<string, PaperContextPayload>();
 
   for (const paper of targetPapers) {
-    contextByPaperId.set(paper.id, await loadPaperContext(paper, request.mode));
+    contextByPaperId.set(
+      paper.id,
+      await loadPaperContext(paper, request.mode, request.reason, preset, options),
+    );
   }
 
   const sourceCounts = new Map<string, number>();
@@ -514,7 +678,15 @@ function updateRequestFromAgentItem(
     currentValue: string | null,
     nextValue: string | null | undefined,
   ) => {
-    const normalized = nextValue?.trim();
+    let normalized = nextValue?.trim();
+
+    if (
+      key === 'title' &&
+      normalized &&
+      normalizeComparable(normalized) === normalizeComparable(stripKnownReadPrefix(paper.title))
+    ) {
+      normalized = stripKnownReadPrefix(paper.title);
+    }
 
     if (!normalized || normalized === currentValue?.trim()) {
       return;
@@ -639,12 +811,14 @@ async function requestDynamicUserChoices({
   previousAnswer,
   preset,
   responseLanguage,
+  historyMessages = [],
 }: {
   papers: LiteraturePaper[];
   instruction: string;
   previousAnswer: string;
   preset: LibraryAgentModelPreset;
   responseLanguage?: string;
+  historyMessages?: LibraryAgentConversationMessage[];
 }): Promise<LibraryAgentRunResult> {
   const response = await generateLibraryAgentPlanOpenAICompatible({
     baseUrl: preset.baseUrl,
@@ -662,6 +836,7 @@ async function requestDynamicUserChoices({
       `Previous draft: ${previousAnswer}`,
       'Do not answer directly. Call present_user_options and generate 2 to 5 dynamic next-step choices tailored to this request and these papers. Each option must include an executable instruction for the app to run if the user clicks it.',
     ].join('\n'),
+    messages: historyMessages,
     papers: papers.map((paper) => paperToAgentInput(paper)),
   });
 
@@ -731,12 +906,14 @@ export async function runConversationalLibraryAgent({
   preset,
   historyMessages = [],
   responseLanguage,
+  ragEnabled = true,
 }: {
   papers: LiteraturePaper[];
   instruction: string;
   preset: LibraryAgentModelPreset;
   historyMessages?: LibraryAgentConversationMessage[];
   responseLanguage?: string;
+  ragEnabled?: boolean;
 }): Promise<LibraryAgentRunResult> {
   if (!preset.baseUrl.trim() || !preset.apiKey.trim() || !preset.model.trim()) {
     throw new Error('请先在设置里配置支持 tool/function calling 的 OpenAI-compatible 模型。');
@@ -759,6 +936,7 @@ export async function runConversationalLibraryAgent({
     allowContextRequest: true,
     tool: 'auto',
     instruction: instructionForModel,
+    messages: historyMessages,
     papers: papers.map((paper) => paperToAgentInput(paper)),
   });
 
@@ -772,6 +950,7 @@ export async function runConversationalLibraryAgent({
         previousAnswer: answer,
         preset,
         responseLanguage,
+        historyMessages,
       });
     }
 
@@ -797,7 +976,9 @@ export async function runConversationalLibraryAgent({
       throw new Error('模型请求了文献上下文，但没有返回有效的上下文参数。');
     }
 
-    const enrichedContext = await buildPapersWithRequestedContext(papers, contextRequest);
+    const enrichedContext = await buildPapersWithRequestedContext(papers, contextRequest, preset, {
+      ragEnabled,
+    });
     let enrichedResponse: LibraryAgentGeneratedResponse;
 
     try {
@@ -818,6 +999,7 @@ export async function runConversationalLibraryAgent({
           `Context reason: ${contextRequest.reason}.`,
           'Use the provided contextText fields when answering. Do not call request_paper_context again unless the loaded context is empty for all target papers.',
         ].join('\n'),
+        messages: historyMessages,
         papers: enrichedContext.inputs,
       });
     } catch (contextError) {
@@ -836,6 +1018,7 @@ export async function runConversationalLibraryAgent({
         previousAnswer: contextError instanceof Error ? contextError.message : String(contextError),
         preset,
         responseLanguage,
+        historyMessages,
       });
     }
 

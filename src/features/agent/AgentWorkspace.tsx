@@ -4,13 +4,15 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useWheelScrollDelegate } from '../../hooks/useWheelScrollDelegate';
 import {
   applyLibraryAgentPlan,
-  loadLibraryAgentModelPreset,
+  loadLibraryAgentAvailableModelPresets,
+  loadLibraryAgentModelPresetById,
   runConversationalLibraryAgent,
   type LibraryAgentConversationMessage,
   type LibraryAgentPlan,
 } from '../../services/libraryAgent';
 import { listLibraryPapers } from '../../services/library';
 import type { LiteraturePaper } from '../../types/library';
+import type { DocumentChatAttachment, QaModelPreset } from '../../types/reader';
 import { useThemeStore } from '../../stores/useThemeStore';
 import { PlanDiffCard, ToolCallCard, TraceTimeline } from './AgentExecutionCards';
 import {
@@ -45,6 +47,9 @@ import type { AgentChatMessage, AgentHistorySession, AgentToolCallView } from '.
 import { useAppLocale, useLocaleText } from '../../i18n/uiLanguage';
 import { emitOpenPreferences } from '../../app/appEvents';
 import AgentWorkspaceView from './AgentWorkspaceView';
+import { buildAttachmentFromPath, buildScreenshotAttachmentFromPath } from '../reader/documentReaderShared';
+import { captureSystemScreenshot, selectChatAttachmentPaths } from '../../services/desktop';
+import { mergeUniqueAgentAttachments } from './agentAttachmentUtils';
 
 interface AgentWorkspaceProps {
   onOpenPreferences?: () => void;
@@ -65,6 +70,7 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
   const [composerValue, setComposerValue] = useState('');
   const [lastInstruction, setLastInstruction] = useState('');
   const [agentPresetName, setAgentPresetName] = useState('');
+  const [agentModelPresets, setAgentModelPresets] = useState<QaModelPreset[]>([]);
   const [plan, setPlan] = useState<LibraryAgentPlan | null>(null);
   const [approvedItemIds, setApprovedItemIds] = useState<Set<string>>(() => new Set());
   const [expandedStepKeys, setExpandedStepKeys] = useState<Set<string>>(() => new Set());
@@ -73,6 +79,10 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
   const [activeSessionId, setActiveSessionId] = useState(() => newAgentSessionId());
   const [historySessions, setHistorySessions] = useState<AgentHistorySession[]>(() => loadAgentHistorySessions());
   const [historySidebarCollapsed, setHistorySidebarCollapsed] = useState(false);
+  const [agentAttachments, setAgentAttachments] = useState<DocumentChatAttachment[]>([]);
+  const [agentRagEnabled, setAgentRagEnabled] = useState(true);
+  const [selectedAgentPresetId, setSelectedAgentPresetId] = useState<string | null>(null);
+  const [capturingScreenshot, setCapturingScreenshot] = useState(false);
   const [messages, setMessages] = useState<AgentChatMessage[]>(() => [
     {
       id: newMessageId(),
@@ -202,6 +212,36 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
+
+    const loadModelPresets = async () => {
+      try {
+        const presets = await loadLibraryAgentAvailableModelPresets();
+
+        if (cancelled) {
+          return;
+        }
+
+        setAgentModelPresets(presets);
+        setSelectedAgentPresetId((current) => current ?? presets[0]?.id ?? null);
+        if (presets[0]) {
+          setAgentPresetName(presets[0].label || presets[0].model);
+        }
+      } catch {
+        if (!cancelled) {
+          setAgentModelPresets([]);
+        }
+      }
+    };
+
+    void loadModelPresets();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
     setComposerValue((current) =>
       containsLegacyMojibake(current)
         || current === 'Append 123 to the selected paper titles'
@@ -248,6 +288,9 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
       messages,
       selectedPaperIds: [...selectedPaperIds],
       lastInstruction,
+      ragEnabled: agentRagEnabled,
+      selectedModelPresetId: selectedAgentPresetId ?? undefined,
+      attachments: agentAttachments,
       locale,
     });
 
@@ -255,7 +298,16 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
       const otherSessions = current.filter((session) => session.id !== activeSessionId);
       return [nextSession, ...otherSessions].slice(0, 30);
     });
-  }, [activeSessionId, lastInstruction, locale, messages, selectedPaperIds]);
+  }, [
+    activeSessionId,
+    agentAttachments,
+    agentRagEnabled,
+    lastInstruction,
+    locale,
+    messages,
+    selectedAgentPresetId,
+    selectedPaperIds,
+  ]);
 
   useEffect(() => {
     saveAgentHistorySessions(historySessions);
@@ -285,6 +337,9 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
         messages: nextMessages,
         selectedPaperIds: nextSelectedPaperIds,
         lastInstruction: nextInstruction,
+        ragEnabled: agentRagEnabled,
+        selectedModelPresetId: selectedAgentPresetId ?? undefined,
+        attachments: agentAttachments,
         locale,
       }),
     );
@@ -389,6 +444,9 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
         messages: [...targetSession.messages, nextMessage],
         selectedPaperIds: targetSession.selectedPaperIds,
         lastInstruction: targetSession.lastInstruction,
+        ragEnabled: targetSession.ragEnabled,
+        selectedModelPresetId: targetSession.selectedModelPresetId,
+        attachments: targetSession.attachments,
         locale,
       });
     });
@@ -413,11 +471,12 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
     messages
       .filter((message) => message.role === 'user' || (message.role === 'assistant' && !message.plan))
       .filter((message) => !message.trace?.some((step) => step.id === 'welcome-intent'))
-      .filter((message) => message.content.trim() && !message.error)
+      .filter((message) => (message.content.trim() || message.attachments?.length) && !message.error)
       .slice(-12)
       .map((message) => ({
         role: message.role,
         content: message.content.trim(),
+        attachments: message.attachments,
       }));
 
   const runAgent = async (rawInstruction: string) => {
@@ -446,10 +505,12 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
     const assistantMessageId = newMessageId();
     const paperCount = selectedPapersSnapshot.length;
     const historyMessages = buildConversationHistory();
+    const attachmentsSnapshot = [...agentAttachments];
     const userMessage: AgentChatMessage = {
       id: newMessageId(),
       role: 'user',
       content: instruction,
+      attachments: attachmentsSnapshot,
       meta: paperCount > 0
         ? l(`作用于 ${paperCount} 篇论文`, `Applied to ${paperCount} papers`)
         : l('未选择论文，按通用对话处理', 'No papers selected; using general chat context'),
@@ -478,6 +539,7 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
     setMessages(nextMessages);
     upsertSessionSnapshot(sessionId, nextMessages, selectedPaperIdsSnapshot, instruction);
     setComposerValue('');
+    setAgentAttachments([]);
     setAgentSessionRunning(sessionId, true);
     setError('');
     setPlan(null);
@@ -485,7 +547,7 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
     setSelectedInspectorItemId(null);
 
     try {
-      const preset = await loadLibraryAgentModelPreset();
+      const preset = await loadLibraryAgentModelPresetById(selectedAgentPresetId);
 
       if (!preset) {
         throw new Error(l('请先在设置里配置 Agent 工具调用模型。', 'Configure the Agent tool-calling model in Settings first.'));
@@ -507,6 +569,7 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
         preset,
         historyMessages,
         responseLanguage: locale === 'en-US' ? 'English' : 'Simplified Chinese',
+        ragEnabled: agentRagEnabled,
       });
       const durationMs = Math.round(performance.now() - startedAt);
 
@@ -838,6 +901,96 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
     void runAgent(nextInstruction);
   };
 
+  const handleSelectAgentAttachments = async (kind: 'image' | 'file') => {
+    try {
+      const paths = await selectChatAttachmentPaths(kind);
+
+      if (paths.length === 0) {
+        setStatusMessage(
+          kind === 'image'
+            ? l('已取消选择图片附件。', 'Cancelled image attachment selection.')
+            : l('已取消选择文件附件。', 'Cancelled file attachment selection.'),
+        );
+        return;
+      }
+
+      const attachments = await Promise.all(
+        paths.map((path) => buildAttachmentFromPath(path, kind, locale)),
+      );
+
+      setAgentAttachments((current) => mergeUniqueAgentAttachments(current, attachments));
+      setStatusMessage(
+        l(`已添加 ${attachments.length} 个附件。`, `Added ${attachments.length} attachment(s).`),
+      );
+    } catch (nextError) {
+      const message = nextError instanceof Error ? nextError.message : l('加载 Agent 附件失败', 'Failed to load Agent attachments');
+      setError(message);
+      setStatusMessage(message);
+    }
+  };
+
+  const handleCaptureAgentScreenshot = async () => {
+    if (capturingScreenshot) {
+      return;
+    }
+
+    try {
+      setCapturingScreenshot(true);
+      setError('');
+      setStatusMessage(l('正在启动系统截图...', 'Starting system screenshot...'));
+      const screenshot = await captureSystemScreenshot();
+
+      if (!screenshot) {
+        setStatusMessage(l('已取消系统截图。', 'System screenshot cancelled.'));
+        return;
+      }
+
+      const attachment = await buildScreenshotAttachmentFromPath(screenshot.path, locale);
+      setAgentAttachments((current) => mergeUniqueAgentAttachments(current, [attachment]));
+      setStatusMessage(
+        l(`已添加系统截图：${attachment.name}`, `Screenshot attached: ${attachment.name}`),
+      );
+    } catch (nextError) {
+      const message = nextError instanceof Error ? nextError.message : l('系统截图失败', 'System screenshot failed');
+      setError(message);
+      setStatusMessage(message);
+    } finally {
+      setCapturingScreenshot(false);
+    }
+  };
+
+  const handleRemoveAgentAttachment = (attachmentId: string) => {
+    setAgentAttachments((current) => current.filter((attachment) => attachment.id !== attachmentId));
+  };
+
+  const handleToggleAgentRag = () => {
+    setAgentRagEnabled((current) => {
+      const next = !current;
+
+      setStatusMessage(
+        next
+          ? l('已开启 Agent RAG，上下文请求会优先尝试本地检索。', 'Agent RAG enabled. Context requests will try local retrieval first.')
+          : l('已关闭 Agent RAG，上下文请求将直接使用 PDF 全文。', 'Agent RAG disabled. Context requests will use raw PDF text directly.'),
+      );
+
+      return next;
+    });
+  };
+
+  const handleAgentPresetChange = (presetId: string) => {
+    const nextPreset = agentModelPresets.find((preset) => preset.id === presetId) ?? agentModelPresets[0] ?? null;
+
+    if (!nextPreset) {
+      return;
+    }
+
+    setSelectedAgentPresetId(nextPreset.id);
+    setAgentPresetName(nextPreset.label || nextPreset.model);
+    setStatusMessage(
+      l(`已切换 Agent 模型：${nextPreset.label || nextPreset.model}`, `Switched Agent model: ${nextPreset.label || nextPreset.model}`),
+    );
+  };
+
   const createWelcomeMessage = (): AgentChatMessage => ({
     id: newMessageId(),
     role: 'assistant',
@@ -869,6 +1022,12 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
     setSelectedInspectorItemId(null);
     setLastInstruction('');
     setComposerValue('');
+    setAgentAttachments([]);
+    setAgentRagEnabled(true);
+    setSelectedAgentPresetId((current) => current ?? agentModelPresets[0]?.id ?? null);
+    if (agentModelPresets[0]) {
+      setAgentPresetName(agentModelPresets[0].label || agentModelPresets[0].model);
+    }
     setError('');
     setStatusMessage(l('已创建新的 Agent 对话。', 'Created a new Agent chat.'));
   };
@@ -878,6 +1037,16 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
     setMessages(session.messages);
     setSelectedPaperIds(new Set(session.selectedPaperIds));
     setLastInstruction(session.lastInstruction);
+    setAgentRagEnabled(session.ragEnabled !== false);
+    setSelectedAgentPresetId(session.selectedModelPresetId ?? agentModelPresets[0]?.id ?? null);
+    const restoredPreset =
+      agentModelPresets.find((preset) => preset.id === session.selectedModelPresetId) ??
+      agentModelPresets[0] ??
+      null;
+    if (restoredPreset) {
+      setAgentPresetName(restoredPreset.label || restoredPreset.model);
+    }
+    setAgentAttachments(session.attachments ?? []);
     restoreDraftStateFromMessages(session.messages);
     setComposerValue('');
     setError('');
@@ -895,6 +1064,12 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
       setSelectedInspectorItemId(null);
       setLastInstruction('');
       setComposerValue('');
+      setAgentAttachments([]);
+      setAgentRagEnabled(true);
+      setSelectedAgentPresetId((current) => current ?? agentModelPresets[0]?.id ?? null);
+      if (agentModelPresets[0]) {
+        setAgentPresetName(agentModelPresets[0].label || agentModelPresets[0].model);
+      }
       setError('');
     }
 
@@ -912,12 +1087,21 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
     setSelectedInspectorItemId(null);
     setLastInstruction('');
     setComposerValue('');
+    setAgentAttachments([]);
+    setAgentRagEnabled(true);
+    setSelectedAgentPresetId((current) => current ?? agentModelPresets[0]?.id ?? null);
+    if (agentModelPresets[0]) {
+      setAgentPresetName(agentModelPresets[0].label || agentModelPresets[0].model);
+    }
     setHistorySessions([
       buildAgentHistorySession({
         id: nextSessionId,
         messages: nextMessages,
         selectedPaperIds: [...selectedPaperIds],
         lastInstruction: '',
+        ragEnabled: true,
+        selectedModelPresetId: selectedAgentPresetId ?? undefined,
+        attachments: [],
         locale,
       }),
     ]);
@@ -936,8 +1120,11 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
     <AgentWorkspaceView
       activeSessionId={activeSessionId}
       activeSessionRunning={activeSessionRunning}
+      agentAttachments={agentAttachments}
       agentCapabilities={agentCapabilities}
+      agentModelPresets={agentModelPresets}
       agentPresetName={agentPresetName}
+      agentRagEnabled={agentRagEnabled}
       applyingPlan={applyingPlan}
       approvedItemIds={approvedItemIds}
       chatScrollRef={chatScrollRef}
@@ -985,6 +1172,10 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
       onCopyToolParameters={(toolCall) => {
         void copyToolParameters(toolCall);
       }}
+      onAgentPresetChange={handleAgentPresetChange}
+      onCaptureScreenshot={() => {
+        void handleCaptureAgentScreenshot();
+      }}
       onHistorySidebarCollapsedChange={setHistorySidebarCollapsed}
       onInspectPlanItem={(itemId, paperTitle) => {
         setSelectedInspectorItemId(itemId);
@@ -994,8 +1185,16 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
       onRefreshPapers={() => {
         void refreshPapers();
       }}
+      onRemoveAttachment={handleRemoveAgentAttachment}
       onSelectAllVisible={selectAllVisible}
+      onSelectFileAttachments={() => {
+        void handleSelectAgentAttachments('file');
+      }}
+      onSelectImageAttachments={() => {
+        void handleSelectAgentAttachments('image');
+      }}
       onSubmitPrompt={submitPrompt}
+      onToggleAgentRag={handleToggleAgentRag}
       onTogglePaper={togglePaper}
       onTogglePlanItem={togglePlanItem}
       onToggleStep={toggleStep}
@@ -1006,10 +1205,12 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
       plan={plan}
       promptSuggestions={locale === 'en-US' ? promptSuggestionsEn : promptSuggestions}
       selectedInspectorItem={selectedInspectorItem}
+      selectedAgentPresetId={selectedAgentPresetId ?? ''}
       selectedPaperIds={selectedPaperIds}
       selectedPapers={selectedPapers}
       selectedPlanItems={selectedPlanItems}
       selectedTags={selectedTags}
+      screenshotLoading={capturingScreenshot}
       setStatusMessage={setStatusMessage}
       sortedHistorySessions={sortedHistorySessions}
       statusMessage={statusMessage}
