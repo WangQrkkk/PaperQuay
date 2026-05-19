@@ -1,7 +1,8 @@
 import { useRef } from 'react';
 import { Database, FolderOpen, RefreshCw, X } from 'lucide-react';
-import { useLocaleText } from '../../../i18n/uiLanguage';
+
 import { useWheelScrollDelegate } from '../../../hooks/useWheelScrollDelegate';
+import { useLocaleText } from '../../../i18n/uiLanguage';
 import type {
   LibraryImportMode,
   LibrarySettings,

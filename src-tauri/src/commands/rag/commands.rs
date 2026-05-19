@@ -59,7 +59,9 @@ fn normalize_embedding_base_url(base_url: &str) -> Option<String> {
         .map(|segment| {
             segment.len() >= 2
                 && segment.starts_with('v')
-                && segment[1..].chars().all(|character| character.is_ascii_digit())
+                && segment[1..]
+                    .chars()
+                    .all(|character| character.is_ascii_digit())
         })
         .unwrap_or(false)
     {
@@ -143,7 +145,12 @@ async fn request_embeddings(
 }
 
 fn embedding_bytes(values: &[f32]) -> Vec<u8> {
-    values.iter().copied().collect::<Vec<f32>>().as_bytes().to_vec()
+    values
+        .iter()
+        .copied()
+        .collect::<Vec<f32>>()
+        .as_bytes()
+        .to_vec()
 }
 
 fn read_document_record(
@@ -280,7 +287,9 @@ fn delete_document_chunks(
             .prepare("select id from rag_chunks where document_key = ?1 and source_type = ?2")
             .map_err(|error| format!("读取旧本地 RAG 分块失败: {}", error))?;
         let rows = statement
-            .query_map(params![document_key, source_type], |row| row.get::<_, i64>(0))
+            .query_map(params![document_key, source_type], |row| {
+                row.get::<_, i64>(0)
+            })
             .map_err(|error| format!("遍历旧本地 RAG 分块失败: {}", error))?;
 
         rows.collect::<Result<Vec<_>, _>>()
@@ -327,7 +336,12 @@ fn reset_document_if_layout_changed(
     }
 
     if record.embedding_dimension > 0 {
-        delete_document_chunks(connection, document_key, source_type, record.embedding_dimension)?;
+        delete_document_chunks(
+            connection,
+            document_key,
+            source_type,
+            record.embedding_dimension,
+        )?;
     }
 
     Ok(())
@@ -360,7 +374,10 @@ pub async fn rag_embed_chunks(
         return Ok(Vec::new());
     }
 
-    let texts = chunks.iter().map(|chunk| chunk.text.clone()).collect::<Vec<_>>();
+    let texts = chunks
+        .iter()
+        .map(|chunk| chunk.text.clone())
+        .collect::<Vec<_>>();
     let embeddings = request_embeddings(texts, &request.embedding).await?;
 
     Ok(chunks
@@ -558,11 +575,12 @@ pub fn rag_index_document(
         .map_err(|error| format!("提交本地 RAG 事务失败: {}", error))?;
 
     let indexed_chunk_count = count_indexed_chunks(&connection, document_key, source_type)?;
-    let next_status = if indexed_chunk_count >= request.total_chunk_count && request.total_chunk_count > 0 {
-        "ready"
-    } else {
-        "pending"
-    };
+    let next_status =
+        if indexed_chunk_count >= request.total_chunk_count && request.total_chunk_count > 0 {
+            "ready"
+        } else {
+            "pending"
+        };
 
     upsert_document_record(
         &connection,
@@ -818,16 +836,19 @@ pub fn rag_retrieve_document_chunks(
 
     if let Some(source_type) = source_type {
         let rows = statement
-            .query_map(params![query_blob, top_k, document_key, source_type], |row| {
-                Ok(RagRetrievalResult {
-                    chunk_id: row.get(0)?,
-                    source_type: row.get(1)?,
-                    page_index: row.get(2)?,
-                    block_id: row.get(3)?,
-                    text: row.get(4)?,
-                    score: row.get(5)?,
-                })
-            })
+            .query_map(
+                params![query_blob, top_k, document_key, source_type],
+                |row| {
+                    Ok(RagRetrievalResult {
+                        chunk_id: row.get(0)?,
+                        source_type: row.get(1)?,
+                        page_index: row.get(2)?,
+                        block_id: row.get(3)?,
+                        text: row.get(4)?,
+                        score: row.get(5)?,
+                    })
+                },
+            )
             .map_err(|error| format!("执行本地 RAG 检索失败: {}", error))?;
 
         return rows

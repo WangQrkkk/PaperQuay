@@ -8,4 +8,5 @@ pub mod qa;
 pub mod rag;
 pub mod summary;
 pub mod translation;
+pub mod webdav_backup;
 pub mod zotero;

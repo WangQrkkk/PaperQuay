@@ -1,5 +1,6 @@
 import {
   BookOpenText,
+  Cloud,
   Database,
   FolderOpen,
   Languages,
@@ -28,6 +29,7 @@ import {
   SettingsSelect,
   ToggleRow,
 } from './readerPreferencesPrimitives';
+import { ReaderPreferencesBackupSection } from './readerPreferencesBackupSection';
 import { ReaderPreferencesModelsSection } from './readerPreferencesModelsSection';
 import type {
   ReaderPreferencesLocalizer,
@@ -118,6 +120,15 @@ export function buildReaderPreferencesSections(
         'API key, cache, auto parse, and batch jobs',
       ),
       icon: <Database className="h-4 w-4" strokeWidth={1.8} />,
+    },
+    {
+      key: 'backup',
+      title: l('备份 / WebDAV', 'Backup / WebDAV'),
+      description: l(
+        '配置手动远程副本、连接测试和立即备份',
+        'Configure manual remote copies, connection test, and backup now',
+      ),
+      icon: <Cloud className="h-4 w-4" strokeWidth={1.8} />,
     },
     {
       key: 'translation',
@@ -579,6 +590,11 @@ export function ReaderPreferencesContent({
         onQaModelPresetAdd={onQaModelPresetAdd}
         onQaModelPresetRemove={onQaModelPresetRemove}
         onQaModelPresetChange={onQaModelPresetChange}
+      />
+
+      <ReaderPreferencesBackupSection
+        active={activeSection === 'backup'}
+        l={l}
       />
 
       {activeSection === 'embedding' ? (

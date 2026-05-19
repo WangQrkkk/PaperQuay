@@ -248,7 +248,10 @@ fn build_attachment_text(attachment: &DocumentChatAttachment) -> Option<String> 
         .map(|value| trim_attachment_text(value, 10_000));
 
     if let Some(text_content) = text_content {
-        return Some(format!("附件《{}》内容：\n{}", attachment.name, text_content));
+        return Some(format!(
+            "附件《{}》内容：\n{}",
+            attachment.name, text_content
+        ));
     }
 
     attachment.summary.as_ref().map(|summary| {
@@ -731,10 +734,7 @@ fn repair_unescaped_quotes_in_json(input: &str) -> String {
     output
 }
 
-fn parse_tool_call_arguments_value(
-    function_name: &str,
-    arguments: &str,
-) -> Result<Value, String> {
+fn parse_tool_call_arguments_value(function_name: &str, arguments: &str) -> Result<Value, String> {
     match serde_json::from_str::<Value>(arguments) {
         Ok(value) => Ok(value),
         Err(primary_error) => {
@@ -753,11 +753,9 @@ fn parse_tool_call_arguments_value(
 fn parse_context_request_tool_call(
     tool_call: &ChatCompletionToolCall,
 ) -> Result<LibraryAgentContextRequest, String> {
-    let arguments = parse_tool_call_arguments_value(
-        &tool_call.function.name,
-        &tool_call.function.arguments,
-    )
-    .map_err(|error| format!("Failed to parse Agent context tool arguments: {}", error))?;
+    let arguments =
+        parse_tool_call_arguments_value(&tool_call.function.name, &tool_call.function.arguments)
+            .map_err(|error| format!("Failed to parse Agent context tool arguments: {}", error))?;
     let mut mode = json_string(&arguments, "mode").unwrap_or_else(|| "summary".to_string());
 
     if mode != "summary" && mode != "pdf-text" {
@@ -777,11 +775,14 @@ fn parse_context_request_tool_call(
 fn parse_user_choice_tool_call(
     tool_call: &ChatCompletionToolCall,
 ) -> Result<LibraryAgentUserChoiceRequest, String> {
-    let arguments = parse_tool_call_arguments_value(
-        &tool_call.function.name,
-        &tool_call.function.arguments,
-    )
-    .map_err(|error| format!("Failed to parse Agent user-choice tool arguments: {}", error))?;
+    let arguments =
+        parse_tool_call_arguments_value(&tool_call.function.name, &tool_call.function.arguments)
+            .map_err(|error| {
+                format!(
+                    "Failed to parse Agent user-choice tool arguments: {}",
+                    error
+                )
+            })?;
     let raw_options = arguments
         .get("options")
         .and_then(Value::as_array)

@@ -913,8 +913,14 @@ export default function LiteratureLibraryView({
 
         setSettings(latestSettings);
         setEditingSettings(latestSettings);
-      } catch {
+      } catch (nextError) {
         setEditingSettings(settings);
+        const message =
+          nextError instanceof Error
+            ? nextError.message
+            : l('Failed to load settings', 'Failed to load settings');
+        setError(message);
+        setStatusMessage(message);
       }
     })();
   };

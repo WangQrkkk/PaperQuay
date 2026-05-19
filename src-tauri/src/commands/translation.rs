@@ -927,7 +927,9 @@ pub async fn translate_blocks_openai_compatible(
                     .await
                     {
                         Ok(fallback_translation) => translations.push(fallback_translation),
-                        Err(error) => fallback_errors.push(format!("{}: {}", batch[0].block_id, error)),
+                        Err(error) => {
+                            fallback_errors.push(format!("{}: {}", batch[0].block_id, error))
+                        }
                     }
                     continue;
                 }

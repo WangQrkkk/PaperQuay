@@ -2,7 +2,16 @@ export const OPEN_PREFERENCES_EVENT = 'paperquay:open-preferences';
 export const UI_LANGUAGE_CHANGED_EVENT = 'paperquay:ui-language-changed';
 
 export interface OpenPreferencesEventDetail {
-  section?: 'general' | 'library' | 'reading' | 'mineru' | 'translation' | 'models' | 'summaryQa';
+  section?:
+    | 'general'
+    | 'library'
+    | 'reading'
+    | 'mineru'
+    | 'backup'
+    | 'translation'
+    | 'models'
+    | 'embedding'
+    | 'summaryQa';
 }
 
 export function emitOpenPreferences(section?: OpenPreferencesEventDetail['section']) {

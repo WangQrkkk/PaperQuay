@@ -72,6 +72,7 @@ export type PreferencesSectionKey =
   | 'library'
   | 'reading'
   | 'mineru'
+  | 'backup'
   | 'translation'
   | 'models'
   | 'embedding'
