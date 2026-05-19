@@ -2086,14 +2086,17 @@ function DocumentReaderTab({
 
   const handleOpenFloatingAssistant = useCallback(() => {
     setAssistantDetached(true);
-    setAssistantActivePanel((current) => current ?? 'chat');
+    setAssistantActivePanel('chat');
     setWorkspaceStage('reading');
-    setStatusMessage(lRef.current('AI 助手已切换为主窗口内浮动面板', 'Moved the AI assistant to a floating panel in the main window'));
+    setStatusMessage(
+      lRef.current('文档问答已切换为独立浮动窗口', 'Moved document chat to a detached floating window'),
+    );
   }, []);
 
   const handleAttachAssistant = useCallback(() => {
     setAssistantDetached(false);
-    setStatusMessage(lRef.current('AI 助手已停靠回右侧面板', 'Docked the AI assistant back to the right sidebar'));
+    setAssistantActivePanel('chat');
+    setStatusMessage(lRef.current('文档问答已停靠回右侧面板', 'Docked document chat back to the right sidebar'));
   }, []);
 
   const handleCreateQaSession = useCallback(() => {

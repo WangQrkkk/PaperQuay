@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { X } from 'lucide-react';
 import { useLocaleText } from '../../i18n/uiLanguage';
-import { AssistantSidebar, type AssistantSidebarCoreProps } from './AssistantSidebar';
+import { ChatWorkspacePanel, type ChatWorkspacePanelProps } from './assistantSidebarChat';
 
 function clampFloatingPosition(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
@@ -18,18 +17,18 @@ function getInitialFloatingAssistantPosition() {
   };
 }
 
-export type FloatingAssistantSidebarProps = AssistantSidebarCoreProps;
+export type FloatingAssistantChatProps = ChatWorkspacePanelProps;
 
 export interface FloatingAssistantPanelProps {
   title: string;
   onAttachAssistant: () => void;
-  sidebarProps: FloatingAssistantSidebarProps;
+  chatProps: FloatingAssistantChatProps;
 }
 
 export function FloatingAssistantPanel({
   title,
   onAttachAssistant,
-  sidebarProps,
+  chatProps,
 }: FloatingAssistantPanelProps) {
   const l = useLocaleText();
   const panelRef = useRef<HTMLDivElement | null>(null);
@@ -59,10 +58,12 @@ export function FloatingAssistantPanel({
       const panelHeight = panelRect?.height ?? 720;
       const nextX = dragState.panelX + event.clientX - dragState.startX;
       const nextY = dragState.panelY + event.clientY - dragState.startY;
+      const maxX = Math.max(12, window.innerWidth - panelWidth - 12);
+      const maxY = Math.max(64, window.innerHeight - panelHeight - 12);
 
       setPanelPosition({
-        x: clampFloatingPosition(nextX, 12, window.innerWidth - panelWidth - 12),
-        y: clampFloatingPosition(nextY, 64, window.innerHeight - panelHeight - 12),
+        x: clampFloatingPosition(nextX, 12, maxX),
+        y: clampFloatingPosition(nextY, 64, maxY),
       });
     };
 
@@ -79,6 +80,28 @@ export function FloatingAssistantPanel({
       window.removeEventListener('pointerup', handlePointerUp);
     };
   }, [dragging]);
+
+  useEffect(() => {
+    const handleResize = () => {
+      const panelRect = panelRef.current?.getBoundingClientRect();
+      const panelWidth = panelRect?.width ?? 960;
+      const panelHeight = panelRect?.height ?? 720;
+      const maxX = Math.max(12, window.innerWidth - panelWidth - 12);
+      const maxY = Math.max(64, window.innerHeight - panelHeight - 12);
+
+      setPanelPosition((current) => ({
+        x: clampFloatingPosition(current.x, 12, maxX),
+        y: clampFloatingPosition(current.y, 64, maxY),
+      }));
+    };
+
+    window.addEventListener('resize', handleResize);
+    handleResize();
+
+    return () => {
+      window.removeEventListener('resize', handleResize);
+    };
+  }, []);
 
   return (
     <div
@@ -108,34 +131,26 @@ export function FloatingAssistantPanel({
       >
         <div className="min-w-0">
           <div className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">
-            {l('浮动 AI 面板', 'Floating AI Panel')}
+            {l('独立文档问答', 'Detached Document Chat')}
           </div>
           <div className="mt-1 truncate text-sm font-semibold text-slate-900">{title}</div>
         </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <button
-            type="button"
-            onClick={onAttachAssistant}
-            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition-all duration-200 hover:bg-slate-50"
-          >
-            {l('停靠右侧', 'Dock Right')}
-          </button>
-          <button
-            type="button"
-            onClick={onAttachAssistant}
-            aria-label={l('关闭浮动 AI 面板', 'Close Floating AI Panel')}
-            className="rounded-xl p-2 text-slate-500 transition-all duration-200 hover:bg-slate-100 hover:text-slate-800"
-          >
-            <X className="h-4 w-4" strokeWidth={1.9} />
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={onAttachAssistant}
+          className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition-all duration-200 hover:bg-slate-50"
+        >
+          {l('停靠回右侧', 'Dock Back')}
+        </button>
       </div>
 
-      <AssistantSidebar
-        {...sidebarProps}
-        chatLayoutMode="workspace"
-        onAttachBack={onAttachAssistant}
-      />
+      <div className="min-h-0 flex-1 bg-[linear-gradient(180deg,#fbfdff,#f5f8fc)]">
+        <ChatWorkspacePanel
+          {...chatProps}
+          assistantDetached
+          layoutMode="workspace"
+        />
+      </div>
     </div>
   );
 }

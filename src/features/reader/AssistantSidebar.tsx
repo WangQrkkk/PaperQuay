@@ -362,11 +362,11 @@ function AssistantSidebar({
         </div>
 
         <div className="mt-auto flex flex-col items-center gap-1.5">
-          {onDetach ? (
+          {onDetach && activePanel === 'chat' ? (
             <button
               type="button"
               onClick={onDetach}
-              title={l('弹出独立窗口', 'Open Detached Window')}
+              title={l('弹出文档问答窗口', 'Open document chat window')}
               className="flex h-10 w-10 items-center justify-center rounded-xl text-slate-400 transition hover:bg-slate-50 hover:text-slate-600"
             >
               <ExternalLink className="h-4.5 w-4.5" strokeWidth={1.9} />

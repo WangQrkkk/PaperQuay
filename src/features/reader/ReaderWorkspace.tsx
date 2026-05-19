@@ -523,62 +523,34 @@ function ReaderWorkspace(props: ReaderWorkspaceProps) {
   } = props;
   const sourceLabel =
     formatReaderDocumentSource(l, currentDocument, selectedSectionTitle);
-  const floatingAssistantSidebarProps = buildReaderAssistantSidebarProps({
-    l,
-    activePanel: props.assistantActivePanel,
-    onActivePanelChange: props.onAssistantActivePanelChange,
-    currentDocument: props.currentDocument,
-    documentSource: sourceLabel,
-    currentPdfName: props.currentPdfName,
-    currentJsonName: props.currentJsonName,
-    blockCount: props.blocks.length,
-    translatedCount: props.translatedCount,
-    statusMessage: props.statusMessage,
+  const floatingAssistantChatProps = {
+    sessions: props.qaSessions,
+    selectedSessionId: props.selectedQaSessionId,
+    messages: props.qaMessages,
+    input: props.qaInput,
+    loading: props.qaLoading,
+    error: props.qaError,
     hasBlocks: props.blocks.length > 0,
-    aiConfigured: props.aiConfigured,
-    qaSessions: props.qaSessions,
-    selectedQaSessionId: props.selectedQaSessionId,
-    qaMessages: props.qaMessages,
-    qaInput: props.qaInput,
-    qaAttachments: props.qaAttachments,
+    selectedExcerpt: props.selectedExcerpt,
+    attachments: props.qaAttachments,
     qaModelPresets: props.qaModelPresets,
     selectedQaPresetId: props.selectedQaPresetId,
     qaRagEnabled: props.qaRagEnabled,
-    qaLoading: props.qaLoading,
-    qaError: props.qaError,
     screenshotLoading: props.screenshotLoading,
-    onQaInputChange: props.onQaInputChange,
-    onQaSubmit: props.onQaSubmit,
+    onInputChange: props.onQaInputChange,
+    onSubmit: props.onQaSubmit,
     onQaPresetChange: props.onQaPresetChange,
     onQaRagEnabledChange: props.onQaRagEnabledChange,
-    onQaSessionCreate: props.onQaSessionCreate,
-    onQaSessionSelect: props.onQaSessionSelect,
-    onQaSessionDelete: props.onQaSessionDelete,
+    onSessionCreate: props.onQaSessionCreate,
+    onSessionSelect: props.onQaSessionSelect,
+    onSessionDelete: props.onQaSessionDelete,
+    onAppendSelectedExcerpt: props.onAppendSelectedExcerptToQa,
     onSelectImageAttachments: props.onSelectImageAttachments,
     onSelectFileAttachments: props.onSelectFileAttachments,
     onCaptureScreenshot: props.onCaptureScreenshot,
     onRemoveAttachment: props.onRemoveAttachment,
     onCitationClick: props.onCitationClick,
-    selectedExcerpt: props.selectedExcerpt,
-    selectedExcerptTranslation: props.selectedExcerptTranslation,
-    selectedExcerptTranslating: props.selectedExcerptTranslating,
-    selectedExcerptError: props.selectedExcerptError,
-    onAppendSelectedExcerptToQa: props.onAppendSelectedExcerptToQa,
-    activeBlockSummary: props.activeBlockSummary,
-    workspaceNoteMarkdown: props.workspaceNoteMarkdown,
-    annotations: props.annotations,
-    zoteroRelatedNotes: props.zoteroRelatedNotes,
-    zoteroRelatedNotesLoading: props.zoteroRelatedNotesLoading,
-    zoteroRelatedNotesError: props.zoteroRelatedNotesError,
-    onWorkspaceNoteChange: props.onWorkspaceNoteChange,
-    onAppendSelectedExcerptToNote: props.onAppendSelectedExcerptToNote,
-    onCreateAnnotation: props.onCreateAnnotation,
-    onDeleteAnnotation: props.onDeleteAnnotation,
-    onSelectAnnotation: props.onSelectAnnotation,
-    onTranslateSelectedExcerpt: props.onTranslateSelectedExcerpt,
-    onClearSelectedExcerpt: props.onClearSelectedExcerpt,
-    onOpenPreferences: props.onOpenPreferences,
-  });
+  };
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-[linear-gradient(180deg,#f8fafc,#f1f5f9)] dark:bg-[linear-gradient(180deg,#0f1a2e,#0c1525)]">
@@ -639,7 +611,7 @@ function ReaderWorkspace(props: ReaderWorkspaceProps) {
         <FloatingAssistantPanel
           title={currentDocument.title}
           onAttachAssistant={props.onAttachAssistant}
-          sidebarProps={floatingAssistantSidebarProps}
+          chatProps={floatingAssistantChatProps}
         />
       ) : null}
 

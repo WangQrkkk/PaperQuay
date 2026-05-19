@@ -22,16 +22,16 @@ Download the native installer for your operating system from the Assets section 
 
 ## Included In This Release
 
-- Added local RAG indexing and retrieval with persistent sqlite-vec storage, configurable embedding settings, and backend-only embedding requests.
-- Improved document Q&A citation handling so inline references such as `[1]` can jump back to the referenced MinerU block.
-- Added Agent composer controls for file upload, image upload, screenshots, RAG mode, and per-chat model switching.
-- Improved Agent tool-call robustness, including malformed JSON argument repair and safer rename handling for read-status prefixes.
-- Improved translation reliability so completed block translations are saved incrementally and failed batches can be retried without discarding finished work.
-- Refactored large reader, translation, library, settings, and RAG modules into smaller files while preserving existing behavior.
+- Added manual WebDAV remote backup and additive restore, with local SQLite online backup staging, atomic remote object upload, latest-backup inspection, and settings UI integration.
+- Improved restore behavior so missing PDFs and derived parse/translation/summary caches can be pulled back from the latest backup without deleting extra local content.
+- Fixed the reader workspace switch behavior so an opened PDF no longer turns blank after switching from Library to Agent and back.
+- Reworked the detached document chat window so it opens as a true chat workspace instead of a nested sidebar shell, with corrected docking behavior and cleaner window UI.
+- Tightened document chat semantics so the detach action only applies to the chat panel and docking returns users to the chat panel consistently.
 
 ## Notes
 
-- This is an early desktop release. Keep a backup of important papers and local data before large batch operations.
+- WebDAV backup in this version is manual only. It does not run on startup or on a background schedule.
+- The local SQLite database remains the source of truth. WebDAV stores a remote backup copy only.
 - AI features require your own compatible model endpoint and API key in Settings.
 - MinerU parsing requires a MinerU API key unless you are using already parsed local cache data.
 
@@ -39,7 +39,7 @@ Download the native installer for your operating system from the Assets section 
 
 # PaperQuay v{{VERSION}} 中文说明
 
-PaperQuay 是一款 AI 辅助的桌面端文献管理软件，支持文献库管理、PDF 阅读、论文概览生成、全文翻译以及科研工作流自动化。
+PaperQuay 是一款 AI 辅助的桌面端文献管理软件，支持文库管理、PDF 阅读、论文概览生成、全文翻译以及科研工作流自动化。
 
 ## 下载说明
 
@@ -48,28 +48,28 @@ PaperQuay 是一款 AI 辅助的桌面端文献管理软件，支持文献库管
 | 平台 | 推荐安装包 |
 | --- | --- |
 | Windows | `.msi` 安装包 |
-| macOS | Apple Silicon 或 Intel 对应 `.dmg` 安装包 |
+| macOS | Apple Silicon 或 Intel 对应的 `.dmg` 安装包 |
 | Linux | Tauri Release 构建生成的原生 Linux 桌面安装包 |
 
 ## 版本亮点
 
-- 独立本地文献库，支持 PDF 导入、存储目录配置、自定义分类、标签、搜索、排序、收藏和阅读进度记录。
-- 可选兼容 Zotero，可将已有的分类、标签、元数据和本地 PDF 附件导入到 PaperQuay 自己的文献库中。
-- 内置 PDF 阅读工作流，支持 MinerU 结构化解析、块级联动定位、全文翻译、笔记以及 AI 生成论文概览。
+- 独立本地文库，支持 PDF 导入、存储目录配置、自定义分类、标签、搜索、排序、收藏和阅读进度记录。
+- 可选兼容 Zotero，可将已有的分类、标签、元数据和本地 PDF 附件导入到 PaperQuay 自己的文库中。
+- 内置 PDF 阅读工作流，支持 MinerU 结构化解析、块级联动定位、全文翻译、笔记以及 AI 论文概览。
 - 独立 Agent 工作区，支持对话历史、执行轨迹、工具调用卡片，以及元数据补全、打标签、分类、重命名等批量文献操作。
-- 可配置 OpenAI 兼容模型，用于翻译、概览生成、问答和 Agent 任务，并提供 Windows、macOS、Linux 三端桌面安装包。
+- 可配置 OpenAI 兼容模型，用于翻译、概览生成、问答和 Agent 任务，并提供 Windows、macOS、Linux 桌面安装包。
 
 ## 本次版本包含
 
-- 新增本地 RAG 索引与检索，使用 sqlite-vec 持久保存向量，并支持独立的 embedding 参数配置和后端 embedding 请求。
-- 改进论文问答引用能力，回答中的 `[1]` 这类引用可以跳回对应的 MinerU 块。
-- Agent 输入区新增文件上传、图片上传、截图、RAG 开关和对话内模型切换。
-- 提升 Agent 工具调用稳定性，修复部分模型返回非法 JSON 参数、去除“已读”前缀误判等问题。
-- 改进翻译可靠性，已完成的块会增量保存，失败批次可重试，不会丢弃已翻译内容。
-- 对 Reader、翻译、文库、设置和 RAG 相关的大文件进行了模块化拆分，保持原有功能不变。
+- 新增 WebDAV 手动远程备份与增量恢复：使用 SQLite 在线备份生成本地暂存副本，远端对象采用临时上传后原子切换，支持 latest 备份查看与设置页操作入口。
+- 改进 WebDAV 恢复逻辑：可从最新远程备份补回缺失的 PDF，以及 MinerU 解析、翻译、总结等派生缓存，同时不会删除本地额外内容。
+- 修复阅读器 workspace 切换问题：在文库中打开 PDF 后，切到 Agent 再切回文库，不会再出现 PDF 变空白。
+- 重做“文档问答”独立窗口：现在会以真正的问答窗口打开，而不是再套一层右侧侧栏壳，停靠行为和窗口 UI 也更清晰。
+- 收紧文档问答独立窗口语义：只有聊天面板支持弹出为独立窗口，停靠回去后也会稳定回到聊天面板。
 
 ## 备注
 
-- 当前仍属于较早期的桌面版本，执行大批量操作前建议先备份重要论文和本地数据。
-- AI 功能需要你在设置中自行配置兼容的大模型接口和 API key。
-- MinerU 解析需要有效的 MinerU API key，除非你使用的是已经解析好的本地缓存数据。
+- 本版本的 WebDAV 备份仍然是手动模式，不会在启动时或后台定时自动运行。
+- 本地 SQLite 数据库始终是唯一数据源，WebDAV 只保存远程备份副本。
+- AI 功能需要你在设置中自行配置兼容的大模型接口和 API Key。
+- MinerU 解析需要有效的 MinerU API Key，除非你使用的是已经解析好的本地缓存数据。

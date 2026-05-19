@@ -1,7 +1,7 @@
 export {
   FloatingAssistantPanel,
   type FloatingAssistantPanelProps,
-  type FloatingAssistantSidebarProps,
+  type FloatingAssistantChatProps,
 } from './readerFloatingAssistantPanel';
 export {
   SelectionQuickActions,
