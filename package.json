@@ -3,7 +3,10 @@
   "private": true,
   "version": "0.1.7",
   "description": "AI-assisted desktop literature reader and library manager.",
-  "author": "PaperQuay Developers",
+  "author": {
+    "name": "PaperQuay Developers",
+    "email": "WangQrkkk@users.noreply.github.com"
+  },
   "license": "AGPL-3.0-only",
   "main": "electron/main.cjs",
   "type": "module",
@@ -71,6 +74,7 @@
   "build": {
     "appId": "dev.paperquay.app",
     "productName": "PaperQuay",
+    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
     "npmRebuild": false,
     "asar": true,
     "asarUnpack": [
@@ -116,6 +120,7 @@
         "deb",
         "tar.gz"
       ],
+      "maintainer": "PaperQuay Developers <WangQrkkk@users.noreply.github.com>",
       "category": "Office",
       "icon": "public/icon.png"
     }

@@ -110,9 +110,12 @@ jobs:
           - name: Linux x64
             platform: ubuntu-22.04
             args: "--linux --x64 --publish never"
-          - name: macOS Universal
+          - name: macOS x64
             platform: macos-latest
-            args: "--mac --universal --publish never"
+            args: "--mac --x64 --publish never"
+          - name: macOS arm64
+            platform: macos-latest
+            args: "--mac --arm64 --publish never"
 
     steps:
       - name: Checkout
