@@ -147,10 +147,11 @@ jobs:
         shell: bash
         run: |
           if [ -f electron-build.log ]; then
-            {
-              echo "::error title=Electron build failed::Last 80 lines of electron-build.log"
-              tail -n 80 electron-build.log
-            } | sed 's/%/%25/g; s/\r/%0D/g; s/\n/%0A/g'
+            message="$(tail -n 120 electron-build.log)"
+            message="${message//'%'/'%25'}"
+            message="${message//$'\r'/'%0D'}"
+            message="${message//$'\n'/'%0A'}"
+            echo "::error title=Electron build failed::$message"
           fi
 
       - name: Upload Electron build log
