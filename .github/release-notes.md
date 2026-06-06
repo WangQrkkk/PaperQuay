@@ -1,6 +1,6 @@
 # PaperQuay v{{VERSION}}
 
-PaperQuay is an AI-assisted desktop application for literature management, PDF reading, paper overview generation, full-text translation, and research workflow automation.
+PaperQuay is an AI-assisted desktop application for literature management, PDF reading, paper overview generation, full-text translation, notes, and research workflow automation.
 
 ## Downloads
 
@@ -14,37 +14,41 @@ Download the native installer for your operating system from the Assets section 
 
 ## Highlights
 
-- Independent local literature library with PDF import, configurable storage folders, custom collections, tags, search, sorting, favorites, and reading progress.
-- Optional Zotero compatibility for importing existing collections, tags, metadata, and local PDF attachments into PaperQuay's own library.
-- Built-in PDF reading workflow with MinerU structured parsing, block-linked navigation, full-text translation, notes, and AI-generated paper overviews.
-- Dedicated Agent workspace with chat history, execution traces, tool-call cards, and batch library operations such as metadata completion, tagging, classification, and renaming.
-- Configurable OpenAI-compatible models for translation, overview generation, Q&A, and agent tasks, plus packaged desktop builds for Windows, macOS, and Linux.
+- Major codebase refactor: PaperQuay has been reorganized around the new Electron desktop runtime, shared platform services, and cleaner feature modules.
+- New Notes workspace with folder organization, note metadata, tags, backlinks, outline, context menus, and richer editor controls.
+- Notes now support inline knowledge links, including wiki-style note links, paper references, hashtags, and note anchor links that can jump across related content.
+- Added note-to-reader integration for PDF anchors, so notes can retain source context and jump back into linked reading locations.
+- Improved the editor experience with slash commands, templates, component blocks, image paste/drop, math, tables, task lists, and a Notion-like block control surface.
+- Refreshed Agent, Reader, Library, PDF, and shared UI flows as part of the refactor, with improved desktop integration and cleaner state handling.
 
 ## Included In This Release
 
-- Added manual WebDAV remote backup and additive restore, with local data backup staging, atomic remote object upload, latest-backup inspection, and settings UI integration.
-- Improved restore behavior so missing PDFs and derived parse/translation/summary caches can be pulled back from the latest backup without deleting extra local content.
-- Fixed the reader workspace switch behavior so an opened PDF no longer turns blank after switching from Library to Agent and back.
-- Reworked the detached document chat window so it opens as a true chat workspace instead of a nested sidebar shell, with corrected docking behavior and cleaner window UI.
-- Tightened document chat semantics so the detach action only applies to the chat panel and docking returns users to the chat panel consistently.
+- Migrated the desktop app from the old Tauri backend layout to an Electron-based runtime and build pipeline.
+- Added the full notes feature set, including note storage services, the notes store, the notes workspace, rich Tiptap editor extensions, and note utility tests.
+- Added inline navigation primitives for notes: note links, PDF anchor cards, paper references, hashtags, and backlink discovery.
+- Added table insertion controls and fixed table cell editing so clicking a cell enters text editing instead of selecting multiple cells.
+- Moved toolbar table selection into a fixed floating menu so it is not clipped or covered by the right sidebar.
+- Expanded PDF reading UI with thumbnail navigation, page overlays, reading heatmaps, and viewer toolbar modules.
+- Added desktop file, library, WebDAV, Zotero, note, and RAG backend command modules for the Electron runtime.
+- Updated GitHub Actions for automated build checks and multi-platform release packaging.
+- Improved ignore rules for local build output, runtime databases, package artifacts, credentials, and temporary files.
 
 ## Notes
 
-- WebDAV backup in this version is manual only. It does not run on startup or on a background schedule.
-- The local PaperQuay library remains the source of truth. WebDAV stores a remote backup copy only.
-- This `0.1.6` release may be rebuilt to refresh assets. If you previously saw a `0.1.5` filename under this tag, download the refreshed `0.1.6` asset after the latest workflow run finishes.
+- This release includes a broad internal refactor. If you maintain custom integrations, review paths and desktop backend assumptions before upgrading.
 - AI features require your own compatible model endpoint and API key in Settings.
 - MinerU parsing requires a MinerU API key unless you are using already parsed local cache data.
+- Release assets are generated automatically by GitHub Actions after the `app-v{{VERSION}}` tag workflow finishes.
 
 ---
 
 # PaperQuay v{{VERSION}} 中文说明
 
-PaperQuay 是一款 AI 辅助的桌面端文献管理软件，支持文库管理、PDF 阅读、论文概览生成、全文翻译以及科研工作流自动化。
+PaperQuay 是一款 AI 辅助的桌面端文献管理、PDF 阅读、论文概览生成、全文翻译、笔记和科研工作流自动化应用。
 
 ## 下载说明
 
-请在下方 Assets 区域选择与你操作系统对应的原生安装包。
+请在下方 Assets 区域选择与你的操作系统对应的原生安装包。
 
 | 平台 | 推荐安装包 |
 | --- | --- |
@@ -54,24 +58,28 @@ PaperQuay 是一款 AI 辅助的桌面端文献管理软件，支持文库管理
 
 ## 版本亮点
 
-- 独立本地文库，支持 PDF 导入、存储目录配置、自定义分类、标签、搜索、排序、收藏和阅读进度记录。
-- 可选兼容 Zotero，可将已有的分类、标签、元数据和本地 PDF 附件导入到 PaperQuay 自己的文库中。
-- 内置 PDF 阅读工作流，支持 MinerU 结构化解析、块级联动定位、全文翻译、笔记以及 AI 论文概览。
-- 独立 Agent 工作区，支持对话历史、执行轨迹、工具调用卡片，以及元数据补全、打标签、分类、重命名等批量文献操作。
-- 可配置 OpenAI 兼容模型，用于翻译、概览生成、问答和 Agent 任务，并提供 Windows、macOS、Linux 桌面安装包。
+- 进行了大规模代码重构：项目已围绕新的 Electron 桌面运行时、共享平台服务和更清晰的功能模块重新组织。
+- 新增笔记工作区，支持文件夹组织、笔记元信息、标签、反向链接、大纲、右键菜单和更完整的编辑器控制。
+- 笔记支持内联知识链接，包括 wiki 风格笔记链接、论文引用、标签和笔记定位链接，可以在相关内容之间快速跳转。
+- 增加笔记与阅读器联动能力，笔记可以保留 PDF 来源定位，并跳回对应阅读位置。
+- 改进编辑体验，支持斜杠菜单、模板、组件块、图片粘贴/拖放、数学公式、表格、任务列表和类似 Notion 的块控制。
+- 在本次重构中同步刷新了 Agent、Reader、Library、PDF 和共享 UI 流程，改进桌面集成和状态管理。
 
 ## 本次版本包含
 
-- 新增 WebDAV 手动远程备份与增量恢复：使用本地数据备份暂存副本，远端对象采用临时上传后原子切换，支持 latest 备份查看与设置页操作入口。
-- 改进 WebDAV 恢复逻辑：可从最新远程备份补回缺失的 PDF，以及 MinerU 解析、翻译、总结等派生缓存，同时不会删除本地额外内容。
-- 修复阅读器 workspace 切换问题：在文库中打开 PDF 后，切到 Agent 再切回文库，不会再出现 PDF 变空白。
-- 重做“文档问答”独立窗口：现在会以真正的问答窗口打开，而不是再套一层右侧侧栏壳，停靠行为和窗口 UI 也更清晰。
-- 收紧文档问答独立窗口语义：只有聊天面板支持弹出为独立窗口，停靠回去后也会稳定回到聊天面板。
+- 将桌面端从旧的 Tauri 后端布局迁移到 Electron 运行时和构建流水线。
+- 新增完整笔记功能，包括笔记存储服务、笔记状态管理、笔记工作区、富文本编辑器扩展和相关工具测试。
+- 新增笔记内联跳转能力：笔记链接、PDF 定位卡片、论文引用、标签和反向链接发现。
+- 新增表格插入控件，并修复表格单元格编辑问题：点击单元格会进入文本编辑，而不是选中多个格子。
+- 将工具栏表格选择器改为固定浮层，避免被右侧侧边栏遮挡或被编辑器容器裁剪。
+- 扩展 PDF 阅读 UI，包括缩略图导航、页面覆盖层、阅读热力图和阅读器工具栏模块。
+- 为 Electron 运行时新增桌面文件、文献库、WebDAV、Zotero、笔记和 RAG 后端命令模块。
+- 更新 GitHub Actions，支持自动构建检查和多平台发布打包。
+- 完善忽略规则，覆盖本地构建产物、运行时数据库、打包产物、凭据和临时文件。
 
 ## 备注
 
-- 本版本的 WebDAV 备份仍然是手动模式，不会在启动时或后台定时自动运行。
-- PaperQuay 本地文献库始终是唯一数据源，WebDAV 只保存远程备份副本。
-- 这个 `0.1.6` 版本可能会为刷新发布资产而重新构建。如果你之前在这个 tag 下看到过带有 `0.1.5` 文件名的安装包，请在最新 workflow 完成后重新下载刷新后的 `0.1.6` 资产。
+- 这个版本包含较大的内部重构。如果你维护自定义集成，请在升级前检查路径和桌面后端相关假设。
 - AI 功能需要你在设置中自行配置兼容的大模型接口和 API Key。
 - MinerU 解析需要有效的 MinerU API Key，除非你使用的是已经解析好的本地缓存数据。
+- 推送 `app-v{{VERSION}}` 标签后，GitHub Actions 会自动生成本版本发布资产。
