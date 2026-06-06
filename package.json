@@ -101,6 +101,13 @@
       "node_modules/sqlite-vec-*/*",
       "!node_modules/canvas/**/*"
     ],
+    "mac": {
+      "target": "dmg",
+      "icon": "public/icon.png",
+      "identity": null,
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false
+    },
     "win": {
       "target": "nsis",
       "icon": "public/icon.ico",

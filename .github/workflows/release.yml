@@ -137,7 +137,29 @@ jobs:
         run: npm ci
 
       - name: Build Electron package
-        run: npm run electron:build -- ${{ matrix.args }}
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run electron:build -- ${{ matrix.args }} 2>&1 | tee electron-build.log
+
+      - name: Report Electron build failure
+        if: failure()
+        shell: bash
+        run: |
+          if [ -f electron-build.log ]; then
+            {
+              echo "::error title=Electron build failed::Last 80 lines of electron-build.log"
+              tail -n 80 electron-build.log
+            } | sed 's/%/%25/g; s/\r/%0D/g; s/\n/%0A/g'
+          fi
+
+      - name: Upload Electron build log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: electron-build-log-${{ matrix.name }}
+          path: electron-build.log
+          if-no-files-found: ignore
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
