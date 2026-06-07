@@ -279,6 +279,8 @@ PaperQuay 是本地优先。文献库、笔记和本地 RAG 索引保存在 SQLi
 
 PaperQuay 的不少设计与打磨，也受到 [LinuxDo 社区](https://linux.do/) 讨论、反馈和想法的启发。
 
+PaperQuay 的笔记工作区构建在 [Tiptap](https://github.com/ueberdosis/tiptap) 之上。感谢 Tiptap 维护者提供可扩展的编辑器框架与示例，支撑 PaperQuay 的笔记体验。
+
 ---
 
 ## 许可证

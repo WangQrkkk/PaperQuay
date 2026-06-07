@@ -279,6 +279,8 @@ Do not commit local data, API keys, PDFs, parser outputs, notes databases, or ba
 
 PaperQuay is also shaped by discussions, feedback, and shared ideas from the [LinuxDo community](https://linux.do/).
 
+The Notes workspace builds on [Tiptap](https://github.com/ueberdosis/tiptap). Thanks to the Tiptap maintainers for the extensible editor framework and examples that help power PaperQuay's note-taking experience.
+
 ---
 
 ## License
