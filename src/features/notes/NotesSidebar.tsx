@@ -17,8 +17,8 @@ import { cn } from '../../utils/cn';
 import { NoteEditor } from './NoteEditor';
 import {
   copyTextToClipboard,
-  isEditableContextTarget,
   NotesContextMenu,
+  shouldUseNativeTextContextMenu,
   type NotesContextMenuEntry,
 } from './NotesContextMenu';
 import { NotesList } from './NotesList';
@@ -149,7 +149,7 @@ export function NotesSidebar({
   }, [filter, notes, search]);
 
   const openSurfaceContextMenu = (event: MouseEvent) => {
-    if (isEditableContextTarget(event.target)) return;
+    if (shouldUseNativeTextContextMenu(event.target)) return;
     event.preventDefault();
     setContextMenu({ kind: 'surface', x: event.clientX, y: event.clientY });
   };
@@ -159,12 +159,14 @@ export function NotesSidebar({
     note: Note,
     anchor: NoteAnchor,
   ) => {
+    if (shouldUseNativeTextContextMenu(event.target)) return;
     event.preventDefault();
     event.stopPropagation();
     setContextMenu({ kind: 'anchor', x: event.clientX, y: event.clientY, note, anchor });
   };
 
   const openNoteContextMenu = (event: MouseEvent, note: Note) => {
+    if (shouldUseNativeTextContextMenu(event.target)) return;
     event.preventDefault();
     event.stopPropagation();
     setContextMenu({ kind: 'note', x: event.clientX, y: event.clientY, note });
@@ -484,7 +486,7 @@ export function NotesSidebar({
         </div>
       ) : null}
 
-      <div className="min-h-0 flex-1 p-2">
+      <div className="flex min-h-0 flex-1 p-2">
         <NoteEditor
           note={activeNote}
           saving={saving}

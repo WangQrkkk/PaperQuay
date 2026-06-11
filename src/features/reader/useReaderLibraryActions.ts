@@ -5,7 +5,6 @@ import {
 } from 'react';
 
 import {
-  runMineruCloudParse,
   selectDirectory,
   selectLocalPdfSource,
 } from '../../services/desktop';
@@ -42,6 +41,7 @@ import { isPaperPipelineBusy } from './paperTaskState';
 import {
   writeLibraryTranslationCache,
 } from './readerLibraryPreview';
+import { runMineruCloudParseWithOcrFallback } from './mineruOcrFallback';
 import {
   mergeReaderTranslations,
   sanitizeTranslationErrorMessage,
@@ -297,7 +297,7 @@ export function useReaderLibraryActions({
         const cachePaths = settings.mineruCacheDir.trim()
           ? buildMineruCachePaths(settings.mineruCacheDir.trim(), item)
           : null;
-        const result = await runMineruCloudParse({
+        const parseResult = await runMineruCloudParseWithOcrFallback({
           apiToken: mineruApiToken.trim(),
           pdfPath,
           extractDir: cachePaths?.directory,
@@ -308,8 +308,24 @@ export function useReaderLibraryActions({
           isOcr: false,
           timeoutSecs: 900,
           pollIntervalSecs: 5,
+        }, () => {
+          updateLibraryPreviewOperation(
+            item,
+            createPaperTaskState(
+              'mineru',
+              'running',
+              l('普通解析没有得到可用结构，正在切换 OCR 模式重试...', 'No usable structure was returned. Retrying with OCR mode...'),
+              55,
+              100,
+            ),
+            {
+              loading: true,
+              error: '',
+              statusMessage: l('正在切换 OCR 模式重试...', 'Retrying with OCR mode...'),
+            },
+          );
         });
-        const jsonText = result.contentJsonText ?? result.middleJsonText;
+        const { result, jsonText, usedOcr } = parseResult;
 
         if (!jsonText?.trim()) {
           throw new Error(l('MinerU 未返回可用的 JSON 结果', 'MinerU did not return a usable JSON result'));

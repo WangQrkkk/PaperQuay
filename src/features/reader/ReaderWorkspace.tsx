@@ -1,30 +1,17 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import { useCallback, useEffect, useMemo, useState, type RefObject } from 'react';
 import { Minimize2 } from 'lucide-react';
 import BlockViewer from '../blocks/BlockViewer';
 import PdfViewer from '../pdf/PdfViewer';
 import { useLocaleText } from '../../i18n/uiLanguage';
-import { AssistantSidebar } from './AssistantSidebar';
 import { ReaderWorkspaceOverview } from './readerWorkspaceOverview';
-import { buildReaderAssistantSidebarProps } from './readerAssistantSidebarProps';
 import { ReaderWorkspaceHeader } from './readerWorkspaceHeader';
 import { FloatingAssistantPanel, SelectionQuickActions } from './readerWorkspaceOverlays';
 import {
-  ASSISTANT_PANEL_WIDTH_STORAGE_KEY,
-  MAX_ASSISTANT_PANEL_WIDTH,
-  MIN_ASSISTANT_PANEL_WIDTH,
   formatReaderDocumentSource,
-  loadStoredNumber,
   type ReaderWorkspaceDocument,
 } from './readerWorkspaceShared';
+import type { Note } from '../../types/notes';
 import type {
-  CreateNoteRequest,
-  Note,
-  NoteAnchor,
-  NoteAnchorInsertRequest,
-  UpdateNoteRequest,
-} from '../../types/notes';
-import type {
-  AssistantPanelKey,
   DocumentChatAttachment,
   DocumentChatCitation,
   DocumentChatMessage,
@@ -47,10 +34,10 @@ import type {
   TranslationDisplayMode,
   TranslationMap,
   WorkspaceStage,
-  ZoteroRelatedNote,
 } from '../../types/reader';
 
 interface ReaderWorkspaceProps {
+  active: boolean;
   currentDocument: ReaderWorkspaceDocument;
   selectedSectionTitle: string;
   currentPdfName: string;
@@ -115,33 +102,9 @@ interface ReaderWorkspaceProps {
   onTranslateDocument: () => void;
   onOpenPreferences: () => void;
   notes: Note[];
-  activeNoteId: string | null;
-  notesLoading: boolean;
-  notesSaving: boolean;
-  notesError: string;
-  pendingAnchorInsert?: NoteAnchorInsertRequest | null;
-  onPendingAnchorInsertHandled?: (requestId: string) => void;
-  noteEditorSourceId?: string;
-  externalUpdateNote?: Note | null;
-  onExternalUpdateApply?: (note: Note) => void;
-  onCreateNote: (request: CreateNoteRequest) => void;
-  onCreateStandaloneNote: () => void;
-  onSelectNote: (note: Note) => void;
-  onUpdateNote: (noteId: string, patch: UpdateNoteRequest, options?: { sourceId?: string }) => void;
-  onDeleteNote: (noteId: string) => void;
-  onJumpToNote: (note: Note) => void;
-  onJumpToNoteAnchor: (note: Note, anchor: NoteAnchor) => void;
   onAddSelectionToNote: () => void;
-  workspaceNoteMarkdown: string;
   annotations: PaperAnnotation[];
   selectedAnnotationId: string | null;
-  zoteroRelatedNotes: ZoteroRelatedNote[];
-  zoteroRelatedNotesLoading: boolean;
-  zoteroRelatedNotesError: string;
-  onWorkspaceNoteChange: (value: string) => void;
-  onAppendSelectedExcerptToNote: () => void;
-  onCreateAnnotation: (note: string) => void;
-  onDeleteAnnotation: (annotationId: string) => void;
   onSelectAnnotation: (annotationId: string) => void;
   paperSummary: PaperSummary | null;
   paperSummaryLoading: boolean;
@@ -186,18 +149,14 @@ interface ReaderWorkspaceProps {
   onPdfAnnotationSaveSuccess: (path: string) => void;
   aiConfigured: boolean;
   assistantDetached: boolean;
-  assistantActivePanel: AssistantPanelKey;
-  onAssistantActivePanelChange: (panel: AssistantPanelKey) => void;
   leftSidebarCollapsed: boolean;
   onToggleLeftSidebar: () => void;
-  onDetachAssistant: () => void;
   onAttachAssistant: () => void;
   showLibraryToggle?: boolean;
 }
 
 function ReadingStage(props: ReaderWorkspaceProps & { immersiveReading: boolean }) {
   const l = useLocaleText();
-  const stageRef = useRef<HTMLDivElement | null>(null);
   const {
     blocks,
     translations,
@@ -259,21 +218,8 @@ function ReadingStage(props: ReaderWorkspaceProps & { immersiveReading: boolean 
     selectedExcerptTranslating,
     selectedExcerptError,
     notes,
-    activeNoteId,
-    notesLoading,
-    notesSaving,
-    notesError,
-    pendingAnchorInsert,
-    onPendingAnchorInsertHandled,
-    noteEditorSourceId,
-    externalUpdateNote,
-    onExternalUpdateApply,
-    workspaceNoteMarkdown,
     annotations,
     selectedAnnotationId,
-    zoteroRelatedNotes,
-    zoteroRelatedNotesLoading,
-    zoteroRelatedNotesError,
     onQaInputChange,
     onQaSubmit,
     onQaPresetChange,
@@ -288,35 +234,18 @@ function ReadingStage(props: ReaderWorkspaceProps & { immersiveReading: boolean 
     onCaptureScreenshot,
     onRemoveAttachment,
     onCitationClick,
-    onCreateNote,
-    onCreateStandaloneNote,
-    onSelectNote,
-    onUpdateNote,
-    onDeleteNote,
-    onJumpToNote,
-    onJumpToNoteAnchor,
     onAddSelectionToNote,
     onSaveAssistantMessageAsNote,
     onAppendSelectedExcerptToQa,
-    onAppendSelectedExcerptToNote,
     onTranslateSelectedExcerpt,
     onClearSelectedExcerpt,
     onPdfAnnotationSaveSuccess,
-    onWorkspaceNoteChange,
-    onCreateAnnotation,
-    onDeleteAnnotation,
     onSelectAnnotation,
     aiConfigured,
-    assistantDetached,
-    assistantActivePanel,
     onReadingViewModeChange,
-    onAssistantActivePanelChange,
-    onDetachAssistant,
+    active,
   } = props;
-  const documentSource = formatReaderDocumentSource(l, currentDocument, selectedSectionTitle);
-  const hasBlocks = blocks.length > 0;
-  const showDualPane = hasBlocks && readingViewMode === 'dual-pane';
-  const showAssistantSidebar = !assistantDetached;
+  const showDualPane = readingViewMode === 'dual-pane';
   const matchesCurrentDocument = useCallback(
     (paperId?: string | null) => {
       const value = paperId?.trim();
@@ -364,10 +293,6 @@ function ReadingStage(props: ReaderWorkspaceProps & { immersiveReading: boolean 
     [annotations, notePdfAnnotations],
   );
   const activeNoteAnnotationId = null;
-  const [assistantPanelWidth, setAssistantPanelWidth] = useState(() =>
-    loadStoredNumber(ASSISTANT_PANEL_WIDTH_STORAGE_KEY, 408),
-  );
-  const [resizingAssistantPanel, setResizingAssistantPanel] = useState(false);
   const handlePdfTextSelect = useCallback(
     (selection: TextSelectionPayload) => {
       onTextSelect(selection, 'pdf');
@@ -381,143 +306,8 @@ function ReadingStage(props: ReaderWorkspaceProps & { immersiveReading: boolean 
     [onTextSelect],
   );
 
-  useEffect(() => {
-    localStorage.setItem(
-      ASSISTANT_PANEL_WIDTH_STORAGE_KEY,
-      String(Math.round(assistantPanelWidth)),
-    );
-  }, [assistantPanelWidth]);
-
-  useEffect(() => {
-    if (!resizingAssistantPanel) {
-      return undefined;
-    }
-
-    const handlePointerMove = (event: PointerEvent) => {
-      const stageRect = stageRef.current?.getBoundingClientRect();
-
-      if (!stageRect) {
-        return;
-      }
-
-      const boundedMaxWidth = Math.min(
-        MAX_ASSISTANT_PANEL_WIDTH,
-        Math.max(MIN_ASSISTANT_PANEL_WIDTH, stageRect.width - 120),
-      );
-      const nextWidth = Math.round(
-        Math.min(
-          boundedMaxWidth,
-          Math.max(MIN_ASSISTANT_PANEL_WIDTH, stageRect.right - event.clientX),
-        ),
-      );
-
-      setAssistantPanelWidth(nextWidth);
-    };
-
-    const handlePointerUp = () => {
-      setResizingAssistantPanel(false);
-    };
-
-    const previousUserSelect = globalThis.document.body.style.userSelect;
-    const previousCursor = globalThis.document.body.style.cursor;
-
-    globalThis.document.body.style.userSelect = 'none';
-    globalThis.document.body.style.cursor = 'col-resize';
-
-    window.addEventListener('pointermove', handlePointerMove);
-    window.addEventListener('pointerup', handlePointerUp);
-
-    return () => {
-      globalThis.document.body.style.userSelect = previousUserSelect;
-      globalThis.document.body.style.cursor = previousCursor;
-      window.removeEventListener('pointermove', handlePointerMove);
-      window.removeEventListener('pointerup', handlePointerUp);
-    };
-  }, [resizingAssistantPanel]);
-
-  const sharedAssistantSidebarProps = buildReaderAssistantSidebarProps({
-    l,
-    activePanel: assistantActivePanel,
-    onActivePanelChange: onAssistantActivePanelChange,
-    currentDocument,
-    documentSource,
-    currentPdfName,
-    currentJsonName,
-    blockCount: blocks.length,
-    translatedCount,
-    statusMessage,
-    hasBlocks,
-    aiConfigured,
-    paperId: currentDocument.workspaceId,
-    notes,
-    activeNoteId,
-    notesLoading,
-    notesSaving,
-    notesError,
-    pendingAnchorInsert,
-    noteEditorSourceId,
-    externalUpdateNote,
-    onExternalUpdateApply,
-    qaSessions,
-    selectedQaSessionId,
-    qaMessages,
-    qaInput,
-    qaAttachments,
-    qaModelPresets,
-    selectedQaPresetId,
-    qaRagEnabled,
-    qaAnswerRenderMode,
-    qaReasoningEffort,
-    qaLoading,
-    qaError,
-    screenshotLoading,
-    onQaInputChange,
-    onQaSubmit,
-    onQaPresetChange,
-    onQaRagEnabledChange,
-    onQaAnswerRenderModeChange,
-    onQaReasoningEffortChange,
-    onQaSessionCreate,
-    onQaSessionSelect,
-    onQaSessionDelete,
-    onSelectImageAttachments,
-    onSelectFileAttachments,
-    onCaptureScreenshot,
-    onRemoveAttachment,
-    onCitationClick,
-    onCreateNote,
-    onCreateStandaloneNote,
-    onSelectNote,
-    onUpdateNote,
-    onDeleteNote,
-    onJumpToNote,
-    onJumpToNoteAnchor,
-    onAddSelectionToNote,
-    onPendingAnchorInsertHandled,
-    onSaveAssistantMessageAsNote,
-    selectedExcerpt,
-    selectedExcerptTranslation,
-    selectedExcerptTranslating,
-    selectedExcerptError,
-    onAppendSelectedExcerptToQa,
-    activeBlockSummary: props.activeBlockSummary,
-    workspaceNoteMarkdown,
-    annotations,
-    zoteroRelatedNotes,
-    zoteroRelatedNotesLoading,
-    zoteroRelatedNotesError,
-    onWorkspaceNoteChange,
-    onAppendSelectedExcerptToNote,
-    onCreateAnnotation,
-    onDeleteAnnotation,
-    onSelectAnnotation,
-    onTranslateSelectedExcerpt,
-    onClearSelectedExcerpt,
-    onOpenPreferences: props.onOpenPreferences,
-  });
-
   return (
-    <div ref={stageRef} data-tour="linked-reading" className="relative flex min-h-0 flex-1 overflow-hidden">
+    <div data-tour="linked-reading" className="relative flex min-h-0 flex-1 overflow-hidden">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <div ref={layoutRef} className="flex min-h-0 flex-1">
           <section
@@ -544,6 +334,7 @@ function ReadingStage(props: ReaderWorkspaceProps & { immersiveReading: boolean 
               activeHighlight={activePdfHighlight}
               highlightScrollSignal={pdfHighlightSignal}
               smoothScroll={smoothScroll}
+              active={active}
               enableReadingHeatmap={enablePdfReadingHeatmap}
               softPageShadow={softPageShadow}
               annotations={pdfAnnotations}
@@ -552,7 +343,6 @@ function ReadingStage(props: ReaderWorkspaceProps & { immersiveReading: boolean 
               onBlockSelect={onPdfBlockSelect}
               blockClickOpensQuickActions={readingViewMode === 'pdf-only'}
               onAnnotationSelect={onSelectAnnotation}
-              onAnnotationCreate={onCreateAnnotation}
               onTextSelect={handlePdfTextSelect}
               onScrollPositionChange={onPdfScrollPositionChange}
               onReadingHeatmapChange={onPdfReadingHeatmapChange}
@@ -591,6 +381,7 @@ function ReadingStage(props: ReaderWorkspaceProps & { immersiveReading: boolean 
                   showBlockMeta={showBlockMeta}
                   hidePageDecorations={hidePageDecorationsInBlockView}
                   smoothScroll={smoothScroll}
+                  active={active}
                   onBlockClick={onBlockClick}
                   onTranslationDisplayModeChange={props.onTranslationDisplayModeChange}
                   onTextSelect={handleBlockTextSelect}
@@ -602,35 +393,6 @@ function ReadingStage(props: ReaderWorkspaceProps & { immersiveReading: boolean 
           )}
         </div>
       </div>
-
-      {showAssistantSidebar ? (
-        <>
-          {assistantActivePanel ? (
-            <div
-              role="separator"
-              aria-orientation="vertical"
-              aria-label={l('调整问答侧栏宽度', 'Resize assistant sidebar')}
-              onPointerDown={(event) => {
-                event.preventDefault();
-                setResizingAssistantPanel(true);
-              }}
-              className="group relative z-20 ml-auto w-2 shrink-0 cursor-col-resize bg-transparent transition-all duration-200"
-            >
-              <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-slate-300/90 transition-all duration-200 group-hover:w-[3px] group-hover:bg-slate-400" />
-              <div className="absolute left-1/2 top-1/2 h-14 w-1 -translate-x-1/2 -translate-y-1/2 rounded-full bg-slate-300 transition-all duration-200 group-hover:w-1.5 group-hover:bg-slate-500" />
-            </div>
-          ) : null}
-
-          <aside className="flex min-h-0 shrink-0 self-stretch transition-all duration-300">
-            <AssistantSidebar
-              {...sharedAssistantSidebarProps}
-              panelWidth={assistantPanelWidth}
-              chatLayoutMode="compact"
-              onDetach={onDetachAssistant}
-            />
-          </aside>
-        </>
-      ) : null}
 
       <SelectionQuickActions
         selectedExcerpt={selectedExcerpt}
@@ -672,6 +434,7 @@ function ReaderWorkspace(props: ReaderWorkspaceProps) {
     onOpenPreferences,
     onCurrentPdfPathChange,
     assistantDetached,
+    active,
   } = props;
   const sourceLabel =
     formatReaderDocumentSource(l, currentDocument, selectedSectionTitle);
@@ -717,7 +480,7 @@ function ReaderWorkspace(props: ReaderWorkspaceProps) {
   }, [workspaceStage]);
 
   useEffect(() => {
-    if (!immersiveReading) {
+    if (!active || !immersiveReading) {
       return undefined;
     }
 
@@ -729,7 +492,7 @@ function ReaderWorkspace(props: ReaderWorkspaceProps) {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [immersiveReading]);
+  }, [active, immersiveReading]);
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-[linear-gradient(180deg,#f8fafc,#f1f5f9)] dark:bg-[linear-gradient(180deg,#0f1a2e,#0c1525)]">

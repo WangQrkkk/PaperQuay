@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  clearNoteEditorDraft,
   componentBlockNode,
   getImageFilesFromDataTransfer,
   headingNode,
@@ -13,9 +14,11 @@ import {
   normalizeSuggestionQuery,
   NOTE_TEMPLATES,
   paragraphNode,
+  readNoteEditorDraft,
   signature,
   slashCommandItems,
   snapshotFromNote,
+  writeNoteEditorDraft,
 } from '../src/features/notes/noteEditorUtils.ts';
 import type { Note, NoteAnchor } from '../src/types/notes.ts';
 
@@ -121,6 +124,61 @@ test('snapshotFromNote and signature normalize saved note state', () => {
       contentText: 'Saved text',
     }),
   );
+});
+
+test('note editor drafts restore only for the same saved note version', () => {
+  const sourceId = 'reader-sidebar';
+  const noteId = 'note-1';
+  const saved = note({ id: noteId, title: 'Saved', updatedAt: 10 });
+  const savedSnapshot = snapshotFromNote(saved);
+  const savedSignature = signature({
+    title: saved.title,
+    tagText: saved.tags.join(', '),
+    color: saved.color,
+    snapshot: savedSnapshot,
+  });
+  const draftSnapshot = {
+    ...savedSnapshot,
+    contentText: 'Unsaved draft',
+    contentJson: paragraphNode('Unsaved draft'),
+  };
+
+  writeNoteEditorDraft(sourceId, {
+    noteId,
+    baseUpdatedAt: saved.updatedAt,
+    savedSignature,
+    draftSignature: signature({
+      title: 'Draft title',
+      tagText: '',
+      color: saved.color,
+      snapshot: draftSnapshot,
+    }),
+    title: 'Draft title',
+    tagText: '',
+    color: saved.color,
+    snapshot: draftSnapshot,
+    pendingAnchors: [],
+    updatedAt: 20,
+  });
+
+  assert.equal(readNoteEditorDraft(sourceId, noteId, saved.updatedAt)?.title, 'Draft title');
+  assert.equal(readNoteEditorDraft(sourceId, noteId, saved.updatedAt + 1), null);
+
+  writeNoteEditorDraft(sourceId, {
+    noteId,
+    baseUpdatedAt: saved.updatedAt,
+    savedSignature,
+    draftSignature: savedSignature,
+    title: saved.title,
+    tagText: '',
+    color: saved.color,
+    snapshot: savedSnapshot,
+    pendingAnchors: [],
+    updatedAt: 30,
+  });
+  clearNoteEditorDraft(sourceId, noteId);
+
+  assert.equal(readNoteEditorDraft(sourceId, noteId, saved.updatedAt), null);
 });
 
 test('isNoteRecord validates note identity and update timestamp', () => {

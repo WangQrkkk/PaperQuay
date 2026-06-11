@@ -1,6 +1,7 @@
 import { pdfjs } from 'react-pdf';
 import { readLocalBinaryFile } from './desktop';
 import type { LocalPdfMetadataPreview } from '../types/metadata';
+import { buildPdfJsDataDocumentInit } from '../utils/pdfJsCompatibility';
 import { getFileNameFromPath } from '../utils/text';
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
@@ -681,7 +682,7 @@ export async function extractLocalPdfMetadataPreview(
 ): Promise<LocalPdfMetadataPreview> {
   const pdfData = await readLocalBinaryFile(path);
   const safePdfData = new Uint8Array(pdfData);
-  const loadingTask = pdfjs.getDocument({ data: safePdfData });
+  const loadingTask = pdfjs.getDocument(buildPdfJsDataDocumentInit(safePdfData) as any);
   const pdfDocument = await loadingTask.promise;
 
   try {

@@ -1,4 +1,13 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties, type FormEvent, type Ref, type WheelEventHandler } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type FormEvent,
+  type Ref,
+  type WheelEventHandler,
+} from 'react';
 import { createPortal } from 'react-dom';
 import {
   Brain,
@@ -55,7 +64,6 @@ interface AgentWorkspaceViewProps {
   handleModifyPreviousParameters: () => void;
   handleNewAgentSession: () => void;
   handleOpenHistorySession: (session: AgentHistorySession) => void;
-  handlePreviewOnly: () => void;
   handleRetryAgent: (instruction: string) => void;
   historySidebarCollapsed: boolean;
   historySidebarRef: Ref<HTMLElement>;
@@ -268,7 +276,6 @@ export default function AgentWorkspaceView({
   handleModifyPreviousParameters,
   handleNewAgentSession,
   handleOpenHistorySession,
-  handlePreviewOnly,
   handleRetryAgent,
   historySidebarCollapsed,
   historySidebarRef,
@@ -523,7 +530,6 @@ export default function AgentWorkspaceView({
                       formatPaperMeta={formatPaperMeta}
                       handleAgentChoice={handleAgentChoice}
                       handleModifyPreviousParameters={handleModifyPreviousParameters}
-                      handlePreviewOnly={handlePreviewOnly}
                       handleRetryAgent={handleRetryAgent}
                       isActivePlan={Boolean(message.plan && plan?.id === message.plan.id)}
                       l={l}
@@ -554,7 +560,7 @@ export default function AgentWorkspaceView({
                   <div className="mb-7 text-center">
                     <div className="text-2xl font-semibold tracking-tight text-[var(--pq-text)]">PaperQuay Agent</div>
                     <div className="mt-2 text-sm text-[var(--pq-text-muted)]">
-                      {l('直接提问，或用 Paper Skill 调用文库上下文。', 'Ask directly, or use Paper Skill for library context.')}
+                      {l('直接提问；需要限定范围时再选择文献。', 'Ask directly; select papers only when you need to limit the scope.')}
                     </div>
                   </div>
                 ) : null}
@@ -641,15 +647,15 @@ export default function AgentWorkspaceView({
                       <div className="min-w-0">
                         <div className="flex items-center gap-2 text-sm font-semibold text-[var(--pq-text)]">
                           <BookOpen className="h-4 w-4 text-[var(--pq-accent)]" strokeWidth={2} />
-                          Paper Skill
+                          {l('选择文献', 'Select Papers')}
                           <span className="rounded-md bg-[var(--pq-accent-soft)] px-2 py-0.5 text-[11px] font-semibold text-[var(--pq-accent)]">
                             {agentRagEnabled ? 'RAG on' : 'RAG off'}
                           </span>
                         </div>
                         <div className="mt-1 text-xs text-slate-500 dark:text-[var(--pq-text-faint)]">
                           {l(
-                            `手动选择 ${selectedPaperIds.size} · 搜索结果 ${filteredPapers.length} · 全库 ${papers.length}。未选择时，检索/推荐类问题会自动使用全库候选。`,
-                            `Manual ${selectedPaperIds.size} · Results ${filteredPapers.length} · Library ${papers.length}. Retrieval and recommendation requests can auto-scope to the full library.`,
+                            `手动选择 ${selectedPaperIds.size} · 搜索结果 ${filteredPapers.length} · 全库 ${papers.length}。未选择时，RAG 自动使用全库候选。`,
+                            `Manual ${selectedPaperIds.size} · Results ${filteredPapers.length} · Library ${papers.length}. When none are selected, RAG automatically uses the full library.`,
                           )}
                         </div>
                       </div>
@@ -674,14 +680,14 @@ export default function AgentWorkspaceView({
                           {l('推荐论文', 'Recommend')}
                         </button>
                         <button type="button" onClick={onUseFullLibraryRag} className={agentToolbarPrimaryButtonClass}>
-                          {l('全库 RAG', 'Full-library RAG')}
+                          {l('使用全库', 'Use Full Library')}
                         </button>
                         <button
                           type="button"
                           onClick={() => setPaperToolOpen(false)}
                           className={agentIconButtonClass}
-                          aria-label={l('收起 Paper Skill', 'Collapse Paper Skill')}
-                          title={l('收起 Paper Skill', 'Collapse Paper Skill')}
+                          aria-label={l('收起选择文献', 'Collapse paper selection')}
+                          title={l('收起选择文献', 'Collapse paper selection')}
                         >
                           <X className="h-4 w-4" strokeWidth={1.8} />
                         </button>
@@ -870,8 +876,8 @@ export default function AgentWorkspaceView({
                       <button
                         type="button"
                         onClick={() => setPaperToolOpen((open) => !open)}
-                        title={l('Paper Skill：选择文献范围', 'Paper Skill: choose paper scope')}
-                        aria-label={l('Paper Skill：选择文献范围', 'Paper Skill: choose paper scope')}
+                        title={l('选择文献范围', 'Select paper scope')}
+                        aria-label={l('选择文献范围', 'Select paper scope')}
                         className={[
                           'pq-icon-button h-10 shrink-0 gap-2 border px-3 text-xs font-semibold',
                           selectedPaperIds.size > 0 || paperToolOpen
@@ -882,7 +888,7 @@ export default function AgentWorkspaceView({
                         <BookOpen className="h-4 w-4" strokeWidth={1.8} />
                         {selectedPaperIds.size > 0
                           ? l(`${selectedPaperIds.size} 篇`, `${selectedPaperIds.size} papers`)
-                          : 'Paper Skill'}
+                          : l('选择文献', 'Select Papers')}
                       </button>
                       <ModelPresetPicker
                         l={l}

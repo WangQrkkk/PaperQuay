@@ -40,6 +40,7 @@ interface BlockViewerProps {
   showBlockMeta: boolean;
   hidePageDecorations?: boolean;
   smoothScroll: boolean;
+  active?: boolean;
   onBlockClick: (block: PositionedMineruBlock) => void;
   onTranslationDisplayModeChange?: (mode: TranslationDisplayMode) => void;
   onTextSelect?: (selection: TextSelectionPayload) => void;
@@ -48,6 +49,9 @@ interface BlockViewerProps {
 const CONTENT_MIN_SCALE = 0.85;
 const CONTENT_MAX_SCALE = 1.45;
 const CONTENT_SCALE_STEP = 0.05;
+const INITIAL_RENDER_BLOCK_COUNT = 80;
+const RENDER_BLOCK_BATCH_SIZE = 120;
+const ACTIVE_BLOCK_RENDER_MARGIN = 24;
 
 function clampContentScale(nextScale: number) {
   return Math.min(CONTENT_MAX_SCALE, Math.max(CONTENT_MIN_SCALE, Number(nextScale.toFixed(2))));
@@ -119,6 +123,21 @@ function selectionBelongsToContainer(container: HTMLElement | null) {
   return container.contains(selection.getRangeAt(0).commonAncestorContainer);
 }
 
+function requestDeferredRender(callback: () => void) {
+  const idleWindow = window as Window & {
+    requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number;
+    cancelIdleCallback?: (handle: number) => void;
+  };
+
+  if (typeof idleWindow.requestIdleCallback === 'function') {
+    const handle = idleWindow.requestIdleCallback(callback, { timeout: 160 });
+    return () => idleWindow.cancelIdleCallback?.(handle);
+  }
+
+  const handle = window.setTimeout(callback, 32);
+  return () => window.clearTimeout(handle);
+}
+
 function BlockViewer({
   blocks,
   mineruPath,
@@ -132,26 +151,37 @@ function BlockViewer({
   showBlockMeta,
   hidePageDecorations = false,
   smoothScroll,
+  active = true,
   onBlockClick,
   onTranslationDisplayModeChange,
   onTextSelect,
 }: BlockViewerProps) {
   const l = useLocaleText();
   const visibleBlocks = useMemo(
-    () =>
-      hidePageDecorations
-        ? blocks.filter(
+    () => {
+      const pageContentBlocks = blocks.filter((block) => !block.contentSourceBlockId);
+
+      return hidePageDecorations
+        ? pageContentBlocks.filter(
             (block) =>
               !['page_header', 'page_footer', 'page_number', 'page_footnote'].includes(
                 block.type,
               ),
           )
-        : blocks,
+        : pageContentBlocks;
+    },
     [blocks, hidePageDecorations],
   );
+  const [renderedBlockCount, setRenderedBlockCount] = useState(() =>
+    Math.min(INITIAL_RENDER_BLOCK_COUNT, visibleBlocks.length),
+  );
+  const renderedVisibleBlocks = useMemo(
+    () => visibleBlocks.slice(0, Math.min(renderedBlockCount, visibleBlocks.length)),
+    [renderedBlockCount, visibleBlocks],
+  );
   const renderableBlocks = useMemo(
-    () => buildRenderableBlocks(visibleBlocks, mineruPath),
-    [mineruPath, visibleBlocks],
+    () => buildRenderableBlocks(renderedVisibleBlocks, mineruPath),
+    [mineruPath, renderedVisibleBlocks],
   );
   const containerRef = useRef<HTMLDivElement | null>(null);
   const blockRefs = useRef<Record<string, HTMLDivElement | null>>({});
@@ -160,6 +190,52 @@ function BlockViewer({
   const selectionCommitTimerRef = useRef<number | null>(null);
   const [flashBlockId, setFlashBlockId] = useState<string | null>(null);
   const [contentScale, setContentScale] = useState(1);
+
+  useEffect(() => {
+    blockRefs.current = {};
+    setRenderedBlockCount(Math.min(INITIAL_RENDER_BLOCK_COUNT, visibleBlocks.length));
+  }, [visibleBlocks]);
+
+  useEffect(() => {
+    if (!active || renderedBlockCount >= visibleBlocks.length) {
+      return undefined;
+    }
+
+    let cancelled = false;
+    const cancelDeferredRender = requestDeferredRender(() => {
+      if (cancelled) {
+        return;
+      }
+
+      setRenderedBlockCount((current) =>
+        Math.min(visibleBlocks.length, Math.max(current, current + RENDER_BLOCK_BATCH_SIZE)),
+      );
+    });
+
+    return () => {
+      cancelled = true;
+      cancelDeferredRender();
+    };
+  }, [active, renderedBlockCount, visibleBlocks.length]);
+
+  useEffect(() => {
+    if (!activeBlockId) {
+      return;
+    }
+
+    const activeBlockIndex = visibleBlocks.findIndex((block) => block.blockId === activeBlockId);
+
+    if (activeBlockIndex < 0) {
+      return;
+    }
+
+    const requiredCount = Math.min(
+      visibleBlocks.length,
+      activeBlockIndex + 1 + ACTIVE_BLOCK_RENDER_MARGIN,
+    );
+
+    setRenderedBlockCount((current) => (current >= requiredCount ? current : requiredCount));
+  }, [activeBlockId, visibleBlocks]);
 
   const translatedCount = useMemo(
     () => Object.values(translations).filter((value) => value.trim()).length,
@@ -243,7 +319,7 @@ function BlockViewer({
   };
 
   const scheduleSelectionCommit = (delay = 48) => {
-    if (!onTextSelect) {
+    if (!active || !onTextSelect) {
       return;
     }
 
@@ -255,7 +331,7 @@ function BlockViewer({
   };
 
   useEffect(() => {
-    if (!activeBlockId) {
+    if (!active || !activeBlockId) {
       return undefined;
     }
 
@@ -271,12 +347,12 @@ function BlockViewer({
     }, 1200);
 
     return () => window.clearTimeout(timer);
-  }, [activeBlockId, scrollSignal, smoothScroll]);
+  }, [active, activeBlockId, renderedBlockCount, scrollSignal, smoothScroll]);
 
   useEffect(() => {
     const container = containerRef.current;
 
-    if (!container) {
+    if (!active || !container) {
       return undefined;
     }
 
@@ -294,10 +370,10 @@ function BlockViewer({
     return () => {
       container.removeEventListener('wheel', handleWheel);
     };
-  }, [updateContentScale]);
+  }, [active, updateContentScale]);
 
   useEffect(() => {
-    if (!onTextSelect) {
+    if (!active || !onTextSelect) {
       return undefined;
     }
 
@@ -355,7 +431,7 @@ function BlockViewer({
       document.removeEventListener('keyup', handleKeyboardSelectionCommit);
       document.removeEventListener('selectionchange', handleSelectionChange);
     };
-  }, [onTextSelect]);
+  }, [active, onTextSelect]);
 
   if (renderableBlocks.length === 0) {
     return (
@@ -371,8 +447,8 @@ function BlockViewer({
     <div
       ref={containerRef}
       className="flex h-full min-h-0 flex-col bg-[radial-gradient(circle_at_top,#ffffff,#f8fafc_34%,#f5f5f4_100%)] text-slate-900 dark:bg-[var(--pq-bg-primary)] dark:text-[var(--pq-text)]"
-      onMouseUp={() => scheduleSelectionCommit()}
-      onKeyUp={() => scheduleSelectionCommit()}
+      onMouseUp={active ? () => scheduleSelectionCommit() : undefined}
+      onKeyUp={active ? () => scheduleSelectionCommit() : undefined}
     >
       <div className="sticky top-0 z-40 px-4 pt-4">
         <div className="mx-auto flex w-fit max-w-full flex-wrap items-center gap-2 rounded-2xl border border-white/80 bg-white/72 px-3 py-2 shadow-[0_10px_22px_rgba(15,23,42,0.05)] backdrop-blur-xl dark:border-white/10 dark:bg-[var(--pq-surface-1)] dark:shadow-none">
@@ -382,7 +458,7 @@ function BlockViewer({
           </div>
 
           <span className="pq-badge-neutral rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-500">
-            {l(`${renderableBlocks.length} 个块`, `${renderableBlocks.length} blocks`)}
+            {l(`${visibleBlocks.length} 个块`, `${visibleBlocks.length} blocks`)}
           </span>
           <span className="pq-badge-state rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-500">
             {l(`${translatedCount} 个译文块`, `${translatedCount} translated blocks`)}

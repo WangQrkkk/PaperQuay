@@ -39,6 +39,7 @@ import { all, createLowlight } from 'lowlight';
 import {
   Bold,
   Code2,
+  ClipboardPaste,
   Copy,
   FileText,
   Heading1,
@@ -55,6 +56,7 @@ import {
   RefreshCw,
   RemoveFormatting,
   Save,
+  Scissors,
   Strikethrough,
   Table2,
   Tag,
@@ -70,7 +72,11 @@ import { PaperReference } from './extensions/PaperReference';
 import { SlashCommand } from './extensions/SlashCommand';
 import { WikiLink } from './extensions/WikiLink';
 import type { NoteSuggestionItem } from './extensions/suggestionMenu';
-import { copyTextToClipboard, NotesContextMenu, type NotesContextMenuEntry } from './NotesContextMenu';
+import {
+  copyTextToClipboard,
+  NotesContextMenu,
+  type NotesContextMenuEntry,
+} from './NotesContextMenu';
 import {
   collectText,
   extractNoteAnchorIds,
@@ -96,6 +102,7 @@ import {
 import { normalizeTagInput, noteAnchorBlockFromAnchor } from './noteUtils';
 import {
   componentBlockNode,
+  clearNoteEditorDraft,
   getImageFilesFromDataTransfer,
   headingNode,
   insertImageFilesIntoView,
@@ -111,6 +118,8 @@ import {
   slashCommandItems,
   snapshotFromEditor,
   snapshotFromNote,
+  readNoteEditorDraft,
+  writeNoteEditorDraft,
   type EditorSnapshot,
   type NoteSlashCommandItem,
 } from './noteEditorUtils';
@@ -592,6 +601,18 @@ function iconNode(node: ReactNode) {
   return node;
 }
 
+async function readTextFromClipboard() {
+  const bridgeText = window.paperquay?.clipboard?.readText?.();
+  const normalizedBridgeText = bridgeText?.trim() ?? '';
+  if (normalizedBridgeText) return normalizedBridgeText;
+
+  try {
+    return (await navigator.clipboard?.readText?.())?.trim() ?? '';
+  } catch {
+    return '';
+  }
+}
+
 export function NoteEditor({
   note,
   saving,
@@ -862,6 +883,36 @@ export function NoteEditor({
     const blockTitle = getBlockLabelFromNode(context.block.node);
     const run = (command: () => void, preserveSelection = false) => () =>
       runContextCommand(context, command, { preserveSelection });
+    const getSelectedText = () => editor.state.doc.textBetween(
+      editor.state.selection.from,
+      editor.state.selection.to,
+      '\n',
+    );
+    const copySelectionOrBlock = async () => {
+      const selectedText = hasSelection ? getSelectedText() : '';
+      await copyTextToClipboard(selectedText || context.block.node.textContent);
+    };
+    const cutSelection = async () => {
+      const selectedText = getSelectedText();
+
+      if (!selectedText.trim()) return;
+
+      await copyTextToClipboard(selectedText);
+      editor.chain().focus().deleteSelection().run();
+    };
+    const pasteClipboardText = async () => {
+      const text = await readTextFromClipboard();
+
+      if (!text || editor.isDestroyed) return;
+
+      if (hasSelection) {
+        editor.chain().focus().insertContent(text).run();
+        return;
+      }
+
+      focusNoteBlock(editor, context.block, context.position);
+      editor.commands.insertContent(text);
+    };
 
     const tableEntries: NotesContextMenuEntry[] = context.inTable
       ? [
@@ -948,12 +999,20 @@ export function NoteEditor({
         id: 'context-title',
         label: hasSelection ? '复制选中文本' : `复制${blockTitle}`,
         icon: iconNode(<Copy className="h-4 w-4" strokeWidth={1.8} />),
-        onSelect: async () => {
-          const selectedText = hasSelection
-            ? editor.state.doc.textBetween(from, to, '\n').trim()
-            : context.block.node.textContent.trim();
-          await copyTextToClipboard(selectedText);
-        },
+        onSelect: copySelectionOrBlock,
+      },
+      {
+        id: 'cut',
+        label: '剪切',
+        icon: iconNode(<Scissors className="h-4 w-4" strokeWidth={1.8} />),
+        disabled: !hasSelection,
+        onSelect: cutSelection,
+      },
+      {
+        id: 'paste',
+        label: '粘贴',
+        icon: iconNode(<ClipboardPaste className="h-4 w-4" strokeWidth={1.8} />),
+        onSelect: pasteClipboardText,
       },
       { type: 'separator', id: 'context-separator-inline' },
       {
@@ -1192,6 +1251,39 @@ export function NoteEditor({
       color,
       snapshot: snapshotRef.current,
     });
+    const draft = !forceApplyIncoming && noteId
+      ? readNoteEditorDraft(editorSourceIdRef.current, noteId, note?.updatedAt ?? null)
+      : null;
+    const canRestoreDraft =
+      draft &&
+      draft.savedSignature === incomingSignature &&
+      draft.draftSignature !== incomingSignature &&
+      (!sameNote || !dirtyRef.current || localSignature === incomingSignature);
+
+    if (canRestoreDraft) {
+      setTitle(draft.title);
+      setTagText(draft.tagText);
+      setColor(draft.color);
+
+      if (editor && !editor.isDestroyed) {
+        editor.commands.setContent(draft.snapshot.contentJson, { emitUpdate: false });
+      }
+
+      snapshotRef.current = draft.snapshot;
+      pendingAnchorsRef.current = new Map(draft.pendingAnchors.map((anchor) => [anchor.id, anchor]));
+      loadedNoteIdRef.current = noteId;
+      appliedUpdatedAtRef.current = note?.updatedAt ?? null;
+      lastSavedSignatureRef.current = incomingSignature;
+      externalNoteRef.current = null;
+      setExternalUpdateState(false, noteId ?? undefined);
+      setRevision((value) => value + 1);
+      return;
+    }
+
+    if (draft && noteId && draft.draftSignature === incomingSignature) {
+      clearNoteEditorDraft(editorSourceIdRef.current, noteId);
+    }
+
     const incomingHasUnappliedChanges =
       sameNote &&
       !forceApplyIncoming &&
@@ -1244,6 +1336,30 @@ export function NoteEditor({
     }
     setRevision((value) => value + 1);
   }, [color, editor, note, note?.id, note?.updatedAt, setExternalUpdateState, tagText, title]);
+
+  useEffect(() => {
+    if (!note || loadedNoteIdRef.current !== note.id || !lastSavedSignatureRef.current) {
+      return;
+    }
+
+    if (!dirty) {
+      clearNoteEditorDraft(editorSourceIdRef.current, note.id);
+      return;
+    }
+
+    writeNoteEditorDraft(editorSourceIdRef.current, {
+      noteId: note.id,
+      baseUpdatedAt: appliedUpdatedAtRef.current ?? note.updatedAt ?? null,
+      savedSignature: lastSavedSignatureRef.current,
+      draftSignature: currentSignature,
+      title,
+      tagText,
+      color,
+      snapshot: snapshotRef.current,
+      pendingAnchors: Array.from(pendingAnchorsRef.current.values()),
+      updatedAt: Date.now(),
+    });
+  }, [color, currentSignature, dirty, note, note?.id, note?.updatedAt, revision, tagText, title]);
 
   useEffect(() => {
     if (!editor || editor.isDestroyed || !note || !pendingAnchorInsert) return;
@@ -1318,6 +1434,7 @@ export function NoteEditor({
     appliedUpdatedAtRef.current = Date.now();
     setExternalUpdateState(false, note.id);
     lastSavedSignatureRef.current = signature({ title: nextTitle, tagText, color, snapshot });
+    clearNoteEditorDraft(editorSourceIdRef.current, note.id);
     setTitle(nextTitle);
     setRevision((value) => value + 1);
   }, [color, editor, note, onUpdate, saving, setExternalUpdateState, tagText, title]);
@@ -1351,6 +1468,7 @@ export function NoteEditor({
     });
     pendingAnchorsRef.current.clear();
     externalNoteRef.current = null;
+    clearNoteEditorDraft(editorSourceIdRef.current, incomingNote.id);
     setExternalUpdateState(false, incomingNote.id);
     onExternalUpdateApply?.(incomingNote);
     setRevision((value) => value + 1);
@@ -1384,6 +1502,10 @@ export function NoteEditor({
     if (!(target instanceof HTMLElement)) return;
     const editorBody = event.currentTarget;
     if (!editorBody.contains(target)) return;
+    if (target.closest('input, textarea, select')) {
+      setEditorContextMenu(null);
+      return;
+    }
 
     event.preventDefault();
     event.stopPropagation();
@@ -1398,6 +1520,10 @@ export function NoteEditor({
       const target = event.target;
       if (!(target instanceof HTMLElement)) return;
       if (!editorBody.contains(target)) return;
+      if (target.closest('input, textarea, select')) {
+        setEditorContextMenu(null);
+        return;
+      }
 
       event.preventDefault();
       event.stopPropagation();

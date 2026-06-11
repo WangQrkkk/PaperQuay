@@ -24,6 +24,78 @@ export interface EditorSnapshot {
   wordCount: number;
 }
 
+export interface NoteEditorDraft {
+  noteId: string;
+  baseUpdatedAt: number | null;
+  savedSignature: string;
+  draftSignature: string;
+  title: string;
+  tagText: string;
+  color: string;
+  snapshot: EditorSnapshot;
+  pendingAnchors: NoteAnchor[];
+  updatedAt: number;
+}
+
+const noteEditorDrafts = new Map<string, NoteEditorDraft>();
+
+function cloneJsonValue<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function cloneEditorSnapshot(snapshot: EditorSnapshot): EditorSnapshot {
+  return {
+    contentJson: cloneJsonValue(snapshot.contentJson),
+    contentHtml: snapshot.contentHtml,
+    contentText: snapshot.contentText,
+    wordCount: snapshot.wordCount,
+  };
+}
+
+function cloneNoteEditorDraft(draft: NoteEditorDraft): NoteEditorDraft {
+  return {
+    ...draft,
+    snapshot: cloneEditorSnapshot(draft.snapshot),
+    pendingAnchors: cloneJsonValue(draft.pendingAnchors),
+  };
+}
+
+export function buildNoteEditorDraftKey(editorSourceId: string, noteId: string): string {
+  return `${editorSourceId}::${noteId}`;
+}
+
+export function readNoteEditorDraft(
+  editorSourceId: string,
+  noteId: string,
+  baseUpdatedAt: number | null,
+): NoteEditorDraft | null {
+  const key = buildNoteEditorDraftKey(editorSourceId, noteId);
+  const draft = noteEditorDrafts.get(key);
+
+  if (!draft) return null;
+
+  if (draft.baseUpdatedAt !== baseUpdatedAt) {
+    noteEditorDrafts.delete(key);
+    return null;
+  }
+
+  return cloneNoteEditorDraft(draft);
+}
+
+export function writeNoteEditorDraft(
+  editorSourceId: string,
+  draft: NoteEditorDraft,
+): void {
+  noteEditorDrafts.set(buildNoteEditorDraftKey(editorSourceId, draft.noteId), cloneNoteEditorDraft(draft));
+}
+
+export function clearNoteEditorDraft(
+  editorSourceId: string,
+  noteId: string,
+): void {
+  noteEditorDrafts.delete(buildNoteEditorDraftKey(editorSourceId, noteId));
+}
+
 export function paragraphNode(text = ''): JSONContent {
   return text
     ? { type: 'paragraph', content: [{ type: 'text', text }] }

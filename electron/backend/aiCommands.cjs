@@ -18,12 +18,13 @@ const {
 const TEST_MODEL_TIMEOUT_MS = 20_000;
 
 const REQUEST_PAPER_CONTEXT_TOOL_NAME = 'request_paper_context';
+const PAPER_SKILL_DECISION_TOOL_NAME = 'paper_skill_decision';
 
 const REQUEST_PAPER_CONTEXT_TOOL = {
   type: 'function',
   function: {
     name: REQUEST_PAPER_CONTEXT_TOOL_NAME,
-    description: 'Request summary or PDF-text context for specific papers already present in the PaperQuay payload.',
+    description: 'Request summary or full-document context for specific papers already present in the PaperQuay payload. In pdf-text mode, PaperQuay loads cached MinerU markdown/JSON first when available, then falls back to PDF text extraction.',
     strict: true,
     parameters: {
       type: 'object',
@@ -49,6 +50,45 @@ const REQUEST_PAPER_CONTEXT_TOOL = {
         },
       },
       required: ['summary', 'mode', 'reason', 'paperIds'],
+    },
+  },
+};
+
+const PAPER_SKILL_DECISION_TOOL = {
+  type: 'function',
+  function: {
+    name: PAPER_SKILL_DECISION_TOOL_NAME,
+    description: 'Decide how PaperQuay should handle paper context before the main Agent answer.',
+    strict: true,
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        action: {
+          type: 'string',
+          enum: ['load-context', 'continue-without-context', 'ask-user-to-select-papers'],
+          description: 'Use load-context when full paper content is needed before answering.',
+        },
+        summary: {
+          type: 'string',
+          description: 'Short user-facing summary of the paper-context decision. Do not mention internal tool names.',
+        },
+        reason: {
+          type: 'string',
+          description: 'Concrete reason for this decision.',
+        },
+        mode: {
+          type: 'string',
+          enum: ['summary', 'pdf-text'],
+          description: 'Use pdf-text for full paper content, summary for lightweight context.',
+        },
+        paperIds: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Paper IDs selected from the provided papers array.',
+        },
+      },
+      required: ['action', 'summary', 'reason', 'mode', 'paperIds'],
     },
   },
 };
@@ -120,6 +160,174 @@ function contextRequestFromCurrentScope(options) {
       mode: 'summary',
       reason: 'The model returned an empty message while papers were already selected, so PaperQuay will load the selected paper context and retry the answer.',
       paperIds,
+    },
+  };
+}
+
+function paperSkillDecisionFromToolCall(toolCall, options) {
+  if (!toolCall || toolCall.name !== PAPER_SKILL_DECISION_TOOL_NAME) {
+    return null;
+  }
+
+  const args = toolCall.arguments && typeof toolCall.arguments === 'object' ? toolCall.arguments : {};
+  const knownPaperIds = new Set((Array.isArray(options.papers) ? options.papers : [])
+    .map((paper) => (typeof paper?.id === 'string' ? paper.id.trim() : ''))
+    .filter(Boolean));
+  const paperIds = uniqueKnownPaperIds(args.paperIds, knownPaperIds);
+  const action = args.action === 'load-context' ||
+    args.action === 'ask-user-to-select-papers' ||
+    args.action === 'continue-without-context'
+    ? args.action
+    : 'continue-without-context';
+
+  return {
+    kind: 'paper-skill-decision',
+    action,
+    summary: typeof args.summary === 'string' && args.summary.trim()
+      ? args.summary.trim()
+      : 'Paper context decision completed.',
+    reason: typeof args.reason === 'string' && args.reason.trim()
+      ? args.reason.trim()
+      : 'The model selected the next paper-context step.',
+    mode: args.mode === 'pdf-text' ? 'pdf-text' : 'summary',
+    paperIds,
+  };
+}
+
+function parsePaperSkillDecisionOutput(data, options) {
+  const thinking = pickChatThinking(data);
+  const decision = pickToolCalls(data)
+    .map((toolCall) => paperSkillDecisionFromToolCall(toolCall, options))
+    .find(Boolean);
+
+  if (decision) {
+    return thinking ? { ...decision, thinking } : decision;
+  }
+
+  return {
+    kind: 'paper-skill-decision',
+    action: 'continue-without-context',
+    summary: 'Paper context decision skipped.',
+    reason: 'The model did not return a paper-context decision tool call.',
+    mode: 'summary',
+    paperIds: [],
+    thinking,
+  };
+}
+
+function buildPaperSkillDecisionRequest(options) {
+  const systemPrompt = [
+    'You are PaperQuay paper context router.',
+    'You must call paper_skill_decision exactly once. Do not answer the user directly.',
+    'Do not mention legacy feature names, internal router names, or internal tool names in user-facing summary or reason fields.',
+    'Use semantic understanding of the current request and conversation, not keyword matching.',
+    'Decide whether the main Agent answer needs paper content loaded before it responds.',
+    'Choose action "load-context" when the user asks for comparison, detailed analysis, methods, experiments, contributions, limitations, literature review, reading, summarization, or any task that should be grounded in paper body content.',
+    'Choose action "continue-without-context" for simple library operations such as renaming titles, updating tags, classification, metadata cleanup, or ordinary chat that does not need paper body content.',
+    'Choose action "ask-user-to-select-papers" only when paper content is necessary but neither currentPaperScopeIds nor relevant paperScopes identify target papers.',
+    'Use currentPaperScopeIds as the default target group.',
+    'Use historical paperScopes only when the conversation meaning requires papers from earlier turns, for example comparing the current group with a previous group.',
+    'If action is "load-context", use mode "pdf-text" for full document context and include every paperId that should be read.',
+    'paperIds must be exact IDs from papers. Never invent IDs.',
+  ].join(' ');
+  const messagesForPayload = (Array.isArray(options.messages) ? options.messages : []).map((message) => ({
+    role: message?.role,
+    content: message?.content,
+    paperScopeIds: message?.paperScopeIds,
+  }));
+  const userPayload = {
+    responseLanguage: options.responseLanguage,
+    instruction: options.instruction,
+    currentPaperScopeIds: options.currentPaperScopeIds,
+    paperScopes: options.paperScopes,
+    papers: options.papers,
+    messages: messagesForPayload,
+    paperSkill: {
+      currentScopeMeaning: 'currentPaperScopeIds are the papers selected for the current turn',
+      historicalScopeMeaning: 'paperScopes with source "history" are paper groups from earlier turns in this Agent chat',
+      loadContextAction: 'When full paper content is needed, return action load-context with mode pdf-text and the target paperIds.',
+      contentResolution: 'PaperQuay resolves paperIds to cached MinerU parsed content when available, then PDF text.',
+    },
+  };
+
+  return {
+    messages: [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: JSON.stringify(userPayload) },
+    ],
+    requestExtras: {
+      tools: [PAPER_SKILL_DECISION_TOOL],
+      toolChoice: {
+        type: 'function',
+        function: { name: PAPER_SKILL_DECISION_TOOL_NAME },
+      },
+      reasoningSummary: 'auto',
+    },
+  };
+}
+
+function isObjectRecord(value) {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value));
+}
+
+function stringFromObject(value, key) {
+  return typeof value?.[key] === 'string' ? value[key].trim() : '';
+}
+
+function arrayFromObject(value, keys) {
+  for (const key of keys) {
+    if (Array.isArray(value?.[key])) {
+      return value[key];
+    }
+  }
+
+  return null;
+}
+
+function normalizeParsedLibraryAgentJson(parsed) {
+  if (!isObjectRecord(parsed)) {
+    return parsed;
+  }
+
+  if (parsed.kind === 'plan' && isObjectRecord(parsed.plan)) {
+    return parsed;
+  }
+
+  if (isObjectRecord(parsed.plan)) {
+    return {
+      ...parsed,
+      kind: 'plan',
+    };
+  }
+
+  const args = isObjectRecord(parsed.arguments)
+    ? parsed.arguments
+    : isObjectRecord(parsed.parameters)
+      ? parsed.parameters
+      : parsed;
+  const toolName =
+    stringFromObject(parsed, 'tool') ||
+    stringFromObject(parsed, 'name') ||
+    stringFromObject(parsed, 'functionName') ||
+    (isObjectRecord(parsed.function) ? stringFromObject(parsed.function, 'name') : '') ||
+    stringFromObject(args, 'tool');
+  const items = arrayFromObject(args, ['items', 'updates', 'paperUpdates', 'papers']);
+
+  if (!toolName || !items) {
+    return parsed;
+  }
+
+  return {
+    kind: 'plan',
+    plan: {
+      tool: stringFromObject(args, 'tool') || toolName,
+      summary:
+        stringFromObject(args, 'summary') ||
+        stringFromObject(args, 'description') ||
+        stringFromObject(parsed, 'summary') ||
+        stringFromObject(parsed, 'description') ||
+        `${toolName} plan`,
+      items,
     },
   };
 }
@@ -200,13 +408,24 @@ function buildLibraryAgentModelRequest(options) {
     'You are PaperQuay library agent. You may answer directly in natural language for ordinary questions.',
     'Return JSON only when you need a structured app action with kind "plan", "context-request", or "choice-request", unless you call the request_paper_context tool.',
     'For direct answers, do not wrap the answer in JSON.',
-    'For plan, use {kind:"plan", plan:{tool, summary, items:[{paperId,title,description,before,after,update,targetCategoryName,targetCategoryParentName}]}}.',
+    'For plan, return one valid JSON object only, without Markdown fences, comments, trailing commas, or extra prose.',
+    'The exact plan shape is {"kind":"plan","plan":{"tool":"rename|metadata|smart-tags|clean-tags|classify","summary":"...","items":[{"paperId":"...","title":"...","description":"...","before":"...","after":"...","update":{...},"targetCategoryName":"...","targetCategoryParentName":"..."}]}}.',
+    'Never use UI/function names such as rename_papers, update_paper_metadata, update_paper_tags, clean_paper_tags, or classify_papers as plan.tool. Use only rename, metadata, smart-tags, clean-tags, or classify.',
+    'For rename plans, every item must include paperId, before, after, and update.title. update.title must exactly equal after. Do not put the new paper title only in title, description, or after.',
+    'For simple rename rules such as prefix, suffix, or replace, do not call request_paper_context. Use the titles already provided in papers.',
+    'If currentPaperScopeIds is non-empty and the user gives a write action, create exactly one plan item for each valid ID in currentPaperScopeIds unless the user explicitly says otherwise. Do not return an empty items array.',
+    'Rename example: if currentPaperScopeIds is ["paper-a","paper-b"], paper-a title is "Alpha", paper-b title is "Beta", and the user says "前面加 已读", return exactly {"kind":"plan","plan":{"tool":"rename","summary":"给 2 篇选中文献标题前加“已读”。","items":[{"paperId":"paper-a","title":"重命名：Alpha","description":"Alpha -> 已读 Alpha","before":"Alpha","after":"已读 Alpha","update":{"title":"已读 Alpha"}},{"paperId":"paper-b","title":"重命名：Beta","description":"Beta -> 已读 Beta","before":"Beta","after":"已读 Beta","update":{"title":"已读 Beta"}}]}}.',
     'The user payload includes categories and papers. Each paper may include categoryIds, categories, and categoryPaths.',
     'If the user names a category or folder, restrict your analysis and any requested paper context to papers whose categoryPaths or categoryIds match that scope. Do not invent category membership.',
     'The payload may include currentPaperScopeIds and paperScopes. Treat currentPaperScopeIds as the default paper scope for this turn.',
     'paperScopes may include current and historical paper groups from the same conversation. Use historical scopes only when the conversation context semantically requires earlier or multiple paper groups; do not rely on keyword matching.',
     'The papers array can include both the current scope and historical-scope candidates. Do not treat every paper in papers as active when currentPaperScopeIds is non-empty.',
     'If papers is non-empty, do not return kind "choice-request" merely to ask the user to select papers; use the current scope by default and historical scopes only when needed.',
+    'You can retrieve full paper content by calling request_paper_context with mode "pdf-text" and paperIds from papers. PaperQuay will resolve those IDs to cached MinerU parsed content when possible or PDF text otherwise.',
+    'For paper comparison, detailed analysis, methodology, experiments, contributions, limitations, literature review, or "read/summarize/analyze these papers" requests, call request_paper_context in mode "pdf-text" before answering unless contextText is already present for every target paper.',
+    'If the user refers to "刚才", "之前", "前面", "上面", "那几篇", "the previous papers", or asks to compare the current papers with earlier papers in the same conversation, use paperScopes to include the relevant historical paperIds. Do not say you only have IDs; use the IDs to request context.',
+    'When comparing multiple paper groups, load context for all compared paperIds in one request_paper_context call. Then answer with a structured comparison grounded in the loaded context.',
+    'Tool-call example: if currentPaperScopeIds is ["paper-a","paper-b"], paperScopes contains a historical group ["paper-c","paper-d","paper-e"], and the user asks to compare the current two papers with the previous three, call request_paper_context with {"summary":"加载当前论文和上一组论文的正文用于对比","mode":"pdf-text","reason":"The user asked for a cross-turn paper comparison that requires full document content.","paperIds":["paper-a","paper-b","paper-c","paper-d","paper-e"]}.',
     'For write actions such as rename, metadata updates, tags, or classification, create plan items for currentPaperScopeIds by default unless the user explicitly narrows, broadens, or changes the target scope.',
     'For kind "answer", the answer string must be non-empty, concrete, and useful to the user.',
     'If the user asks to rename or change paper titles but does not provide a new title or a clear rename rule, return kind "answer" with one concise clarification question and mention the current target papers.',
@@ -217,6 +436,7 @@ function buildLibraryAgentModelRequest(options) {
     'Never ask the user to select papers again when currentPaperScopeIds is non-empty and those IDs exist in papers.',
     'For answer, plan, and context-request outputs, only reference paper IDs that exist in the provided papers array.',
     'For write actions, return a reviewable plan and do not claim that changes were already applied.',
+    'Write user-visible answer, summary, title, and description strings in responseLanguage when it is provided.',
   ].join(' ');
   const visionAttachments = (Array.isArray(options.messages) ? options.messages : [])
     .flatMap((message) => Array.isArray(message?.attachments) ? message.attachments : [])
@@ -245,10 +465,18 @@ function buildLibraryAgentModelRequest(options) {
     response_format_instruction: allowPaperContextTool
       ? 'Answer naturally unless a structured app action is needed. If you need paper context, call request_paper_context.'
       : 'Answer naturally unless a structured app action is needed. Use JSON only for structured app actions.',
+    paperSkill: {
+      currentScopeMeaning: 'currentPaperScopeIds are the papers selected for the current turn',
+      historicalScopeMeaning: 'paperScopes with source "history" are paper groups from earlier turns in this Agent chat',
+      contextTool: allowPaperContextTool ? REQUEST_PAPER_CONTEXT_TOOL_NAME : null,
+      canLoadFullDocumentByPaperId: allowPaperContextTool,
+      fullDocumentMode: 'pdf-text loads MinerU parsed content first when available, then PDF text',
+    },
     tool: options.tool,
     instruction: options.instruction,
     currentPaperScopeIds: options.currentPaperScopeIds,
     paperScopes: options.paperScopes,
+    responseLanguage: options.responseLanguage,
     categories: options.categories,
     papers: options.papers,
     messages: messagesForPayload,
@@ -391,7 +619,8 @@ function parseLibraryAgentModelOutput(data, options) {
     const parsed = parseJsonObject(text);
 
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      return thinking ? { ...parsed, thinking } : parsed;
+      const normalized = normalizeParsedLibraryAgentJson(parsed);
+      return thinking ? { ...normalized, thinking } : normalized;
     }
   } catch {
     // Plain text is a valid direct answer for conversational Agent turns.
@@ -748,6 +977,13 @@ function createAiCommands(context) {
 
     async rag_retrieve_document_chunks({ request }) {
       return ragStore.retrieveDocumentChunks(request);
+    },
+
+    async decide_library_agent_paper_context_openai_compatible({ options }) {
+      const { messages, requestExtras } = buildPaperSkillDecisionRequest(options);
+      const data = await openAiChatWithAgentFallback(options, messages, requestExtras, true);
+
+      return parsePaperSkillDecisionOutput(data, options);
     },
 
     async generate_library_agent_plan_openai_compatible({ options }) {

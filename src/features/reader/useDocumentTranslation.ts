@@ -305,6 +305,7 @@ export function useDocumentTranslation({
     }
 
     const blocksToTranslate = flatBlocks
+      .filter((block) => !block.contentSourceBlockId)
       .map((block) => ({
         blockId: block.blockId,
         text: extractTranslatableMarkdownFromMineruBlock(block),

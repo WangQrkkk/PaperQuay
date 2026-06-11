@@ -8,6 +8,7 @@ import {
   buildRenderableBlocks,
   extractTextFromMineruBlock,
 } from './mineru';
+import { buildPdfJsDataDocumentInit } from '../utils/pdfJsCompatibility';
 export { resolveSummaryOutputLanguage } from './summaryLanguage';
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
@@ -49,7 +50,7 @@ export async function extractPdfTextByPdfJs(
 ): Promise<string> {
   // pdf.js 可能会转移传入的 ArrayBuffer，这里始终复制一份，避免后续再次问答或摘要时原始数据被 detached。
   const safePdfData = new Uint8Array(pdfData);
-  const loadingTask = pdfjs.getDocument({ data: safePdfData });
+  const loadingTask = pdfjs.getDocument(buildPdfJsDataDocumentInit(safePdfData) as any);
   const pdfDocument = await loadingTask.promise;
   const pages: string[] = [];
 

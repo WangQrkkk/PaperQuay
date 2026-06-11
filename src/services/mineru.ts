@@ -7,9 +7,9 @@ import type {
   PositionedMineruBlock,
   RenderableMineruBlock,
 } from '../types/reader';
-import { isValidBBox } from '../utils/bbox';
-import { normalizeLatexExpression, normalizeRawLatexExpression } from '../utils/markdown';
-import { joinReadableText } from '../utils/text';
+import { isValidBBox } from '../utils/bbox.ts';
+import { normalizeLatexExpression, normalizeRawLatexExpression } from '../utils/markdown.ts';
+import { joinReadableText } from '../utils/text.ts';
 
 function collectTextParts(input: unknown): string[] {
   if (input == null) {
@@ -679,7 +679,7 @@ export function parseMineruPages(payload: string | unknown): MineruPage[] {
 }
 
 export function flattenMineruPages(pages: MineruPage[]): PositionedMineruBlock[] {
-  return pages.flatMap((page, pageIndex) =>
+  const blocks = pages.flatMap((page, pageIndex) =>
     page.map((block, blockIndex) => ({
       ...block,
       blockId: `page-${pageIndex + 1}-block-${blockIndex + 1}`,
@@ -687,6 +687,39 @@ export function flattenMineruPages(pages: MineruPage[]): PositionedMineruBlock[]
       blockIndex,
     })),
   );
+  let lastTextParagraph: PositionedMineruBlock | null = null;
+
+  return blocks.map((block) => {
+    const blockText = extractTextFromMineruBlock(block).trim();
+    const isEmptyParagraphContinuation =
+      block.type === 'paragraph' &&
+      Boolean(block.bbox) &&
+      !blockText &&
+      lastTextParagraph != null &&
+      block.pageIndex > lastTextParagraph.pageIndex;
+
+    if (isEmptyParagraphContinuation && lastTextParagraph) {
+      return {
+        ...block,
+        contentSourceBlockId: lastTextParagraph.blockId,
+      };
+    }
+
+    if (block.type === 'paragraph' && blockText) {
+      lastTextParagraph = block;
+    }
+
+    return block;
+  });
+}
+
+export function resolveMineruBlockContentSource(
+  block: PositionedMineruBlock,
+  blockById: Map<string, PositionedMineruBlock>,
+): PositionedMineruBlock {
+  return block.contentSourceBlockId
+    ? blockById.get(block.contentSourceBlockId) ?? block
+    : block;
 }
 
 export function extractTextFromMineruBlock(block: PositionedMineruBlock): string {

@@ -7,6 +7,7 @@ export const READING_HEAT_MAX_COLOR_MS = 15 * 60 * 1000;
 
 const READING_SAMPLE_INTERVAL_MS = 1000;
 const READING_STABLE_AFTER_MS = 900;
+const READING_DISPLAY_UPDATE_AFTER_MS = 4500;
 const READING_SAVE_AFTER_MS = 4500;
 const MAX_SAMPLE_DELTA_MS = 2200;
 const READING_HEAT_BLUE: RgbColor = [96, 165, 250];
@@ -176,6 +177,7 @@ export function usePdfReadingHeatmap({
   const lastBinRef = useRef(-1);
   const lastMovedAtRef = useRef(Date.now());
   const lastSampleAtRef = useRef(Date.now());
+  const lastDisplayedAtRef = useRef(0);
   const lastEmittedAtRef = useRef(0);
   const displayActiveRef = useRef(displayActive);
 
@@ -187,6 +189,7 @@ export function usePdfReadingHeatmap({
     lastBinRef.current = -1;
     lastMovedAtRef.current = Date.now();
     lastSampleAtRef.current = Date.now();
+    lastDisplayedAtRef.current = 0;
     lastEmittedAtRef.current = 0;
   }, [heatmap, sourceKey]);
 
@@ -194,6 +197,7 @@ export function usePdfReadingHeatmap({
     displayActiveRef.current = displayActive;
 
     if (displayActive) {
+      lastDisplayedAtRef.current = Date.now();
       setLocalHeatmap(heatmapRef.current);
     }
   }, [displayActive]);
@@ -245,7 +249,11 @@ export function usePdfReadingHeatmap({
 
       heatmapRef.current = nextHeatmap;
 
-      if (displayActiveRef.current) {
+      if (
+        displayActiveRef.current &&
+        now - lastDisplayedAtRef.current >= READING_DISPLAY_UPDATE_AFTER_MS
+      ) {
+        lastDisplayedAtRef.current = now;
         setLocalHeatmap(nextHeatmap);
       }
 

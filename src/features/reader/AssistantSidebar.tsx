@@ -1,16 +1,14 @@
-import {
+﻿import {
   ExternalLink,
   FileText,
   Info,
   Languages,
   MessageSquare,
   PanelRightOpen,
-  Quote,
   Settings2,
 } from 'lucide-react';
 import { useLocaleText } from '../../i18n/uiLanguage';
 import type {
-  CreateNoteRequest,
   Note,
   NoteAnchor,
   NoteAnchorInsertRequest,
@@ -24,16 +22,13 @@ import type {
   DocumentChatRenderMode,
   DocumentChatSession,
   ModelReasoningEffort,
-  PaperAnnotation,
   QaModelPreset,
   SelectedExcerpt,
-  ZoteroRelatedNote,
 } from '../../types/reader';
 import { cn } from '../../utils/cn';
 import { NotesSidebar } from '../notes/NotesSidebar';
 import { ChatPanel, ChatWorkspacePanel } from './assistantSidebarChat';
 import {
-  AnnotationsDrawerContent,
   InfoDrawerContent,
   TranslateDrawerContent,
 } from './assistantSidebarDrawers';
@@ -52,7 +47,6 @@ export interface AssistantSidebarCoreProps {
   statusMessage?: string;
   hasBlocks: boolean;
   aiConfigured: boolean;
-  paperId: string;
   notes: Note[];
   activeNoteId: string | null;
   notesLoading: boolean;
@@ -91,12 +85,10 @@ export interface AssistantSidebarCoreProps {
   onCaptureScreenshot: () => void;
   onRemoveAttachment: (attachmentId: string) => void;
   onCitationClick: (citation: DocumentChatCitation) => void;
-  onCreateNote: (request: CreateNoteRequest) => void;
   onCreateStandaloneNote: () => void;
   onSelectNote: (note: Note) => void;
   onUpdateNote: (noteId: string, patch: UpdateNoteRequest, options?: { sourceId?: string }) => void;
   onDeleteNote: (noteId: string) => void;
-  onJumpToNote: (note: Note) => void;
   onJumpToNoteAnchor: (note: Note, anchor: NoteAnchor) => void;
   onAddSelectionToNote: () => void;
   onSaveAssistantMessageAsNote: (message: DocumentChatMessage) => void;
@@ -105,17 +97,6 @@ export interface AssistantSidebarCoreProps {
   selectedExcerptTranslating: boolean;
   selectedExcerptError: string;
   onAppendSelectedExcerptToQa: () => void;
-  activeBlockSummary?: string;
-  workspaceNoteMarkdown: string;
-  annotations: PaperAnnotation[];
-  zoteroRelatedNotes: ZoteroRelatedNote[];
-  zoteroRelatedNotesLoading: boolean;
-  zoteroRelatedNotesError: string;
-  onWorkspaceNoteChange: (value: string) => void;
-  onAppendSelectedExcerptToNote: () => void;
-  onCreateAnnotation: (note: string) => void;
-  onDeleteAnnotation: (annotationId: string) => void;
-  onSelectAnnotation: (annotationId: string) => void;
   onTranslateSelectedExcerpt: () => void;
   onClearSelectedExcerpt: () => void;
   onOpenPreferences?: () => void;
@@ -186,7 +167,6 @@ function AssistantSidebar({
   onSelectNote,
   onUpdateNote,
   onDeleteNote,
-  onJumpToNote,
   onJumpToNoteAnchor,
   onAddSelectionToNote,
   onSaveAssistantMessageAsNote,
@@ -195,10 +175,6 @@ function AssistantSidebar({
   selectedExcerptTranslating,
   selectedExcerptError,
   onAppendSelectedExcerptToQa,
-  annotations,
-  onCreateAnnotation,
-  onDeleteAnnotation,
-  onSelectAnnotation,
   onTranslateSelectedExcerpt,
   onClearSelectedExcerpt,
   onDetach,
@@ -235,12 +211,6 @@ function AssistantSidebar({
       label: l('摘录', 'Clips'),
       icon: FileText,
       onClick: () => togglePanel('notes'),
-    },
-    {
-      key: 'annotations' as const,
-      label: l('批注', 'Annotations'),
-      icon: Quote,
-      onClick: () => togglePanel('annotations'),
     },
   ];
 
@@ -323,7 +293,7 @@ function AssistantSidebar({
               />
             ) : null}
 
-            {activePanel === 'notes' ? (
+            <div className="h-full min-h-0" hidden={activePanel !== 'notes'}>
               <NotesSidebar
                 notes={notes}
                 activeNoteId={activeNoteId}
@@ -345,17 +315,8 @@ function AssistantSidebar({
                 onJumpToNoteAnchor={onJumpToNoteAnchor}
                 onCollapse={() => onActivePanelChange(null)}
               />
-            ) : null}
+            </div>
 
-            {activePanel === 'annotations' ? (
-              <AnnotationsDrawerContent
-                annotations={annotations}
-                onCreateAnnotation={onCreateAnnotation}
-                onDeleteAnnotation={onDeleteAnnotation}
-                onSelectAnnotation={onSelectAnnotation}
-                onCollapse={() => onActivePanelChange(null)}
-              />
-            ) : null}
           </div>
         </div>
       </div>

@@ -60,6 +60,7 @@ export interface PositionedMineruBlock extends MineruBlockBase {
   blockId: string;
   pageIndex: number;
   blockIndex: number;
+  contentSourceBlockId?: string;
 }
 
 export interface PdfHighlightTarget {
@@ -396,7 +397,6 @@ export type AssistantPanelKey =
   | "translate"
   | "info"
   | "notes"
-  | "annotations"
   | null;
 
 export type WorkspaceStage = "overview" | "reading";
@@ -524,6 +524,8 @@ export interface ReaderSettings {
   libraryBatchConcurrency: number;
   showLibraryReadingHeatmap: boolean;
   enablePdfReadingHeatmap: boolean;
+  enableSelectionTranslation: boolean;
+  enablePdfParagraphTranslationPopover: boolean;
   autoTranslateSelection: boolean;
   smoothScroll: boolean;
   compactReading: boolean;

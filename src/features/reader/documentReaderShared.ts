@@ -11,6 +11,7 @@ import type {
   WorkspaceItem,
 } from '../../types/reader';
 import type { LiteraturePaperTaskState } from '../../types/library';
+import type { AssistantSidebarCoreProps } from './AssistantSidebar';
 import { readLocalBinaryFile } from '../../services/desktop';
 import { bytesToDataUrl, decodeUtf8, formatFileSize, guessMimeTypeFromPath, isImagePath, isTextLikePath } from '../../utils/files';
 import { getFileNameFromPath, normalizeSelectionText as normalizeTextSelection } from '../../utils/text';
@@ -33,6 +34,9 @@ export const ONBOARDING_WELCOME_PDF_URL = '/onboarding/welcome.pdf';
 export interface ReaderTabBridgeState {
   translating: boolean;
   translatedCount: number;
+  assistantSidebarProps: AssistantSidebarCoreProps;
+  onDetachAssistant: () => void;
+  onAttachAssistant: () => void;
   onTranslate: () => void;
   onClearTranslations: () => void;
   onCloudParse: () => void;

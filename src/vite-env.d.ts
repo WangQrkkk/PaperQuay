@@ -11,6 +11,10 @@ interface PaperQuayBridge {
     toggleMaximize(): Promise<void>;
     close(): Promise<void>;
   };
+  clipboard?: {
+    readText(): string;
+    writeText(value: string): void;
+  };
   onFileDrop(
     handler: (payload: {
       type: 'enter' | 'over' | 'leave' | 'drop';

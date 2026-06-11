@@ -9,7 +9,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from 'react';
 import { createPortal } from 'react-dom';
-import { Star, Tag, Trash2 } from 'lucide-react';
+import { Sparkles, Star, Tag, Trash2 } from 'lucide-react';
 import { useLocaleText } from '../../i18n/uiLanguage';
 import { localPathExists } from '../../services/desktop';
 import { lookupLiteratureMetadata } from '../../services/metadata';
@@ -127,6 +127,60 @@ interface PaperContextMenuState {
   y: number;
 }
 
+interface MetadataDialogState {
+  paper: LiteraturePaper;
+  title: string;
+  doi: string;
+}
+
+function buildManualMetadataUpdateRequest(
+  paper: LiteraturePaper,
+  metadata: Awaited<ReturnType<typeof lookupLiteratureMetadata>>,
+  draft: Pick<MetadataDialogState, 'title' | 'doi'>,
+): UpdatePaperRequest | null {
+  const request: UpdatePaperRequest = {
+    paperId: paper.id,
+  };
+  let changed = false;
+  const assignString = (
+    key: 'title' | 'year' | 'publication' | 'doi' | 'url' | 'abstractText',
+    currentValue: string | null,
+    nextValue: string | null | undefined,
+  ) => {
+    const normalized = nextValue?.trim();
+
+    if (!normalized || normalized === currentValue?.trim()) {
+      return;
+    }
+
+    request[key] = normalized;
+    changed = true;
+  };
+
+  assignString('title', paper.title, metadata?.title || draft.title);
+  assignString('doi', paper.doi, metadata?.doi || draft.doi);
+
+  if (metadata) {
+    assignString('year', paper.year, metadata.year);
+    assignString('publication', paper.publication, metadata.publication);
+    assignString('url', paper.url, metadata.url);
+    assignString('abstractText', paper.abstractText, metadata.abstractText);
+
+    const nextAuthors = metadata.authors.map((author) => author.trim()).filter(Boolean);
+
+    if (nextAuthors.length > 0) {
+      const currentAuthors = paper.authors.map((author) => author.name.trim()).filter(Boolean);
+
+      if (nextAuthors.join('\n').toLocaleLowerCase() !== currentAuthors.join('\n').toLocaleLowerCase()) {
+        request.authors = nextAuthors;
+        changed = true;
+      }
+    }
+  }
+
+  return changed ? request : null;
+}
+
 type CategoryNameDialogState =
   | { mode: 'create'; parentCategory: LiteratureCategory | null }
   | { mode: 'rename'; category: LiteratureCategory };
@@ -176,6 +230,8 @@ export default function LiteratureLibraryView({
     useState<LibraryConfirmDialogState | null>(null);
   const [paperContextMenu, setPaperContextMenu] =
     useState<PaperContextMenuState | null>(null);
+  const [metadataDialog, setMetadataDialog] = useState<MetadataDialogState | null>(null);
+  const [metadataDialogBusy, setMetadataDialogBusy] = useState(false);
   const [paperDragOverCategoryId, setPaperDragOverCategoryId] = useState<string | null>(null);
   const [tagDialogPaper, setTagDialogPaper] = useState<LiteraturePaper | null>(null);
   const [detailsPanelWidth, setDetailsPanelWidth] = useState(loadDetailsPanelWidth);
@@ -1556,7 +1612,7 @@ export default function LiteratureLibraryView({
     event.preventDefault();
     event.stopPropagation();
     setSelectedPaperId(paper.id);
-    const position = clampFloatingMenuPosition(event.clientX, event.clientY, 224, 170);
+    const position = clampFloatingMenuPosition(event.clientX, event.clientY, 240, 220);
     setPaperContextMenu({
       paper,
       x: position.x,
@@ -1577,6 +1633,90 @@ export default function LiteratureLibraryView({
 
     if (paper) {
       setTagDialogPaper(paper);
+    }
+  };
+
+  const handleOpenMetadataDialogFromContextMenu = () => {
+    if (demoMode) {
+      showDemoLockedMessage();
+      setPaperContextMenu(null);
+      return;
+    }
+
+    const paper = paperContextMenu?.paper;
+
+    setPaperContextMenu(null);
+
+    if (paper) {
+      setMetadataDialog({
+        paper,
+        title: paper.title,
+        doi: paper.doi ?? '',
+      });
+    }
+  };
+
+  const handleSubmitMetadataDialog = async () => {
+    if (demoMode) {
+      showDemoLockedMessage();
+      setMetadataDialog(null);
+      return;
+    }
+
+    if (!metadataDialog || metadataDialogBusy) {
+      return;
+    }
+
+    const title = metadataDialog.title.trim();
+    const doi = metadataDialog.doi.trim();
+
+    if (!title && !doi) {
+      setError(l('请输入标题或 DOI 后再解析元数据。', 'Enter a title or DOI before parsing metadata.'));
+      return;
+    }
+
+    setMetadataDialogBusy(true);
+    setError('');
+
+    try {
+      const metadata = await lookupLiteratureMetadata({
+        doi: doi || null,
+        title: title || metadataDialog.paper.title,
+        path: paperPdfPath(metadataDialog.paper),
+      });
+      const updateRequest = buildManualMetadataUpdateRequest(
+        metadataDialog.paper,
+        metadata,
+        { title, doi },
+      );
+
+      if (!metadata && !updateRequest) {
+        setStatusMessage(l('未匹配到元数据，请调整标题或 DOI 后重试。', 'No metadata matched. Adjust the title or DOI and try again.'));
+        setError(l('未匹配到元数据。', 'No metadata matched.'));
+        return;
+      }
+
+      if (!updateRequest) {
+        setMetadataDialog(null);
+        setStatusMessage(l('文献元数据已是最新。', 'Paper metadata is already up to date.'));
+        return;
+      }
+
+      const updatedPaper = await updateLibraryPaper(updateRequest);
+      await reloadAfterPaperUpdate(updatedPaper);
+      setMetadataDialog(null);
+      setStatusMessage(
+        metadata
+          ? l('文献元数据已更新。', 'Paper metadata updated.')
+          : l('未匹配到远程元数据，已保存手动输入的标题或 DOI。', 'No remote metadata matched. Manual title or DOI saved.'),
+      );
+    } catch (nextError) {
+      const message =
+        nextError instanceof Error ? nextError.message : l('解析文献元数据失败', 'Failed to parse paper metadata');
+      setError(message);
+      setStatusMessage(message);
+    } finally {
+      setMetadataDialogBusy(false);
     }
   };
 
@@ -1834,7 +1974,7 @@ export default function LiteratureLibraryView({
           }}
         >
           <div
-            className="pq-acrylic fixed w-56 p-1.5"
+            className="pq-acrylic fixed w-60 p-1.5"
             style={{
               left: paperContextMenu.x,
               top: paperContextMenu.y,
@@ -1867,6 +2007,14 @@ export default function LiteratureLibraryView({
               <Tag className="mr-2 h-4 w-4 text-cyan-600 dark:text-cyan-200" strokeWidth={1.9} />
               {l('添加自定义标签', 'Add Custom Tag')}
             </button>
+            <button
+              type="button"
+              onClick={() => void handleOpenMetadataDialogFromContextMenu()}
+              className="mt-1 flex w-full items-center rounded-xl px-3 py-2 text-left text-sm font-medium text-slate-700 transition hover:bg-slate-100 dark:text-[#e0e0e0] dark:hover:bg-white/[0.06]"
+            >
+              <Sparkles className="mr-2 h-4 w-4 text-violet-600 dark:text-violet-200" strokeWidth={1.9} />
+              {l('解析元数据', 'Parse Metadata')}
+            </button>
             <div className="my-1 border-t border-slate-100 dark:border-white/10" />
             <button
               type="button"
@@ -1877,6 +2025,99 @@ export default function LiteratureLibraryView({
               {l('删除文献记录', 'Delete Paper Record')}
             </button>
           </div>
+        </div>,
+        document.body,
+      ) : null}
+
+      {metadataDialog ? createPortal(
+        <div
+          className="fixed inset-0 z-[10000] flex items-center justify-center bg-slate-950/30 p-4 backdrop-blur-[2px]"
+          onMouseDown={() => {
+            if (!metadataDialogBusy) {
+              setMetadataDialog(null);
+            }
+          }}
+        >
+          <form
+            className="pq-card w-[min(520px,calc(100vw-32px))] p-4 shadow-[var(--pq-shadow-dialog)]"
+            onMouseDown={(event) => event.stopPropagation()}
+            onSubmit={(event) => {
+              event.preventDefault();
+              void handleSubmitMetadataDialog();
+            }}
+          >
+            <div className="flex items-start gap-3">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[var(--pq-accent-bg)] text-[var(--pq-accent)]">
+                <Sparkles className="h-4.5 w-4.5" strokeWidth={1.9} />
+              </span>
+              <div className="min-w-0 flex-1">
+                <h2 className="text-base font-semibold text-[var(--pq-text)]">
+                  {l('解析元数据', 'Parse Metadata')}
+                </h2>
+                <p className="mt-1 text-sm leading-6 text-[var(--pq-text-muted)]">
+                  {l('先修正标题或 DOI，再用这些信息重新匹配并更新文献元数据。', 'Correct the title or DOI first, then use them to match and update paper metadata.')}
+                </p>
+              </div>
+            </div>
+
+            <label className="mt-4 block">
+              <span className="mb-1.5 block text-xs font-medium text-[var(--pq-text-muted)]">
+                {l('标题', 'Title')}
+              </span>
+              <input
+                value={metadataDialog.title}
+                onChange={(event) =>
+                  setMetadataDialog((current) =>
+                    current ? { ...current, title: event.target.value } : current,
+                  )
+                }
+                className="pq-input h-10 w-full px-3 text-sm"
+                autoFocus
+              />
+            </label>
+
+            <label className="mt-3 block">
+              <span className="mb-1.5 block text-xs font-medium text-[var(--pq-text-muted)]">
+                DOI
+              </span>
+              <input
+                value={metadataDialog.doi}
+                onChange={(event) =>
+                  setMetadataDialog((current) =>
+                    current ? { ...current, doi: event.target.value } : current,
+                  )
+                }
+                placeholder="10.xxxx/xxxxx"
+                className="pq-input h-10 w-full px-3 text-sm"
+              />
+            </label>
+
+            <div className="mt-3 rounded-[var(--pq-radius-sm)] border border-[var(--pq-border-subtle)] bg-[var(--pq-bg-secondary)] px-3 py-2 text-xs leading-5 text-[var(--pq-text-faint)]">
+              <div className="font-medium text-[var(--pq-text-muted)]">{l('PDF 文件', 'PDF File')}</div>
+              <div className="mt-0.5 truncate" title={paperPdfPath(metadataDialog.paper) || undefined}>
+                {paperPdfPath(metadataDialog.paper) || l('未找到 PDF 路径', 'No PDF path found')}
+              </div>
+            </div>
+
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setMetadataDialog(null)}
+                disabled={metadataDialogBusy}
+                className="pq-button h-9 px-3 text-sm"
+              >
+                {l('取消', 'Cancel')}
+              </button>
+              <button
+                type="submit"
+                disabled={metadataDialogBusy}
+                className="pq-button-primary h-9 px-3 text-sm disabled:opacity-60"
+              >
+                <Sparkles className="h-4 w-4" strokeWidth={1.9} />
+                {metadataDialogBusy ? l('解析中...', 'Parsing...') : l('解析并更新', 'Parse and Update')}
+              </button>
+            </div>
+          </form>
         </div>,
         document.body,
       ) : null}

@@ -1,6 +1,9 @@
 import { invoke } from '../platform/electron/core';
 import { listen } from '../platform/electron/event';
-import { readLocalBinaryFile } from './desktop';
+import {
+  readLocalBinaryFile,
+  readLocalTextFileIfExists,
+} from './desktop';
 import { resolveLocalRagContext } from './localRag';
 import {
   paperAuthors,
@@ -10,13 +13,26 @@ import {
   uniqueTags,
 } from './libraryAgentPlanHelpers';
 import { readReaderConfigFile } from './readerConfig';
-import { extractPdfTextByPdfJs } from './summarySource';
+import {
+  buildMineruMarkdownDocument,
+  extractPdfTextByPdfJs,
+} from './summarySource';
+import {
+  flattenMineruPages,
+  parseMineruPages,
+} from './mineru';
+import {
+  buildMineruCachePathCandidates,
+  guessSiblingJsonPath,
+  guessSiblingMarkdownPath,
+} from '../utils/mineruCache';
 import type { LiteratureCategory, LiteraturePaper, UpdatePaperRequest } from '../types/library';
 import type {
   DocumentChatAttachment,
   ModelRuntimeConfig,
   ModelReasoningEffort,
   OpenAICompatibleApiMode,
+  PositionedMineruBlock,
   QaModelPreset,
   ReaderConfigFile,
   ReaderSecrets,
@@ -141,20 +157,33 @@ interface LibraryAgentPaperUpdate {
 }
 
 interface LibraryAgentGeneratedItem {
-  paperId: string;
+  paperId?: string | null;
+  id?: string | null;
   title?: string | null;
   description?: string | null;
   before?: string | null;
   after?: string | null;
   update?: LibraryAgentPaperUpdate | null;
+  updateRequest?: LibraryAgentPaperUpdate | null;
+  newTitle?: string | null;
+  targetTitle?: string | null;
+  updatedTitle?: string | null;
+  afterTitle?: string | null;
+  titleAfter?: string | null;
   targetCategoryName?: string | null;
   targetCategoryParentName?: string | null;
+  [key: string]: unknown;
 }
 
 interface LibraryAgentGeneratedPlan {
-  tool?: LibraryAgentTool | null;
-  summary: string;
-  items: LibraryAgentGeneratedItem[];
+  tool?: LibraryAgentTool | string | null;
+  summary?: string | null;
+  description?: string | null;
+  items?: LibraryAgentGeneratedItem[] | null;
+  updates?: LibraryAgentGeneratedItem[] | null;
+  paperUpdates?: LibraryAgentGeneratedItem[] | null;
+  papers?: LibraryAgentGeneratedItem[] | null;
+  [key: string]: unknown;
 }
 
 interface LibraryAgentGeneratedResponse {
@@ -164,6 +193,16 @@ interface LibraryAgentGeneratedResponse {
   plan?: LibraryAgentGeneratedPlan | null;
   contextRequest?: LibraryAgentContextRequest | null;
   userChoices?: LibraryAgentUserChoiceRequest | null;
+}
+
+interface LibraryAgentPaperContextDecision {
+  kind: 'paper-skill-decision';
+  action: 'load-context' | 'continue-without-context' | 'ask-user-to-select-papers';
+  summary: string;
+  reason: string;
+  mode: LibraryAgentContextRequest['mode'];
+  paperIds: string[];
+  thinking?: string | null;
 }
 
 export type LibraryAgentRunResult =
@@ -496,6 +535,123 @@ function paperToWorkspaceItem(paper: LiteraturePaper): WorkspaceItem | null {
   };
 }
 
+interface AgentDocumentContextSettings {
+  autoLoadSiblingJson: boolean;
+  mineruCacheDir: string;
+}
+
+interface MineruAgentContext {
+  source: string;
+  text: string;
+  blocks: PositionedMineruBlock[];
+}
+
+function normalizeAgentDocumentContextSettings(settings: Partial<ReaderSettings>): AgentDocumentContextSettings {
+  return {
+    autoLoadSiblingJson: settings.autoLoadSiblingJson === true,
+    mineruCacheDir: settings.mineruCacheDir?.trim() || '',
+  };
+}
+
+async function loadAgentSettingsAndSecrets(): Promise<{
+  settings: Partial<ReaderSettings>;
+  secrets: Partial<ReaderSecrets>;
+}> {
+  const persistedConfig = await loadPersistedReaderConfig();
+  const storedSettings = readStorageJson<ReaderSettings>(SETTINGS_STORAGE_KEY);
+  const storedSecrets = readStorageJson<ReaderSecrets>(SECRETS_STORAGE_KEY);
+
+  return {
+    settings: {
+      ...(persistedConfig?.settings ?? {}),
+      ...storedSettings,
+    },
+    secrets: {
+      ...(persistedConfig?.secrets ?? {}),
+      ...storedSecrets,
+    },
+  };
+}
+
+function mineruMarkdownCandidatePaths(item: WorkspaceItem, settings: AgentDocumentContextSettings): string[] {
+  const candidates = new Set<string>();
+
+  if (settings.mineruCacheDir) {
+    for (const cachePaths of buildMineruCachePathCandidates(settings.mineruCacheDir, item)) {
+      candidates.add(cachePaths.markdownPath);
+    }
+  }
+
+  if (item.localPdfPath && settings.autoLoadSiblingJson) {
+    candidates.add(guessSiblingMarkdownPath(item.localPdfPath));
+  }
+
+  return [...candidates];
+}
+
+function mineruJsonCandidatePaths(item: WorkspaceItem, settings: AgentDocumentContextSettings): string[] {
+  const candidates = new Set<string>();
+
+  if (settings.mineruCacheDir) {
+    for (const cachePaths of buildMineruCachePathCandidates(settings.mineruCacheDir, item)) {
+      candidates.add(cachePaths.contentJsonPath);
+      candidates.add(cachePaths.middleJsonPath);
+    }
+  }
+
+  if (item.localPdfPath && settings.autoLoadSiblingJson) {
+    candidates.add(guessSiblingJsonPath(item.localPdfPath));
+  }
+
+  return [...candidates];
+}
+
+async function loadMineruAgentContext(
+  item: WorkspaceItem,
+  settings: AgentDocumentContextSettings,
+): Promise<MineruAgentContext | null> {
+  for (const candidatePath of mineruMarkdownCandidatePaths(item, settings)) {
+    try {
+      const text = await readLocalTextFileIfExists(candidatePath);
+
+      if (text?.trim()) {
+        return {
+          source: 'mineru-markdown',
+          text: normalizeAgentContext(text),
+          blocks: [],
+        };
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  for (const candidatePath of mineruJsonCandidatePaths(item, settings)) {
+    try {
+      const jsonText = await readLocalTextFileIfExists(candidatePath);
+
+      if (!jsonText?.trim()) {
+        continue;
+      }
+
+      const blocks = flattenMineruPages(parseMineruPages(jsonText));
+      const markdown = buildMineruMarkdownDocument(blocks, candidatePath);
+
+      if (markdown.trim()) {
+        return {
+          source: 'mineru-json',
+          text: normalizeAgentContext(markdown),
+          blocks,
+        };
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return null;
+}
+
 async function loadPaperContext(
   paper: LiteraturePaper,
   mode: LibraryAgentContextRequest['mode'],
@@ -526,27 +682,29 @@ async function loadPaperContext(
   }
 
   try {
-    const pdfData = await readLocalBinaryFile(pdfPath);
-    const pdfText = await extractPdfTextByPdfJs(pdfData);
-    const normalizedPdfText = normalizeAgentContext(pdfText);
-
-    const persistedConfig = await loadPersistedReaderConfig();
-    const storedSettings = readStorageJson<ReaderSettings>(SETTINGS_STORAGE_KEY);
-    const storedSecrets = readStorageJson<ReaderSecrets>(SECRETS_STORAGE_KEY);
-    const secrets = {
-      ...(persistedConfig?.secrets ?? {}),
-      ...storedSecrets,
-    };
-    const ragSettings = normalizeStoredReaderSettings({
-      ...(persistedConfig?.settings ?? {}),
-      ...storedSettings,
-    });
+    const { settings, secrets } = await loadAgentSettingsAndSecrets();
+    const documentContextSettings = normalizeAgentDocumentContextSettings(settings);
+    const ragSettings = normalizeStoredReaderSettings(settings);
     const workspaceItem = paperToWorkspaceItem(paper);
+    const mineruContext = workspaceItem
+      ? await loadMineruAgentContext(workspaceItem, documentContextSettings)
+      : null;
+    let normalizedPdfText = '';
+
+    if (!mineruContext || ragSettings.ragSourceMode === 'pdf-text') {
+      try {
+        const pdfData = await readLocalBinaryFile(pdfPath);
+        const pdfText = await extractPdfTextByPdfJs(pdfData);
+        normalizedPdfText = normalizeAgentContext(pdfText);
+      } catch (error) {
+        console.warn('Failed to load Agent PDF context', error);
+      }
+    }
 
     if (
       options?.ragEnabled !== false &&
       workspaceItem &&
-      normalizedPdfText &&
+      (normalizedPdfText || (mineruContext?.text && mineruContext.blocks.length > 0)) &&
       secrets.embeddingApiKey?.trim() &&
       ragSettings.embeddingBaseUrl.trim() &&
       ragSettings.embeddingModel.trim()
@@ -563,20 +721,27 @@ async function loadPaperContext(
             timeoutSeconds: ragSettings.embeddingRequestTimeoutSeconds,
           },
           question: requestReason,
-          mineruBlocks: [],
-          mineruDocumentText: '',
+          mineruBlocks: mineruContext?.blocks ?? [],
+          mineruDocumentText: mineruContext?.text ?? '',
           pdfDocumentText: normalizedPdfText,
         });
 
         if (ragText.trim()) {
           return {
-            source: 'pdf-text-rag',
+            source: `${mineruContext?.source ?? 'pdf-text'}-rag`,
             text: normalizeAgentContext(ragText),
           };
         }
       } catch (error) {
         console.warn('Failed to build local Agent RAG context', error);
       }
+    }
+
+    if (mineruContext?.text) {
+      return {
+        source: mineruContext.source,
+        text: mineruContext.text,
+      };
     }
 
     if (normalizedPdfText) {
@@ -586,7 +751,7 @@ async function loadPaperContext(
       };
     }
   } catch (error) {
-    console.warn('Failed to load Agent PDF context', error);
+    console.warn('Failed to load Agent document context', error);
   }
 
   const fallback = fallbackSummaryContext(paper);
@@ -800,59 +965,6 @@ function buildEffectiveContextRequest(
   };
 }
 
-function shouldForcePdfTextContext(instruction: string): boolean {
-  const normalized = instruction.toLocaleLowerCase();
-  const signals = [
-    '读取正文',
-    '读正文',
-    '正文',
-    '全文',
-    '原文',
-    '阅读全文',
-    '读取全文',
-    'pdf',
-    'pdf内容',
-    '文章内容',
-    '论文内容',
-    '精读',
-    '总结',
-    '概括',
-    '分析这',
-    '看一下这',
-    '读一下这',
-    'read the paper',
-    'read these',
-    'full text',
-    'pdf text',
-    'paper content',
-    'summarize',
-    'summary',
-    'analyze these',
-  ];
-
-  return signals.some((signal) => normalized.includes(signal));
-}
-
-function buildForcedPdfTextContextRequest(
-  papers: LiteraturePaper[],
-  currentPaperScopeIds: string[] = [],
-): LibraryAgentContextRequest | null {
-  const availablePaperIds = new Set(papers.map((paper) => paper.id));
-  const scopedIds = uniqueAvailablePaperIds(currentPaperScopeIds, availablePaperIds);
-  const paperIds = scopedIds.length > 0 ? scopedIds : papers.map((paper) => paper.id);
-
-  if (paperIds.length === 0) {
-    return null;
-  }
-
-  return {
-    summary: 'Load PDF text for the selected papers.',
-    mode: 'pdf-text',
-    reason: 'The user explicitly asked to read or summarize the selected paper body, so PaperQuay should load PDF text before answering.',
-    paperIds,
-  };
-}
-
 function buildEmptyAgentAnswerFallback(
   papers: LiteraturePaper[],
   responseLanguage?: string,
@@ -1040,6 +1152,263 @@ function describePaperState(paper: LiteraturePaper): string {
   ].filter(Boolean).join(' · ');
 }
 
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value));
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+function firstStringFromRecord(
+  record: Record<string, unknown>,
+  keys: string[],
+): string | undefined {
+  for (const key of keys) {
+    const value = stringValue(record[key]);
+
+    if (value) {
+      return value;
+    }
+  }
+
+  return undefined;
+}
+
+function stringArrayValue(value: unknown): string[] | undefined {
+  if (Array.isArray(value)) {
+    const items = value
+      .map((item) => stringValue(item))
+      .filter((item): item is string => Boolean(item));
+
+    return items.length > 0 ? items : undefined;
+  }
+
+  if (typeof value === 'string' && value.trim()) {
+    const items = value
+      .split(/[,\n;；、]/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+
+    return items.length > 0 ? items : undefined;
+  }
+
+  return undefined;
+}
+
+function firstStringArrayFromRecord(
+  record: Record<string, unknown>,
+  keys: string[],
+): string[] | undefined {
+  for (const key of keys) {
+    const value = stringArrayValue(record[key]);
+
+    if (value) {
+      return value;
+    }
+  }
+
+  return undefined;
+}
+
+function firstObjectFromRecord(
+  record: Record<string, unknown>,
+  keys: string[],
+): Record<string, unknown> | undefined {
+  for (const key of keys) {
+    const value = record[key];
+
+    if (isObjectRecord(value)) {
+      return value;
+    }
+  }
+
+  return undefined;
+}
+
+function isLibraryAgentTool(value: string): value is LibraryAgentTool {
+  return ['rename', 'metadata', 'smart-tags', 'clean-tags', 'classify'].includes(value);
+}
+
+function normalizeGeneratedTool(
+  value: string | null | undefined,
+  fallbackTool: string | null | undefined,
+): LibraryAgentTool {
+  const aliases: Record<string, LibraryAgentTool> = {
+    rename: 'rename',
+    rename_papers: 'rename',
+    batch_rename: 'rename',
+    metadata: 'metadata',
+    update_paper_metadata: 'metadata',
+    metadata_completion: 'metadata',
+    smart_tags: 'smart-tags',
+    smart_tag: 'smart-tags',
+    'smart-tags': 'smart-tags',
+    update_paper_tags: 'smart-tags',
+    clean_tags: 'clean-tags',
+    clean_tag: 'clean-tags',
+    'clean-tags': 'clean-tags',
+    clean_paper_tags: 'clean-tags',
+    classify: 'classify',
+    classification: 'classify',
+    classify_papers: 'classify',
+    auto_classify: 'classify',
+  };
+  const candidates = [value, fallbackTool]
+    .map((item) => item?.trim())
+    .filter((item): item is string => Boolean(item));
+
+  for (const candidate of candidates) {
+    const normalized = candidate.toLocaleLowerCase().replace(/\s+/g, '_');
+    const tool = aliases[normalized] ?? aliases[normalized.replace(/-/g, '_')];
+
+    if (tool) {
+      return tool;
+    }
+
+    if (isLibraryAgentTool(candidate)) {
+      return candidate;
+    }
+  }
+
+  return 'classify';
+}
+
+function generatedPlanItems(generatedPlan: LibraryAgentGeneratedPlan): LibraryAgentGeneratedItem[] {
+  const record = generatedPlan as Record<string, unknown>;
+  const args = firstObjectFromRecord(record, ['arguments', 'parameters', 'args']);
+  const candidates = [
+    generatedPlan.items,
+    generatedPlan.updates,
+    generatedPlan.paperUpdates,
+    generatedPlan.papers,
+    record.paper_items,
+    record.paperUpdates,
+    args?.items,
+    args?.updates,
+    args?.paperUpdates,
+    args?.papers,
+  ];
+
+  for (const candidate of candidates) {
+    if (Array.isArray(candidate)) {
+      return candidate.filter(isObjectRecord) as LibraryAgentGeneratedItem[];
+    }
+  }
+
+  return [];
+}
+
+function generatedPlanTool(generatedPlan: LibraryAgentGeneratedPlan): string | null | undefined {
+  const record = generatedPlan as Record<string, unknown>;
+  const args = firstObjectFromRecord(record, ['arguments', 'parameters', 'args']);
+
+  return (
+    stringValue(generatedPlan.tool) ||
+    firstStringFromRecord(record, ['tool', 'name', 'functionName']) ||
+    (args ? firstStringFromRecord(args, ['tool', 'name', 'functionName']) : undefined)
+  );
+}
+
+function generatedPaperId(item: LibraryAgentGeneratedItem): string | undefined {
+  const record = item as Record<string, unknown>;
+
+  return firstStringFromRecord(record, [
+    'paperId',
+    'paperID',
+    'paper_id',
+    'id',
+    'itemId',
+    'item_id',
+  ]);
+}
+
+function normalizeGeneratedPaperUpdate(value: unknown): LibraryAgentPaperUpdate | undefined {
+  if (typeof value === 'string' && value.trim()) {
+    return { title: value.trim() };
+  }
+
+  if (!isObjectRecord(value)) {
+    return undefined;
+  }
+
+  const update: LibraryAgentPaperUpdate = {};
+  const title = firstStringFromRecord(value, [
+    'title',
+    'newTitle',
+    'targetTitle',
+    'updatedTitle',
+    'after',
+    'afterTitle',
+    'titleAfter',
+  ]);
+  const year = firstStringFromRecord(value, ['year', 'publicationYear']);
+  const publication = firstStringFromRecord(value, ['publication', 'venue', 'journal', 'conference']);
+  const doi = firstStringFromRecord(value, ['doi', 'DOI']);
+  const url = firstStringFromRecord(value, ['url', 'URL', 'link']);
+  const abstractText = firstStringFromRecord(value, ['abstractText', 'abstract', 'summary']);
+  const keywords = firstStringArrayFromRecord(value, ['keywords', 'keyword']);
+  const tags = firstStringArrayFromRecord(value, ['tags', 'tagNames', 'tag']);
+  const authors = firstStringArrayFromRecord(value, ['authors', 'creators']);
+
+  if (title) update.title = title;
+  if (year) update.year = year;
+  if (publication) update.publication = publication;
+  if (doi) update.doi = doi;
+  if (url) update.url = url;
+  if (abstractText) update.abstractText = abstractText;
+  if (keywords) update.keywords = keywords;
+  if (tags) update.tags = tags;
+  if (authors) update.authors = authors;
+
+  return Object.keys(update).length > 0 ? update : undefined;
+}
+
+function inferRenameTitleFromGeneratedItem(
+  paper: LiteraturePaper,
+  item: LibraryAgentGeneratedItem,
+): string | undefined {
+  const record = item as Record<string, unknown>;
+  const title = firstStringFromRecord(record, [
+    'after',
+    'newTitle',
+    'targetTitle',
+    'updatedTitle',
+    'afterTitle',
+    'titleAfter',
+  ]);
+
+  if (!title || title === paper.title) {
+    return undefined;
+  }
+
+  return title;
+}
+
+function updateRequestFromGeneratedAgentItem(
+  paper: LiteraturePaper,
+  item: LibraryAgentGeneratedItem,
+  tool: LibraryAgentTool,
+): UpdatePaperRequest | undefined {
+  const record = item as Record<string, unknown>;
+  const explicitUpdate =
+    normalizeGeneratedPaperUpdate(record.update) ??
+    normalizeGeneratedPaperUpdate(record.updateRequest) ??
+    normalizeGeneratedPaperUpdate(record.changes) ??
+    normalizeGeneratedPaperUpdate(record.patch);
+
+  if (tool !== 'rename') {
+    return updateRequestFromAgentItem(paper, explicitUpdate);
+  }
+
+  const renameTitle = explicitUpdate?.title?.trim() || inferRenameTitleFromGeneratedItem(paper, item);
+
+  return updateRequestFromAgentItem(paper, {
+    ...(explicitUpdate ?? {}),
+    title: renameTitle,
+  });
+}
+
 function updateRequestFromAgentItem(
   paper: LiteraturePaper,
   update: LibraryAgentPaperUpdate | null | undefined,
@@ -1113,37 +1482,56 @@ function updateRequestFromAgentItem(
 }
 
 function convertGeneratedAgentPlan(
-  fallbackTool: LibraryAgentTool,
+  fallbackTool: LibraryAgentTool | string | null | undefined,
   papers: LiteraturePaper[],
   generatedPlan: LibraryAgentGeneratedPlan,
 ): LibraryAgentPlan {
-  const tool = generatedPlan.tool ?? fallbackTool;
+  const tool = normalizeGeneratedTool(generatedPlanTool(generatedPlan), fallbackTool);
   const paperById = new Map(papers.map((paper) => [paper.id, paper]));
-  const items = generatedPlan.items
+  const generatedItems = generatedPlanItems(generatedPlan);
+  const items = generatedItems
     .map((item, index): LibraryAgentPlanItem | null => {
-      const paper = paperById.get(item.paperId);
+      const record = item as Record<string, unknown>;
+      const paperId = generatedPaperId(item);
+      const paper = paperId ? paperById.get(paperId) : undefined;
 
       if (!paper) {
         return null;
       }
 
-      const updateRequest = updateRequestFromAgentItem(paper, item.update);
-      const targetCategoryName = item.targetCategoryName?.trim() || undefined;
+      const updateRequest = updateRequestFromGeneratedAgentItem(paper, item, tool);
+      const targetCategoryName = firstStringFromRecord(record, [
+        'targetCategoryName',
+        'categoryName',
+        'collectionName',
+        'targetCollectionName',
+      ]);
 
       if (!updateRequest && !targetCategoryName) {
         return null;
       }
+
+      const before = firstStringFromRecord(record, ['before', 'oldTitle', 'currentTitle', 'from']);
+      const after = firstStringFromRecord(record, [
+        'after',
+        'newTitle',
+        'targetTitle',
+        'updatedTitle',
+        'afterTitle',
+        'titleAfter',
+        'to',
+      ]);
 
       return {
         id: `${paper.id}:${tool}:llm:${index}`,
         tool,
         paperId: paper.id,
         paperTitle: paper.title,
-        title: item.title?.trim() || 'Agent 工具调用',
-        description: item.description?.trim() || '模型通过 tool call 生成的计划项。',
-        before: item.before?.trim() || describePaperState(paper),
+        title: firstStringFromRecord(record, ['title', 'label']) || 'Agent 工具调用',
+        description: firstStringFromRecord(record, ['description', 'summary']) || '模型通过 tool call 生成的计划项。',
+        before: before || describePaperState(paper),
         after:
-          item.after?.trim() ||
+          after ||
           [
             updateRequest?.title,
             updateRequest?.authors?.join(', '),
@@ -1155,7 +1543,9 @@ function convertGeneratedAgentPlan(
           ].filter(Boolean).join(' · '),
         updateRequest,
         targetCategoryName,
-        targetCategoryParentName: item.targetCategoryParentName?.trim() || AUTO_CLASSIFY_PARENT_NAME,
+        targetCategoryParentName:
+          firstStringFromRecord(record, ['targetCategoryParentName', 'categoryParentName', 'parentCategoryName']) ||
+          AUTO_CLASSIFY_PARENT_NAME,
       };
     })
     .filter((item): item is LibraryAgentPlanItem => item !== null);
@@ -1263,6 +1653,23 @@ async function generateLibraryAgentPlanOpenAICompatible(
     });
   } catch (error) {
     throw new Error(toErrorMessage(error, '调用大模型 Agent 工具失败'));
+  }
+}
+
+async function decideLibraryAgentPaperContextOpenAICompatible(
+  options: OpenAICompatibleLibraryAgentOptions,
+): Promise<LibraryAgentPaperContextDecision | null> {
+  if (!Array.isArray(options.papers) || options.papers.length === 0) {
+    return null;
+  }
+
+  try {
+    return await invoke<LibraryAgentPaperContextDecision>('decide_library_agent_paper_context_openai_compatible', {
+      options,
+    });
+  } catch (error) {
+    console.warn('Failed to run paper-context decision', error);
+    return null;
   }
 }
 
@@ -1519,35 +1926,75 @@ export async function runConversationalLibraryAgent({
     throw new Error('请输入要让 Agent 执行的文库整理指令。');
   }
   const metadataContextLabel = papers.length > 0 ? 'metadata only' : 'general chat';
-  const forcedPdfTextContextRequest = shouldForcePdfTextContext(normalizedInstruction)
-    ? buildForcedPdfTextContextRequest(papers, currentPaperScopeIds)
-    : null;
+  const paperInputsWithoutContext = papers.map((paper) => paperToAgentInput(
+    paper,
+    undefined,
+    categoryPayload.categoryPathById,
+  ));
+  const paperContextDecision = await decideLibraryAgentPaperContextOpenAICompatible(
+    {
+      baseUrl: preset.baseUrl,
+      apiKey: preset.apiKey.trim(),
+      model: preset.model,
+      apiMode: preset.apiMode,
+      temperature: preset.temperature,
+      reasoningEffort: preset.reasoningEffort,
+      responseLanguage,
+      allowContextRequest: true,
+      tool: 'auto',
+      instruction: instructionForModel,
+      messages: historyMessages,
+      currentPaperScopeIds,
+      paperScopes,
+      categories: categoryPayload.categories,
+      papers: paperInputsWithoutContext,
+    },
+  );
 
-  const generatedResponse = forcedPdfTextContextRequest
+  if (paperContextDecision?.action === 'ask-user-to-select-papers' && paperContextDecision.paperIds.length === 0) {
+    return paperSelectionResultFromContextRequest(
+      {
+        summary: paperContextDecision.summary,
+        mode: paperContextDecision.mode,
+        reason: paperContextDecision.reason,
+        paperIds: [],
+      },
+      normalizedInstruction,
+      normalizeModelThinking(paperContextDecision.thinking),
+    );
+  }
+
+  const generatedResponse = paperContextDecision?.action === 'load-context'
     ? {
       kind: 'context-request' as const,
-      contextRequest: forcedPdfTextContextRequest,
+      thinking: paperContextDecision.thinking,
+      contextRequest: {
+        summary: paperContextDecision.summary,
+        mode: paperContextDecision.mode,
+        reason: paperContextDecision.reason,
+        paperIds: paperContextDecision.paperIds,
+      },
     }
     : await generateLibraryAgentPlanOpenAICompatible(
-      {
-        baseUrl: preset.baseUrl,
-        apiKey: preset.apiKey.trim(),
-        model: preset.model,
-        apiMode: preset.apiMode,
-        temperature: preset.temperature,
-        reasoningEffort: preset.reasoningEffort,
-        responseLanguage,
-        allowContextRequest: true,
-        tool: 'auto',
-        instruction: instructionForModel,
-        messages: historyMessages,
-        currentPaperScopeIds,
-        paperScopes,
-        categories: categoryPayload.categories,
-        papers: papers.map((paper) => paperToAgentInput(paper, undefined, categoryPayload.categoryPathById)),
-      },
-      streamHandlers,
-    );
+    {
+      baseUrl: preset.baseUrl,
+      apiKey: preset.apiKey.trim(),
+      model: preset.model,
+      apiMode: preset.apiMode,
+      temperature: preset.temperature,
+      reasoningEffort: preset.reasoningEffort,
+      responseLanguage,
+      allowContextRequest: true,
+      tool: 'auto',
+      instruction: instructionForModel,
+      messages: historyMessages,
+      currentPaperScopeIds,
+      paperScopes,
+      categories: categoryPayload.categories,
+      papers: paperInputsWithoutContext,
+    },
+    streamHandlers,
+  );
 
   if (generatedResponse.kind === 'answer') {
     const answer = generatedResponse.answer?.trim() || buildEmptyAgentAnswerFallback(

@@ -28,7 +28,6 @@ import type {
   TextSelectionPayload,
 } from '../../types/reader';
 import {
-  bboxToCssStyle,
   bboxToRect,
   isValidBBox,
   shouldCreateHotspot,
@@ -100,6 +99,12 @@ const USER_SCROLL_RESTORE_GUARD_MS = 700;
 const SCROLL_EMIT_TRAILING_MS = 360;
 const THUMBNAIL_RENDER_IDLE_MS = 420;
 const OVERLAY_PAGE_RADIUS = 1;
+const PDF_VIEWER_MAX_CANVAS_PIXELS = 5_242_880;
+
+type BBoxPageSizeSource = Pick<
+  PositionedMineruBlock | PdfHighlightTarget | PaperAnnotation,
+  'bboxCoordinateSystem' | 'bboxPageSize'
+> | null;
 
 interface PdfViewerProps {
   source: PdfSource;
@@ -121,13 +126,13 @@ interface PdfViewerProps {
   highlightScrollSignal?: number;
   selectedAnnotationId?: string | null;
   smoothScroll: boolean;
+  active?: boolean;
   enableReadingHeatmap?: boolean;
   softPageShadow: boolean;
   onBlockHover: (block: PositionedMineruBlock | null) => void;
   onBlockSelect: (block: PositionedMineruBlock, context?: PdfBlockSelectContext) => void;
   blockClickOpensQuickActions?: boolean;
   onAnnotationSelect?: (annotationId: string) => void;
-  onAnnotationCreate?: (note: string) => void;
   onTextSelect?: (selection: TextSelectionPayload) => void;
   onScrollPositionChange?: (position: PdfScrollPosition) => void;
   onReadingHeatmapChange?: (heatmap: PdfReadingHeatmap) => void;
@@ -144,6 +149,47 @@ function resolveToolMode(mode: AnnotationEditorTool) {
     default:
       return AnnotationEditorType.NONE;
   }
+}
+
+function sourceNeedsPdfPageSize(source: BBoxPageSizeSource): boolean {
+  return Boolean(
+    source &&
+      source.bboxCoordinateSystem !== 'normalized-1000' &&
+      !source.bboxPageSize,
+  );
+}
+
+function resolveOverlayOriginalPage(
+  cachedPageSize: PageSize | undefined,
+  renderedPage: PageSize,
+  sources: BBoxPageSizeSource[],
+): PageSize | null {
+  if (cachedPageSize) {
+    return cachedPageSize;
+  }
+
+  return sources.some(sourceNeedsPdfPageSize) ? null : renderedPage;
+}
+
+function setNumberStateIfChanged(
+  setter: (value: number | ((current: number) => number)) => void,
+  value: number,
+) {
+  setter((current) => (current === value ? current : value));
+}
+
+function setStringStateIfChanged(
+  setter: (value: string | ((current: string) => string)) => void,
+  value: string,
+) {
+  setter((current) => (current === value ? current : value));
+}
+
+function setBooleanStateIfChanged(
+  setter: (value: boolean | ((current: boolean) => boolean)) => void,
+  value: boolean,
+) {
+  setter((current) => (current === value ? current : value));
 }
 
 function PdfViewer({
@@ -166,13 +212,13 @@ function PdfViewer({
   highlightScrollSignal = 0,
   selectedAnnotationId = null,
   smoothScroll,
+  active = true,
   enableReadingHeatmap = true,
   softPageShadow,
   onBlockHover,
   onBlockSelect,
   blockClickOpensQuickActions = false,
   onAnnotationSelect,
-  onAnnotationCreate,
   onTextSelect,
   onScrollPositionChange,
   onReadingHeatmapChange,
@@ -191,11 +237,15 @@ function PdfViewer({
   const editorToolRef = useRef<AnnotationEditorTool>('none');
   const resizeObserverRef = useRef<ResizeObserver | null>(null);
   const mutationObserverRef = useRef<MutationObserver | null>(null);
+  const observedPageElementsRef = useRef<Set<HTMLDivElement>>(new Set());
   const pointerStartRef = useRef<{ x: number; y: number } | null>(null);
   const lastSelectionRef = useRef<{ text: string; emittedAt: number } | null>(null);
   const lRef = useRef(l);
+  const activeRef = useRef(active);
+  const pageSizesRef = useRef<Record<number, PageSize>>({});
   const pageThumbnailsRef = useRef<Record<number, string>>({});
   const pageHostsRef = useRef<Record<number, PageHostState>>({});
+  const pendingPageSizeRequestsRef = useRef<Set<number>>(new Set());
   const selectionStartedInsideRef = useRef(false);
   const selectionCommitTimerRef = useRef<number | null>(null);
   const pendingBlockSelectTimerRef = useRef<number | null>(null);
@@ -223,8 +273,6 @@ function PdfViewer({
   const [saveMessage, setSaveMessage] = useState('');
   const [hasSelectedEditor, setHasSelectedEditor] = useState(false);
   const [hasLiveTextSelection, setHasLiveTextSelection] = useState(false);
-  const [annotationComposerBlockId, setAnnotationComposerBlockId] = useState<string | null>(null);
-  const [annotationDraft, setAnnotationDraft] = useState('');
   const [annotationColors, setAnnotationColors] = useState(() => loadPdfAnnotationToolColors());
   const [activeColorTool, setActiveColorTool] = useState<PdfAnnotationColorTool>('highlight');
   const [thumbnailsCollapsed, setThumbnailsCollapsed] = useState(() =>
@@ -240,6 +288,10 @@ function PdfViewer({
   useEffect(() => {
     lRef.current = l;
   }, [l]);
+
+  useEffect(() => {
+    activeRef.current = active;
+  }, [active]);
 
   useEffect(() => {
     setZoomLabel((current) =>
@@ -321,9 +373,6 @@ function PdfViewer({
 
   const activeBlock = activeBlockId ? blockById.get(activeBlockId) ?? null : null;
   const hoveredBlock = hoveredBlockId ? blockById.get(hoveredBlockId) ?? null : null;
-  const annotationComposerBlock = annotationComposerBlockId
-    ? blockById.get(annotationComposerBlockId) ?? null
-    : null;
 
   const annotationsByPage = useMemo(() => {
     const map = new Map<number, PaperAnnotation[]>();
@@ -355,11 +404,104 @@ function PdfViewer({
 
     if (activeBlock) indexes.add(activeBlock.pageIndex);
     if (hoveredBlock) indexes.add(hoveredBlock.pageIndex);
-    if (annotationComposerBlock) indexes.add(annotationComposerBlock.pageIndex);
     if (activeHighlight) indexes.add(activeHighlight.pageIndex);
 
     return Array.from(indexes).sort((left, right) => left - right);
-  }, [activeBlock, activeHighlight, annotationComposerBlock, currentPage, hoveredBlock, pageCount]);
+  }, [activeBlock, activeHighlight, currentPage, hoveredBlock, pageCount]);
+
+  const resolvePageOverlaySources = useCallback(
+    (pageIndex: number): BBoxPageSizeSource[] => {
+      const sources: BBoxPageSizeSource[] = [
+        ...(blocksByPage.get(pageIndex) ?? []),
+        ...(annotationsByPage.get(pageIndex) ?? []),
+      ];
+
+      if (activeBlock?.pageIndex === pageIndex) {
+        sources.push(activeBlock);
+      }
+
+      if (hoveredBlock?.pageIndex === pageIndex) {
+        sources.push(hoveredBlock);
+      }
+
+      if (activeHighlight?.pageIndex === pageIndex) {
+        sources.push(blockById.get(activeHighlight.blockId) ?? activeHighlight);
+      }
+
+      return sources;
+    },
+    [
+      activeBlock,
+      activeHighlight,
+      annotationsByPage,
+      blockById,
+      blocksByPage,
+      hoveredBlock,
+    ],
+  );
+
+  const requestPageSize = useCallback((pageIndex: number) => {
+    const pdfDocument = pdfDocumentRef.current;
+
+    if (
+      !pdfDocument ||
+      pageIndex < 0 ||
+      pageIndex >= pageCount ||
+      pageSizesRef.current[pageIndex] ||
+      pendingPageSizeRequestsRef.current.has(pageIndex)
+    ) {
+      return;
+    }
+
+    pendingPageSizeRequestsRef.current.add(pageIndex);
+
+    void pdfDocument
+      .getPage(pageIndex + 1)
+      .then((page: any) => {
+        if (pdfDocumentRef.current !== pdfDocument) {
+          page?.cleanup?.();
+          return;
+        }
+
+        const viewport = page.getViewport({ scale: 1 });
+        const pageSize = {
+          width: viewport.width,
+          height: viewport.height,
+        };
+
+        pageSizesRef.current = {
+          ...pageSizesRef.current,
+          [pageIndex]: pageSize,
+        };
+        setPageSizes(pageSizesRef.current);
+        page?.cleanup?.();
+      })
+      .catch((pageError: unknown) => {
+        if (!isPdfLifecycleCancellation(pageError)) {
+          console.debug('[paperquay] Failed to resolve PDF page size', pageIndex + 1, pageError);
+        }
+      })
+      .finally(() => {
+        pendingPageSizeRequestsRef.current.delete(pageIndex);
+      });
+  }, [pageCount]);
+
+  const resolveOriginalPageForSources = useCallback(
+    (pageIndex: number, renderedPage: PageSize, sources: BBoxPageSizeSource[]) => {
+      const originalPage = resolveOverlayOriginalPage(
+        pageSizesRef.current[pageIndex],
+        renderedPage,
+        sources,
+      );
+
+      if (!originalPage) {
+        requestPageSize(pageIndex);
+      }
+
+      return originalPage;
+    },
+    [requestPageSize],
+  );
 
   const updateAnnotationToolColor = useCallback(
     (tool: PdfAnnotationColorTool, value: string) => {
@@ -387,9 +529,8 @@ function PdfViewer({
       return false;
     }
 
-    observer.disconnect();
-
     const nextHosts: Record<number, PageHostState> = {};
+    const nextObservedElements = new Set<HTMLDivElement>();
 
     viewer.querySelectorAll<HTMLDivElement>('.page').forEach((element) => {
       const pageNumber = Number(element.dataset.pageNumber ?? 0);
@@ -399,7 +540,11 @@ function PdfViewer({
       }
 
       const overlayElement = ensurePageOverlayElement(element);
-      observer.observe(element);
+      nextObservedElements.add(element);
+
+      if (!observedPageElementsRef.current.has(element)) {
+        observer.observe(element);
+      }
 
       nextHosts[pageNumber - 1] = {
         element,
@@ -408,6 +553,14 @@ function PdfViewer({
         height: element.clientHeight || element.getBoundingClientRect().height,
       };
     });
+
+    for (const element of observedPageElementsRef.current) {
+      if (!nextObservedElements.has(element)) {
+        observer.unobserve(element);
+      }
+    }
+
+    observedPageElementsRef.current = nextObservedElements;
 
     const changed = !arePageHostsEqual(pageHostsRef.current, nextHosts);
 
@@ -457,13 +610,16 @@ function PdfViewer({
     }
 
     scrollPositionRef.current = nextPosition;
-    setReadingProgressRatio(getPdfReadingProgressRatio(nextPosition, pageCount));
+    setNumberStateIfChanged(
+      setReadingProgressRatio,
+      getPdfReadingProgressRatio(nextPosition, pageCount),
+    );
 
     if (currentPageRef.current !== nextPosition.page) {
       currentPageRef.current = nextPosition.page;
 
       if (options?.syncPageState !== false) {
-        setCurrentPage(nextPosition.page);
+        setNumberStateIfChanged(setCurrentPage, nextPosition.page);
       }
     }
 
@@ -557,7 +713,7 @@ function PdfViewer({
     restoringScrollRef.current = true;
     container.scrollTo({ top, left, behavior: 'auto' });
     currentPageRef.current = page;
-    setCurrentPage(page);
+    setNumberStateIfChanged(setCurrentPage, page);
     restoredScrollKeyRef.current = restoreKey;
 
     if (pendingScrollRestoreKeyRef.current === restoreKey) {
@@ -581,7 +737,7 @@ function PdfViewer({
     const page = getSavedScrollPage(pagesCount);
 
     currentPageRef.current = page;
-    setCurrentPage(page);
+    setNumberStateIfChanged(setCurrentPage, page);
 
     try {
       const viewerPageCount =
@@ -642,6 +798,24 @@ function PdfViewer({
     restoreSavedScroll({ force: hasPendingExternalScrollRestore() });
   }, [hasPendingExternalScrollRestore, restoreSavedScroll]);
 
+  const refreshPdfViewerLayout = useCallback(() => {
+    const pdfViewer = pdfViewerRef.current;
+
+    if (!activeRef.current || !pdfViewer) {
+      return;
+    }
+
+    try {
+      pdfViewer.update?.();
+    } catch {
+      // PDF.js can throw while a document is still being attached.
+    }
+
+    if (syncPageHosts()) {
+      retrySavedScrollRestore();
+    }
+  }, [retrySavedScrollRestore, syncPageHosts]);
+
   useEffect(() => {
     if (!scrollPosition || !sourceSignature || scrollPosition.sourceKey !== sourceSignature) {
       return;
@@ -690,7 +864,7 @@ function PdfViewer({
       }
 
       currentPageRef.current = pageIndex + 1;
-      setCurrentPage(pageIndex + 1);
+      setNumberStateIfChanged(setCurrentPage, pageIndex + 1);
 
       window.requestAnimationFrame(() => {
         syncPageHosts();
@@ -728,8 +902,8 @@ function PdfViewer({
         behavior: smoothScroll ? 'smooth' : 'auto',
       });
       currentPageRef.current = targetPageIndex + 1;
-      setCurrentPage(targetPageIndex + 1);
-      setReadingProgressRatio(safeRatio);
+      setNumberStateIfChanged(setCurrentPage, targetPageIndex + 1);
+      setNumberStateIfChanged(setReadingProgressRatio, safeRatio);
 
       window.setTimeout(() => {
         restoringScrollRef.current = false;
@@ -744,23 +918,25 @@ function PdfViewer({
       sourceKey: sourceSignature,
       pageCount,
       heatmap: readingHeatmap,
-      active: Boolean(enableReadingHeatmap && documentInit && sourceSignature && pageCount > 0 && !loading),
+      active: Boolean(active && enableReadingHeatmap && documentInit && sourceSignature && pageCount > 0 && !loading),
       displayActive: readingHeatmapBarVisible,
       getCurrentScrollPosition: buildCurrentScrollPosition,
       onChange: enableReadingHeatmap ? onReadingHeatmapChange : undefined,
     });
 
   useEffect(() => {
-    setReadingProgressRatio(getPdfReadingProgressRatio(scrollPositionRef.current, pageCount));
+    setNumberStateIfChanged(
+      setReadingProgressRatio,
+      getPdfReadingProgressRatio(scrollPositionRef.current, pageCount),
+    );
   }, [pageCount, sourceSignature]);
 
   const scrollToHighlight = useCallback(
     (highlight: PdfHighlightTarget) => {
       const container = containerRef.current;
       const viewer = viewerRef.current;
-      const originalPage = pageSizes[highlight.pageIndex];
 
-      if (!container || !originalPage) {
+      if (!container) {
         scrollToPage(highlight.pageIndex);
         return;
       }
@@ -784,6 +960,17 @@ function PdfViewer({
       }
 
       const sourceBlock = blockById.get(highlight.blockId) ?? highlight;
+      const originalPage = resolveOriginalPageForSources(
+        highlight.pageIndex,
+        renderedPage,
+        [sourceBlock],
+      );
+
+      if (!originalPage) {
+        scrollToPage(highlight.pageIndex);
+        return;
+      }
+
       const targetRect = bboxToRect(
         highlight.bbox,
         resolveBBoxBaseSize(sourceBlock, originalPage),
@@ -803,7 +990,7 @@ function PdfViewer({
         behavior: smoothScroll ? 'smooth' : 'auto',
       });
       currentPageRef.current = page;
-      setCurrentPage(page);
+      setNumberStateIfChanged(setCurrentPage, page);
 
       window.requestAnimationFrame(() => {
         syncPageHosts();
@@ -815,13 +1002,21 @@ function PdfViewer({
         emitScrollPosition();
       }, smoothScroll ? 280 : 80);
     },
-    [blockById, emitScrollPosition, pageHosts, pageSizes, scrollToPage, smoothScroll, syncPageHosts],
+    [
+      blockById,
+      emitScrollPosition,
+      pageHosts,
+      resolveOriginalPageForSources,
+      scrollToPage,
+      smoothScroll,
+      syncPageHosts,
+    ],
   );
 
   useEffect(() => {
     const container = containerRef.current;
 
-    if (!container || !onScrollPositionChange || !sourceSignature) {
+    if (!active || !container || !onScrollPositionChange || !sourceSignature) {
       return undefined;
     }
 
@@ -874,7 +1069,6 @@ function PdfViewer({
 
       if (scrollPositionFrame !== 0) {
         window.cancelAnimationFrame(scrollPositionFrame);
-        updateLocalScrollPosition({ syncPageState: false });
       }
 
       container.removeEventListener('scroll', handleScroll);
@@ -882,14 +1076,14 @@ function PdfViewer({
       container.removeEventListener('pointerdown', cancelPendingExternalRestore);
       container.removeEventListener('keydown', cancelPendingExternalRestore);
 
-      if (!hasPendingExternalScrollRestore()) {
-        emitScrollPosition({ syncPageState: false });
-      }
+      // Do not measure hidden tab DOM during cleanup. The PDF viewer remains mounted,
+      // so tab switching preserves the live scroll position without restoring.
     };
   }, [
     emitScrollPosition,
     hasPendingExternalScrollRestore,
     onScrollPositionChange,
+    active,
     sourceSignature,
     updateLocalScrollPosition,
   ]);
@@ -941,11 +1135,15 @@ function PdfViewer({
   }, []);
 
   const emitSelectedText = useCallback(() => {
-    if (!onTextSelect || editorToolRef.current !== 'none') {
+    if (!activeRef.current || !onTextSelect || editorToolRef.current !== 'none') {
       return;
     }
 
     window.requestAnimationFrame(() => {
+      if (!activeRef.current) {
+        return;
+      }
+
       const selection = getScopedSelectionPayload(containerRef.current);
 
       if (!selection) {
@@ -973,7 +1171,7 @@ function PdfViewer({
 
   const scheduleSelectionCommit = useCallback(
     (delay = 48) => {
-      if (!onTextSelect || editorToolRef.current !== 'none') {
+      if (!active || !onTextSelect || editorToolRef.current !== 'none') {
         return;
       }
 
@@ -983,7 +1181,7 @@ function PdfViewer({
         emitSelectedText();
       }, delay);
     },
-    [clearSelectionCommitTimer, emitSelectedText, onTextSelect],
+    [active, clearSelectionCommitTimer, emitSelectedText, onTextSelect],
   );
 
   const handleDeleteSelected = useCallback(() => {
@@ -1026,8 +1224,6 @@ function PdfViewer({
       setActiveColorTool('highlight');
       clearSelectionCommitTimer();
       clearPendingBlockSelect();
-      setAnnotationComposerBlockId(null);
-      setAnnotationDraft('');
 
       pdfViewer.annotationEditorMode = {
         mode: AnnotationEditorType.HIGHLIGHT,
@@ -1042,7 +1238,7 @@ function PdfViewer({
         isFromKeyboard: false,
       };
       await waitForAnnotationEditorMode(AnnotationEditorType.NONE);
-      setHasLiveTextSelection(false);
+      setBooleanStateIfChanged(setHasLiveTextSelection, false);
     } catch (highlightError) {
       setDocumentError(
         highlightError instanceof Error
@@ -1169,8 +1365,16 @@ function PdfViewer({
   }, [currentPdfName, defaultSaveDirectory, onSaveSuccess, originalPdfPath, saving, source]);
 
   useEffect(() => {
+    if (!active) {
+      return undefined;
+    }
+
     const observer = new ResizeObserver(() => {
       window.requestAnimationFrame(() => {
+        if (!activeRef.current) {
+          return;
+        }
+
         if (syncPageHosts()) {
           retrySavedScrollRestore();
         }
@@ -1178,6 +1382,10 @@ function PdfViewer({
     });
     const mutationObserver = new MutationObserver(() => {
       window.requestAnimationFrame(() => {
+        if (!activeRef.current) {
+          return;
+        }
+
         if (syncPageHosts()) {
           retrySavedScrollRestore();
         }
@@ -1187,6 +1395,7 @@ function PdfViewer({
     resizeObserverRef.current = observer;
     mutationObserverRef.current = mutationObserver;
     syncPageHosts();
+    refreshPdfViewerLayout();
 
     const viewer = viewerRef.current;
 
@@ -1199,12 +1408,35 @@ function PdfViewer({
     return () => {
       observer.disconnect();
       mutationObserver.disconnect();
+      observedPageElementsRef.current = new Set();
       resizeObserverRef.current = null;
       mutationObserverRef.current = null;
-      pageHostsRef.current = {};
-      setPageHosts({});
     };
-  }, [retrySavedScrollRestore, syncPageHosts]);
+  }, [active, refreshPdfViewerLayout, retrySavedScrollRestore, syncPageHosts]);
+
+  useEffect(() => {
+    if (!active || !documentInit) {
+      return undefined;
+    }
+
+    let firstFrame = 0;
+    let secondFrame = 0;
+
+    firstFrame = window.requestAnimationFrame(() => {
+      refreshPdfViewerLayout();
+      secondFrame = window.requestAnimationFrame(refreshPdfViewerLayout);
+    });
+
+    return () => {
+      if (firstFrame !== 0) {
+        window.cancelAnimationFrame(firstFrame);
+      }
+
+      if (secondFrame !== 0) {
+        window.cancelAnimationFrame(secondFrame);
+      }
+    };
+  }, [active, documentInit, refreshPdfViewerLayout]);
 
   useEffect(() => {
     editorToolRef.current = editorTool;
@@ -1224,9 +1456,7 @@ function PdfViewer({
       clearPendingBlockSelect();
       window.getSelection()?.removeAllRanges();
       onBlockHover(null);
-      setAnnotationComposerBlockId(null);
-      setAnnotationDraft('');
-      setHasLiveTextSelection(false);
+      setBooleanStateIfChanged(setHasLiveTextSelection, false);
     }
   }, [clearPendingBlockSelect, clearSelectionCommitTimer, editorTool, onBlockHover]);
 
@@ -1239,7 +1469,7 @@ function PdfViewer({
   );
 
   useEffect(() => {
-    if (!hasSelectedEditor) {
+    if (!active || !hasSelectedEditor) {
       return undefined;
     }
 
@@ -1261,23 +1491,12 @@ function PdfViewer({
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [handleDeleteSelected, hasSelectedEditor]);
-
-  useEffect(() => {
-    if (!annotationComposerBlockId) {
-      return;
-    }
-
-    if (annotationComposerBlockId === activeBlockId) {
-      return;
-    }
-
-    setAnnotationComposerBlockId(null);
-    setAnnotationDraft('');
-  }, [activeBlockId, annotationComposerBlockId]);
+  }, [active, handleDeleteSelected, hasSelectedEditor]);
 
   useEffect(() => {
     setPageCount(0);
+    pageSizesRef.current = {};
+    pendingPageSizeRequestsRef.current.clear();
     setPageSizes({});
     pageHostsRef.current = {};
     setPageHosts({});
@@ -1285,8 +1504,8 @@ function PdfViewer({
 
     currentPageRef.current = initialPage;
     restoredScrollKeyRef.current = '';
-    setCurrentPage(initialPage);
-    setZoomLabel('100%');
+    setNumberStateIfChanged(setCurrentPage, initialPage);
+    setStringStateIfChanged(setZoomLabel, '100%');
     setSaveMessage('');
     setDocumentError('');
     clearSelectionCommitTimer();
@@ -1298,11 +1517,14 @@ function PdfViewer({
     const viewer = viewerRef.current;
 
     if (!container || !viewer || !documentInit) {
-      setPageCount(0);
-      pageHostsRef.current = {};
-      setPageHosts({});
-      setCurrentPage(1);
-      setZoomLabel('100%');
+      if (!documentInit) {
+        setPageCount(0);
+        pageHostsRef.current = {};
+        setPageHosts({});
+        setNumberStateIfChanged(setCurrentPage, 1);
+        setStringStateIfChanged(setZoomLabel, '100%');
+      }
+
       setLoading(false);
       return undefined;
     }
@@ -1342,6 +1564,8 @@ function PdfViewer({
           annotationEditorMode: AnnotationEditorType.NONE,
           enableHighlightFloatingButton: false,
           annotationEditorHighlightColors: buildPdfJsHighlightColorOptions(),
+          enableHWA: true,
+          maxCanvasPixels: PDF_VIEWER_MAX_CANVAS_PIXELS,
         } as any);
 
         pdfViewerRef.current = pdfViewer;
@@ -1359,26 +1583,36 @@ function PdfViewer({
         };
 
         handleEditorStatesChanged = (event) => {
-          setHasSelectedEditor(Boolean(event.details?.hasSelectedEditor));
+          setBooleanStateIfChanged(
+            setHasSelectedEditor,
+            Boolean(event.details?.hasSelectedEditor),
+          );
         };
 
         handlePagesInit = () => {
           primeSavedScrollPage(pdfViewer, pdfViewer.pagesCount);
           pdfViewer.currentScaleValue = 'page-width';
-          setZoomLabel(lRef.current('Fit Width', 'Fit Width'));
+          pdfViewer.update?.();
+          setStringStateIfChanged(setZoomLabel, lRef.current('Fit Width', 'Fit Width'));
           syncPageHosts();
           restoreSavedScroll({ force: true });
+          window.requestAnimationFrame(refreshPdfViewerLayout);
         };
 
         handlePageChanging = (event) => {
           const pageNumber = Math.max(1, Math.round(event.pageNumber ?? 1));
           currentPageRef.current = pageNumber;
-          setCurrentPage(pageNumber);
+          setNumberStateIfChanged(setCurrentPage, pageNumber);
         };
 
         handleScaleChanging = (event) => {
           const scale = Number(event.scale);
-          setZoomLabel(Number.isFinite(scale) ? `${Math.round(scale * 100)}%` : lRef.current('Fit Width', 'Fit Width'));
+          setStringStateIfChanged(
+            setZoomLabel,
+            Number.isFinite(scale)
+              ? `${Math.round(scale * 100)}%`
+              : lRef.current('Fit Width', 'Fit Width'),
+          );
         };
 
         handlePageRendered = () => {
@@ -1406,46 +1640,11 @@ function PdfViewer({
         pdfDocumentRef.current = pdfDocument;
         setPageCount(pdfDocument.numPages);
 
-        const isCurrentDocument = () => !cancelled && pdfDocumentRef.current === pdfDocument;
-        const nextPageSizes: Record<number, PageSize> = {};
-        for (let pageIndex = 0; pageIndex < pdfDocument.numPages; pageIndex += 1) {
-          if (!isCurrentDocument()) {
-            break;
-          }
-
-          let page: any = null;
-
-          try {
-            page = await pdfDocument.getPage(pageIndex + 1);
-
-            if (!isCurrentDocument()) {
-              break;
-            }
-
-            const viewport = page.getViewport({ scale: 1 });
-            nextPageSizes[pageIndex] = {
-              width: viewport.width,
-              height: viewport.height,
-            };
-          } catch (pageError) {
-            if (!isCurrentDocument() || isPdfLifecycleCancellation(pageError)) {
-              if (!cancelled) {
-                setLoading(false);
-              }
-              return;
-            }
-
-            throw pageError;
-          } finally {
-            page?.cleanup?.();
-          }
-        }
-
-        if (isCurrentDocument()) {
-          setPageSizes(nextPageSizes);
+        if (!cancelled && pdfDocumentRef.current === pdfDocument) {
           pdfViewer.setDocument(pdfDocument);
           linkService.setDocument(pdfDocument, null);
           primeSavedScrollPage(pdfViewer, pdfDocument.numPages);
+          window.requestAnimationFrame(refreshPdfViewerLayout);
           setLoading(false);
         }
       })
@@ -1472,7 +1671,7 @@ function PdfViewer({
       annotationEditorReadyRef.current = false;
       annotationEditorUiManagerRef.current = null;
       eventBusRef.current = null;
-      setHasSelectedEditor(false);
+      setBooleanStateIfChanged(setHasSelectedEditor, false);
 
       if (eventBus && handleAnnotationEditorUiManager) {
         eventBus.off('annotationeditoruimanager', handleAnnotationEditorUiManager);
@@ -1511,15 +1710,7 @@ function PdfViewer({
 
       setLoading(false);
     };
-  }, [
-    applySavedScrollPosition,
-    documentInit,
-    getSavedScrollPage,
-    primeSavedScrollPage,
-    restoreSavedScroll,
-    retrySavedScrollRestore,
-    syncPageHosts,
-  ]);
+  }, [documentInit, refreshPdfViewerLayout]);
 
   useEffect(() => {
     const pdfDocument = pdfDocumentRef.current;
@@ -1529,6 +1720,10 @@ function PdfViewer({
         pageThumbnailsRef.current = {};
         setPageThumbnails({});
       }
+      return;
+    }
+
+    if (!active) {
       return;
     }
 
@@ -1659,10 +1854,10 @@ function PdfViewer({
       }
       activePage = null;
     };
-  }, [documentInit, pageCount, thumbnailFocusPage, thumbnailsCollapsed]);
+  }, [active, documentInit, pageCount, thumbnailFocusPage, thumbnailsCollapsed]);
 
   useEffect(() => {
-    if (!activeHighlight || highlightScrollSignal === lastHandledHighlightSignalRef.current) {
+    if (!active || !activeHighlight || highlightScrollSignal === lastHandledHighlightSignalRef.current) {
       return;
     }
 
@@ -1671,10 +1866,50 @@ function PdfViewer({
     window.requestAnimationFrame(() => {
       scrollToHighlight(activeHighlight);
     });
-  }, [activeHighlight, highlightScrollSignal, scrollToHighlight]);
+  }, [active, activeHighlight, highlightScrollSignal, scrollToHighlight]);
 
   useEffect(() => {
-    if (!onTextSelect) {
+    if (!active) {
+      return;
+    }
+
+    for (const pageIndex of overlayPageIndexes) {
+      const host = pageHosts[pageIndex];
+
+      if (!host) {
+        continue;
+      }
+
+      const renderedPage = {
+        width: host.width,
+        height: host.height,
+      };
+
+      if (renderedPage.width <= 0 || renderedPage.height <= 0) {
+        continue;
+      }
+
+      const originalPage = resolveOverlayOriginalPage(
+        pageSizes[pageIndex],
+        renderedPage,
+        resolvePageOverlaySources(pageIndex),
+      );
+
+      if (!originalPage) {
+        requestPageSize(pageIndex);
+      }
+    }
+  }, [
+    active,
+    overlayPageIndexes,
+    pageHosts,
+    pageSizes,
+    requestPageSize,
+    resolvePageOverlaySources,
+  ]);
+
+  useEffect(() => {
+    if (!active || !onTextSelect) {
       return undefined;
     }
 
@@ -1725,7 +1960,10 @@ function PdfViewer({
 
     const handleSelectionChange = () => {
       const selectionInside = selectionBelongsToContainer(containerRef.current);
-      setHasLiveTextSelection(selectionInside && hasActiveTextSelection());
+      setBooleanStateIfChanged(
+        setHasLiveTextSelection,
+        selectionInside && hasActiveTextSelection(),
+      );
 
       if (editorToolRef.current !== 'none') {
         return;
@@ -1745,19 +1983,19 @@ function PdfViewer({
     document.addEventListener('selectionchange', handleSelectionChange);
 
     return () => {
-      setHasLiveTextSelection(false);
+      setBooleanStateIfChanged(setHasLiveTextSelection, false);
       document.removeEventListener('pointerdown', handleSelectionStart);
       document.removeEventListener('mousedown', handleSelectionStart);
       document.removeEventListener('mouseup', handleMouseSelectionCommit);
       document.removeEventListener('keyup', handleKeyboardSelectionCommit);
       document.removeEventListener('selectionchange', handleSelectionChange);
     };
-  }, [clearPendingBlockSelect, onTextSelect, scheduleSelectionCommit]);
+  }, [active, clearPendingBlockSelect, onTextSelect, scheduleSelectionCommit]);
 
   useEffect(() => {
     const viewer = viewerRef.current;
 
-    if (!viewer) {
+    if (!active || !viewer) {
       return undefined;
     }
 
@@ -1854,10 +2092,20 @@ function PdfViewer({
       }
 
       const pageBlocks = blocksByPage.get(pageTarget.pageIndex) ?? [];
-      const originalPage = pageSizes[pageTarget.pageIndex];
       const renderedPage = getPointerRenderedPage(pageTarget);
 
-      if (!originalPage || !renderedPage) {
+      if (!renderedPage) {
+        emitBlockHover(null);
+        return;
+      }
+
+      const originalPage = resolveOriginalPageForSources(
+        pageTarget.pageIndex,
+        renderedPage,
+        pageBlocks,
+      );
+
+      if (!originalPage) {
         emitBlockHover(null);
         return;
       }
@@ -1901,10 +2149,9 @@ function PdfViewer({
         return;
       }
 
-      const originalPage = pageSizes[pageTarget.pageIndex];
       const renderedPage = getPointerRenderedPage(pageTarget);
 
-      if (!originalPage || !renderedPage) {
+      if (!renderedPage) {
         pointerStartRef.current = null;
         return;
       }
@@ -1925,6 +2172,16 @@ function PdfViewer({
       }
 
       const pageBlocks = blocksByPage.get(pageTarget.pageIndex) ?? [];
+      const originalPage = resolveOriginalPageForSources(
+        pageTarget.pageIndex,
+        renderedPage,
+        pageBlocks,
+      );
+
+      if (!originalPage) {
+        return;
+      }
+
       const hitBlock =
         resolveHitBlockByPoint(
           event.clientX,
@@ -1984,14 +2241,23 @@ function PdfViewer({
         return;
       }
 
-      const originalPage = pageSizes[pageTarget.pageIndex];
       const renderedPage = getPointerRenderedPage(pageTarget);
 
-      if (!originalPage || !renderedPage) {
+      if (!renderedPage) {
         return;
       }
 
       const pageBlocks = blocksByPage.get(pageTarget.pageIndex) ?? [];
+      const originalPage = resolveOriginalPageForSources(
+        pageTarget.pageIndex,
+        renderedPage,
+        pageBlocks,
+      );
+
+      if (!originalPage) {
+        return;
+      }
+
       const hitBlock =
         resolveHitBlockByPoint(
           event.clientX,
@@ -2052,18 +2318,33 @@ function PdfViewer({
         window.cancelAnimationFrame(hoverAnimationFrame);
       }
 
+      pendingHoverBlock = null;
+      if (hoveredBlockIdRef.current !== null) {
+        hoveredBlockIdRef.current = null;
+        onBlockHover(null);
+      }
+
       viewer.removeEventListener('pointerdown', handlePointerDown);
       viewer.removeEventListener('pointermove', handlePointerMove);
       viewer.removeEventListener('pointerup', handlePointerUp);
       viewer.removeEventListener('pointerleave', handlePointerLeave);
       viewer.removeEventListener('click', handleClick, true);
     };
-  }, [blockClickOpensQuickActions, blocksByPage, clearPendingBlockSelect, onBlockHover, onBlockSelect, pageHosts, pageSizes]);
+  }, [
+    active,
+    blockClickOpensQuickActions,
+    blocksByPage,
+    clearPendingBlockSelect,
+    onBlockHover,
+    onBlockSelect,
+    pageHosts,
+    resolveOriginalPageForSources,
+  ]);
 
   useEffect(() => {
     const container = containerRef.current;
 
-    if (!container) {
+    if (!active || !container) {
       return undefined;
     }
 
@@ -2087,7 +2368,7 @@ function PdfViewer({
     return () => {
       container.removeEventListener('wheel', handleWheel);
     };
-  }, [documentInit]);
+  }, [active, documentInit]);
 
 
   if (!source) {
@@ -2184,14 +2465,13 @@ function PdfViewer({
             'pdf-annotation-scroll absolute inset-0 overflow-auto px-5 pt-5',
             showReadingHeatmapBar ? 'pb-24' : 'pb-5',
           )}
-          onMouseUp={() => scheduleSelectionCommit()}
-          onKeyUp={() => scheduleSelectionCommit()}
+          onMouseUp={active ? () => scheduleSelectionCommit() : undefined}
+          onKeyUp={active ? () => scheduleSelectionCommit() : undefined}
         >
           <div ref={viewerRef} className="pdfViewer" />
 
           {overlayPageIndexes.map((pageIndex) => {
             const host = pageHosts[pageIndex];
-            const originalPage = pageSizes[pageIndex];
             const renderedPage = host
               ? {
               width: host.width,
@@ -2199,7 +2479,7 @@ function PdfViewer({
                 }
               : null;
 
-            if (!host || !originalPage || !renderedPage || renderedPage.width <= 0 || renderedPage.height <= 0) {
+            if (!host || !renderedPage || renderedPage.width <= 0 || renderedPage.height <= 0) {
               return null;
             }
 
@@ -2207,13 +2487,25 @@ function PdfViewer({
             const pageAnnotations = annotationsByPage.get(pageIndex) ?? [];
             const activePageBlock =
               activeBlock?.pageIndex === pageIndex ? activeBlock : null;
-            const composerBlock =
-              annotationComposerBlock?.pageIndex === pageIndex ? annotationComposerBlock : null;
             const activeHighlightSource =
               activeHighlight && activeHighlight.pageIndex === pageIndex
                 ? blockById.get(activeHighlight.blockId) ?? activeHighlight
                 : null;
+            const originalPage = resolveOverlayOriginalPage(
+              pageSizes[pageIndex],
+              renderedPage,
+              [
+                ...pageBlocks,
+                ...pageAnnotations,
+                activePageBlock,
+                activeHighlightSource,
+              ],
+            );
             const allowLinkedInteractions = editorTool === 'none' && !hasLiveTextSelection;
+
+            if (!originalPage) {
+              return null;
+            }
 
             return createPortal(
               <PdfPageOverlay
@@ -2222,20 +2514,13 @@ function PdfViewer({
                 renderedPage={renderedPage}
                 pageBlocks={pageBlocks}
                 pageAnnotations={pageAnnotations}
-                activeBlock={activePageBlock}
                 activeBlockId={activeBlockId}
                 hoveredBlockId={hoveredBlockId}
                 selectedAnnotationId={selectedAnnotationId}
                 activeHighlight={activeHighlight}
                 activeHighlightSource={activeHighlightSource}
-                annotationComposerBlock={composerBlock}
-                annotationComposerBlockId={annotationComposerBlockId}
-                annotationDraft={annotationDraft}
                 allowLinkedInteractions={allowLinkedInteractions}
                 onAnnotationSelect={onAnnotationSelect}
-                onAnnotationCreate={onAnnotationCreate}
-                setAnnotationComposerBlockId={setAnnotationComposerBlockId}
-                setAnnotationDraft={setAnnotationDraft}
                 l={l}
               />,
               host.overlayElement,

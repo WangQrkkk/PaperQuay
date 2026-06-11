@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import { useLocaleText } from '../../i18n/uiLanguage';
 import type { ClientAnchorRect, SelectedExcerpt } from '../../types/reader';
+import { MarkdownPreview } from './assistantSidebarPrimitives';
 
 function clampSelectionPopoverPosition(value: number, min: number, max: number) {
   if (max < min) {
@@ -335,16 +336,11 @@ export function SelectionQuickActions({
             <div className="inline-flex items-center rounded-full border border-indigo-200 bg-indigo-50 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-indigo-600">
               {sourceLabel}
             </div>
-            <div
-              className="mt-2 text-sm font-medium leading-6 text-slate-700"
-              style={{
-                display: '-webkit-box',
-                WebkitLineClamp: 2,
-                WebkitBoxOrient: 'vertical',
-                overflow: 'hidden',
-              }}
-            >
-              {selectedExcerpt.text}
+            <div className="mt-2 max-h-20 overflow-hidden text-sm font-medium leading-6 text-slate-700">
+              <MarkdownPreview
+                content={selectedExcerpt.text}
+                className="text-sm font-medium leading-6 text-slate-700 [&_.katex-display]:my-1 [&_p]:my-0 [&_p]:leading-6"
+              />
             </div>
           </div>
           <button
@@ -361,7 +357,12 @@ export function SelectionQuickActions({
           <div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
             {translationTitle}
           </div>
-          <div className="text-sm leading-6 text-slate-700">{translationLabel}</div>
+          <div className="max-h-52 overflow-auto text-sm leading-6 text-slate-700">
+            <MarkdownPreview
+              content={translationLabel}
+              className="text-sm leading-6 text-slate-700 [&_.katex-display]:my-1 [&_p]:my-0 [&_p]:leading-6"
+            />
+          </div>
         </div>
 
         <div className="mt-3 flex items-center gap-2">

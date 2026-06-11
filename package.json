@@ -1,7 +1,7 @@
 {
   "name": "paperquay",
   "private": true,
-  "version": "0.1.21",
+  "version": "0.1.22",
   "description": "AI-assisted desktop literature reader and library manager.",
   "author": {
     "name": "PaperQuay Developers",
@@ -95,7 +95,7 @@
       "winCodeSign": null
     },
     "electronFuses": {
-      "enableEmbeddedAsarIntegrityValidation": true
+      "enableEmbeddedAsarIntegrityValidation": false
     },
     "afterPack": "electron/afterPack.cjs",
     "directories": {

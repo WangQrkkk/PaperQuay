@@ -33,8 +33,8 @@ import { cn } from '../../utils/cn';
 import { NoteEditor } from './NoteEditor';
 import {
   copyTextToClipboard,
-  isEditableContextTarget,
   NotesContextMenu,
+  shouldUseNativeTextContextMenu,
   type NotesContextMenuEntry,
 } from './NotesContextMenu';
 import { extractOutline, noteContentToTiptap } from './notesTiptap';
@@ -992,18 +992,20 @@ export function NotesWorkspace() {
   }, []);
 
   const openSurfaceContextMenu = (event: MouseEvent) => {
-    if (isEditableContextTarget(event.target)) return;
+    if (shouldUseNativeTextContextMenu(event.target)) return;
     event.preventDefault();
     setContextMenu({ kind: 'surface', x: event.clientX, y: event.clientY });
   };
 
   const openNoteContextMenu = (event: MouseEvent, note: Note) => {
+    if (shouldUseNativeTextContextMenu(event.target)) return;
     event.preventDefault();
     event.stopPropagation();
     setContextMenu({ kind: 'note', x: event.clientX, y: event.clientY, note });
   };
 
   const openFolderContextMenu = (event: MouseEvent, folder: NoteFolder) => {
+    if (shouldUseNativeTextContextMenu(event.target)) return;
     event.preventDefault();
     event.stopPropagation();
     setContextMenu({ kind: 'folder', x: event.clientX, y: event.clientY, folder });

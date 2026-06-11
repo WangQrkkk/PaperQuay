@@ -6,7 +6,6 @@ import {
   ChevronDown,
   Check,
   Clipboard,
-  FileText,
   ImagePlus,
   Loader2,
   Paperclip,
@@ -23,6 +22,11 @@ import type { AgentChatMessage, AgentToolCallView } from './AgentWorkspace.types
 import AgentMarkdown from './AgentMarkdown';
 import { PlanDiffCard, ToolCallCard, TraceTimeline } from './AgentExecutionCards';
 import { formatFileSize } from '../../utils/files';
+
+const agentPlanPrimaryActionClass =
+  'inline-flex items-center gap-2 rounded-2xl border border-emerald-600 bg-emerald-600 px-4 py-2.5 text-sm font-bold text-white shadow-sm transition hover:border-emerald-700 hover:bg-emerald-700 disabled:cursor-not-allowed disabled:border-emerald-200 disabled:bg-emerald-50 disabled:text-emerald-700 disabled:shadow-none dark:border-emerald-400 dark:bg-emerald-400 dark:text-slate-950 dark:hover:border-emerald-300 dark:hover:bg-emerald-300 dark:disabled:border-emerald-400/20 dark:disabled:bg-emerald-400/10 dark:disabled:text-emerald-200/70';
+const agentPlanSecondaryActionClass =
+  'inline-flex items-center gap-2 rounded-2xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-bold text-slate-800 shadow-sm transition hover:border-slate-400 hover:bg-slate-50 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-500 disabled:shadow-none dark:border-white/14 dark:bg-chrome-900 dark:text-chrome-100 dark:hover:border-white/24 dark:hover:bg-chrome-800 dark:disabled:border-white/10 dark:disabled:bg-white/8 dark:disabled:text-chrome-500';
 
 function PaperSelectionRequestCard({
   activeSessionRunning,
@@ -292,7 +296,6 @@ export function AssistantMessageCard({
   formatPaperMeta,
   handleAgentChoice,
   handleModifyPreviousParameters,
-  handlePreviewOnly,
   handleRetryAgent,
   isActivePlan,
   l,
@@ -321,7 +324,6 @@ export function AssistantMessageCard({
   formatPaperMeta: (paper: LiteraturePaper, locale: UiLanguage) => string;
   handleAgentChoice: (instruction: string, paperScopeIds?: string[]) => void;
   handleModifyPreviousParameters: () => void;
-  handlePreviewOnly: () => void;
   handleRetryAgent: (instruction: string) => void;
   isActivePlan: boolean;
   l: (zh: string, en: string) => string;
@@ -491,7 +493,7 @@ export function AssistantMessageCard({
               type="button"
               onClick={onApplyPlan}
               disabled={applyingPlan || activeSessionRunning || !isActivePlan || approvedItemIds.size === 0}
-              className="inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-slate-800 disabled:opacity-50 dark:bg-teal-300 dark:text-slate-950 dark:hover:bg-teal-200"
+              className={agentPlanPrimaryActionClass}
             >
               <PlayCircle className="h-4 w-4" />
               {isActivePlan ? l('确认执行', 'Confirm Execution') : l('历史计划', 'Historical Plan')}
@@ -499,24 +501,16 @@ export function AssistantMessageCard({
             <button
               type="button"
               onClick={handleModifyPreviousParameters}
-              className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 transition hover:bg-slate-50 dark:border-white/10 dark:bg-chrome-900 dark:text-chrome-200"
+              className={agentPlanSecondaryActionClass}
             >
               <Clipboard className="h-4 w-4" />
               {l('修改参数', 'Modify Parameters')}
             </button>
             <button
               type="button"
-              onClick={handlePreviewOnly}
-              className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 transition hover:bg-slate-50 dark:border-white/10 dark:bg-chrome-900 dark:text-chrome-200"
-            >
-              <FileText className="h-4 w-4" />
-              {l('只预览', 'Preview Only')}
-            </button>
-            <button
-              type="button"
               onClick={onCancelPlan}
               disabled={applyingPlan || activeSessionRunning || !isActivePlan}
-              className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50 dark:border-white/10 dark:bg-chrome-900 dark:text-chrome-200"
+              className={agentPlanSecondaryActionClass}
             >
               <X className="h-4 w-4" />
               {l('取消', 'Cancel')}
@@ -525,7 +519,7 @@ export function AssistantMessageCard({
               type="button"
               onClick={() => handleRetryAgent(lastInstruction)}
               disabled={!lastInstruction || applyingPlan || activeSessionRunning}
-              className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50 dark:border-white/10 dark:bg-chrome-900 dark:text-chrome-200"
+              className={agentPlanSecondaryActionClass}
             >
               <RotateCcw className="h-4 w-4" />
               {l('重新生成', 'Regenerate')}

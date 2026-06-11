@@ -228,6 +228,8 @@ export const DEFAULT_SETTINGS: ReaderSettings = {
   libraryBatchConcurrency: 1,
   showLibraryReadingHeatmap: true,
   enablePdfReadingHeatmap: true,
+  enableSelectionTranslation: true,
+  enablePdfParagraphTranslationPopover: true,
   autoTranslateSelection: false,
   smoothScroll: true,
   compactReading: false,
@@ -799,6 +801,8 @@ export function normalizeReaderSettings(value?: Partial<ReaderSettings> | null):
     libraryBatchConcurrency: clampBatchConcurrency(merged.libraryBatchConcurrency),
     showLibraryReadingHeatmap: merged.showLibraryReadingHeatmap !== false,
     enablePdfReadingHeatmap: merged.enablePdfReadingHeatmap !== false,
+    enableSelectionTranslation: merged.enableSelectionTranslation !== false,
+    enablePdfParagraphTranslationPopover: merged.enablePdfParagraphTranslationPopover !== false,
     translationBatchSize: clampTranslationBatchSize(merged.translationBatchSize),
     translationConcurrency: clampTranslationConcurrency(merged.translationConcurrency),
     translationRequestsPerMinute: clampTranslationRequestsPerMinute(

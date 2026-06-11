@@ -209,7 +209,7 @@ function MarkdownPreview({
           className,
         )}
         remarkPlugins={[remarkGfm, remarkMath]}
-        rehypePlugins={[[rehypeKatex, { strict: 'ignore', throwOnError: true }]]}
+        rehypePlugins={[[rehypeKatex, { strict: 'ignore', throwOnError: false }]]}
         components={components}
       >
         {normalized.content}

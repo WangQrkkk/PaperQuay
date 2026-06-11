@@ -16,7 +16,6 @@ export interface BuildReaderAssistantSidebarInput {
   statusMessage: string;
   hasBlocks: boolean;
   aiConfigured: boolean;
-  paperId: AssistantSidebarCoreProps['paperId'];
   notes: AssistantSidebarCoreProps['notes'];
   activeNoteId: AssistantSidebarCoreProps['activeNoteId'];
   notesLoading: AssistantSidebarCoreProps['notesLoading'];
@@ -54,12 +53,10 @@ export interface BuildReaderAssistantSidebarInput {
   onCaptureScreenshot: AssistantSidebarCoreProps['onCaptureScreenshot'];
   onRemoveAttachment: AssistantSidebarCoreProps['onRemoveAttachment'];
   onCitationClick: AssistantSidebarCoreProps['onCitationClick'];
-  onCreateNote: AssistantSidebarCoreProps['onCreateNote'];
   onCreateStandaloneNote: AssistantSidebarCoreProps['onCreateStandaloneNote'];
   onSelectNote: AssistantSidebarCoreProps['onSelectNote'];
   onUpdateNote: AssistantSidebarCoreProps['onUpdateNote'];
   onDeleteNote: AssistantSidebarCoreProps['onDeleteNote'];
-  onJumpToNote: AssistantSidebarCoreProps['onJumpToNote'];
   onJumpToNoteAnchor: AssistantSidebarCoreProps['onJumpToNoteAnchor'];
   onAddSelectionToNote: AssistantSidebarCoreProps['onAddSelectionToNote'];
   onSaveAssistantMessageAsNote: AssistantSidebarCoreProps['onSaveAssistantMessageAsNote'];
@@ -68,17 +65,6 @@ export interface BuildReaderAssistantSidebarInput {
   selectedExcerptTranslating: AssistantSidebarCoreProps['selectedExcerptTranslating'];
   selectedExcerptError: AssistantSidebarCoreProps['selectedExcerptError'];
   onAppendSelectedExcerptToQa: AssistantSidebarCoreProps['onAppendSelectedExcerptToQa'];
-  activeBlockSummary: NonNullable<AssistantSidebarCoreProps['activeBlockSummary']>;
-  workspaceNoteMarkdown: AssistantSidebarCoreProps['workspaceNoteMarkdown'];
-  annotations: AssistantSidebarCoreProps['annotations'];
-  zoteroRelatedNotes: AssistantSidebarCoreProps['zoteroRelatedNotes'];
-  zoteroRelatedNotesLoading: AssistantSidebarCoreProps['zoteroRelatedNotesLoading'];
-  zoteroRelatedNotesError: AssistantSidebarCoreProps['zoteroRelatedNotesError'];
-  onWorkspaceNoteChange: AssistantSidebarCoreProps['onWorkspaceNoteChange'];
-  onAppendSelectedExcerptToNote: AssistantSidebarCoreProps['onAppendSelectedExcerptToNote'];
-  onCreateAnnotation: AssistantSidebarCoreProps['onCreateAnnotation'];
-  onDeleteAnnotation: AssistantSidebarCoreProps['onDeleteAnnotation'];
-  onSelectAnnotation: AssistantSidebarCoreProps['onSelectAnnotation'];
   onTranslateSelectedExcerpt: AssistantSidebarCoreProps['onTranslateSelectedExcerpt'];
   onClearSelectedExcerpt: AssistantSidebarCoreProps['onClearSelectedExcerpt'];
   onOpenPreferences: NonNullable<AssistantSidebarCoreProps['onOpenPreferences']>;
@@ -100,7 +86,6 @@ export function buildReaderAssistantSidebarProps(
     statusMessage: input.statusMessage,
     hasBlocks: input.hasBlocks,
     aiConfigured: input.aiConfigured,
-    paperId: input.paperId,
     notes: input.notes,
     activeNoteId: input.activeNoteId,
     notesLoading: input.notesLoading,
@@ -138,12 +123,10 @@ export function buildReaderAssistantSidebarProps(
     onCaptureScreenshot: input.onCaptureScreenshot,
     onRemoveAttachment: input.onRemoveAttachment,
     onCitationClick: input.onCitationClick,
-    onCreateNote: input.onCreateNote,
     onCreateStandaloneNote: input.onCreateStandaloneNote,
     onSelectNote: input.onSelectNote,
     onUpdateNote: input.onUpdateNote,
     onDeleteNote: input.onDeleteNote,
-    onJumpToNote: input.onJumpToNote,
     onJumpToNoteAnchor: input.onJumpToNoteAnchor,
     onAddSelectionToNote: input.onAddSelectionToNote,
     onSaveAssistantMessageAsNote: input.onSaveAssistantMessageAsNote,
@@ -152,17 +135,6 @@ export function buildReaderAssistantSidebarProps(
     selectedExcerptTranslating: input.selectedExcerptTranslating,
     selectedExcerptError: input.selectedExcerptError,
     onAppendSelectedExcerptToQa: input.onAppendSelectedExcerptToQa,
-    activeBlockSummary: input.activeBlockSummary,
-    workspaceNoteMarkdown: input.workspaceNoteMarkdown,
-    annotations: input.annotations,
-    zoteroRelatedNotes: input.zoteroRelatedNotes,
-    zoteroRelatedNotesLoading: input.zoteroRelatedNotesLoading,
-    zoteroRelatedNotesError: input.zoteroRelatedNotesError,
-    onWorkspaceNoteChange: input.onWorkspaceNoteChange,
-    onAppendSelectedExcerptToNote: input.onAppendSelectedExcerptToNote,
-    onCreateAnnotation: input.onCreateAnnotation,
-    onDeleteAnnotation: input.onDeleteAnnotation,
-    onSelectAnnotation: input.onSelectAnnotation,
     onTranslateSelectedExcerpt: input.onTranslateSelectedExcerpt,
     onClearSelectedExcerpt: input.onClearSelectedExcerpt,
     onOpenPreferences: input.onOpenPreferences,

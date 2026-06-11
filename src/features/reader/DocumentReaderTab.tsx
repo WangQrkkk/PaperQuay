@@ -22,8 +22,10 @@ import {
 import type { LocalDirectoryFileEntry } from '../../services/desktop';
 import {
   extractTextFromMineruBlock,
+  extractTranslatableMarkdownFromMineruBlock,
   flattenMineruPages,
   parseMineruPages,
+  resolveMineruBlockContentSource,
 } from '../../services/mineru';
 import { askDocumentOpenAICompatibleStream } from '../../services/qa';
 import { resolveLocalRag } from '../../services/localRag';
@@ -100,7 +102,6 @@ import {
 import { getFileNameFromPath } from '../../utils/text';
 import { getPdfSourceSignature } from '../pdf/pdfDocumentSource';
 import {
-  appendMarkdownSection,
   buildAttachmentFromPath,
   buildQaSessionTitle,
   buildRemotePdfDownloadPath,
@@ -120,7 +121,6 @@ import {
   ReaderDocumentTranslationSnapshot,
   ReaderTabBridgeState,
   updateQaSession,
-  formatQuoteMarkdown,
 } from './documentReaderShared';
 import { appendUniqueChatAttachments } from './documentReaderAttachments';
 import {
@@ -185,8 +185,27 @@ import {
   buildPaperSummarySourceKey,
   loadMineruMarkdownDocument,
 } from './documentReaderSummarySource';
+import { buildReaderAssistantSidebarProps } from './readerAssistantSidebarProps';
+import { formatReaderDocumentSource } from './readerWorkspaceShared';
 
 type StateSetter<T> = (value: T | ((current: T) => T)) => void;
+
+const GLOBAL_READER_NOTE_EDITOR_SOURCE_ID = buildReaderNotesEditorSourceId('global');
+
+function requestDeferredReaderStartupWork(callback: () => void) {
+  const idleWindow = window as Window & {
+    requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number;
+    cancelIdleCallback?: (handle: number) => void;
+  };
+
+  if (typeof idleWindow.requestIdleCallback === 'function') {
+    const handle = idleWindow.requestIdleCallback(callback, { timeout: 280 });
+    return () => idleWindow.cancelIdleCallback?.(handle);
+  }
+
+  const handle = window.setTimeout(callback, 80);
+  return () => window.clearTimeout(handle);
+}
 
 interface DocumentReaderTabProps {
   tabId: string;
@@ -234,8 +253,6 @@ interface DocumentReaderTabProps {
   setQaLoading: StateSetter<boolean>;
   qaError: string;
   setQaError: StateSetter<string>;
-  workspaceNoteMarkdown: string;
-  setWorkspaceNoteMarkdown: StateSetter<string>;
   notes: Note[];
   setNotes: StateSetter<Note[]>;
   activeNoteId: string | null;
@@ -304,8 +321,6 @@ function DocumentReaderTab({
   setQaLoading,
   qaError,
   setQaError,
-  workspaceNoteMarkdown,
-  setWorkspaceNoteMarkdown,
   notes,
   setNotes,
   activeNoteId,
@@ -324,9 +339,10 @@ function DocumentReaderTab({
 }: DocumentReaderTabProps) {
   const locale = useAppLocale();
   const l = useLocaleText();
-  const readerNoteEditorSourceId = useMemo(() => buildReaderNotesEditorSourceId(tabId), [tabId]);
+  const readerNoteEditorSourceId = GLOBAL_READER_NOTE_EDITOR_SOURCE_ID;
   const layoutRef = useRef<HTMLDivElement>(null);
   const summaryRequestIdRef = useRef(0);
+  const openDocumentRequestIdRef = useRef(0);
   const lastDocumentSignatureRef = useRef('');
   const lastCapturedSelectionRef = useRef<{
     source: TextSelectionSource;
@@ -403,6 +419,21 @@ function DocumentReaderTab({
   const [zoteroRelatedNotesLoading, setZoteroRelatedNotesLoading] = useState(false);
   const [zoteroRelatedNotesError, setZoteroRelatedNotesError] = useState('');
   const [projectPdfFiles, setProjectPdfFiles] = useState<LocalDirectoryFileEntry[]>([]);
+  const readerLocaleText = useCallback(
+    (zh: string, en: string) => pickLocaleText(settings.uiLanguage, zh, en),
+    [settings.uiLanguage],
+  );
+  const selectedSectionTitle = useMemo(
+    () =>
+      currentDocument.source === 'standalone'
+        ? readerLocaleText('独立文献', 'Standalone Document')
+        : readerLocaleText('我的文库', 'My Library'),
+    [currentDocument.source, readerLocaleText],
+  );
+  const documentSource = useMemo(
+    () => formatReaderDocumentSource(readerLocaleText, currentDocument, selectedSectionTitle),
+    [currentDocument, readerLocaleText, selectedSectionTitle],
+  );
 
   useEffect(() => {
     localeRef.current = locale;
@@ -656,9 +687,18 @@ function DocumentReaderTab({
     };
   }, [annotationSaveDirectory, currentLocalPdfPath]);
 
+  const blockById = useMemo(
+    () => new Map(flatBlocks.map((block) => [block.blockId, block])),
+    [flatBlocks],
+  );
   const activeBlock = useMemo(
-    () => flatBlocks.find((block) => block.blockId === activeBlockId) ?? null,
-    [activeBlockId, flatBlocks],
+    () => (activeBlockId ? blockById.get(activeBlockId) ?? null : null),
+    [activeBlockId, blockById],
+  );
+  const resolveBlockContentSource = useCallback(
+    (block: PositionedMineruBlock) =>
+      resolveMineruBlockContentSource(block, blockById),
+    [blockById],
   );
 
   const activeBlockSummary = useMemo(() => {
@@ -1017,6 +1057,8 @@ function DocumentReaderTab({
       openingStatus: string,
       nextStage: WorkspaceStage,
     ): Promise<boolean> => {
+      const requestId = openDocumentRequestIdRef.current + 1;
+      openDocumentRequestIdRef.current = requestId;
       setLoading(true);
       setError('');
 
@@ -1074,39 +1116,69 @@ function DocumentReaderTab({
         setWorkspaceStage(nextStage);
         onDocumentResolved(nextResolvedItem);
 
-        if (isOnboardingWelcomeItem(nextResolvedItem)) {
-          const cachedMineru = await tryLoadSavedMineruPages(nextResolvedItem);
+        requestDeferredReaderStartupWork(() => {
+          void (async () => {
+            const isCurrentOpen = () => openDocumentRequestIdRef.current === requestId;
 
-          if (cachedMineru) {
-            applyMineruPages(cachedMineru.pages, cachedMineru.path, {
-              item: nextResolvedItem,
-              pdfPath: resolvedPdfPath,
-              pdfSource: resolvedSource,
-              statusMessage: cachedMineru.message,
-            });
-            nextStatus = cachedMineru.message;
-          }
-        } else if (resolvedSource.kind === 'local-path') {
-          const cachedMineru = await tryLoadSavedMineruPages(nextResolvedItem);
+            if (!isCurrentOpen()) {
+              return;
+            }
 
-          if (cachedMineru) {
-            applyMineruPages(cachedMineru.pages, cachedMineru.path, {
-              item: nextResolvedItem,
-              pdfPath: resolvedPdfPath,
-              pdfSource: resolvedSource,
-              statusMessage: cachedMineru.message,
-            });
-            nextStatus = cachedMineru.message;
-          } else if (settings.autoLoadSiblingJson) {
+            if (isOnboardingWelcomeItem(nextResolvedItem)) {
+              const cachedMineru = await tryLoadSavedMineruPages(nextResolvedItem);
+
+              if (!isCurrentOpen() || !cachedMineru) {
+                return;
+              }
+
+              applyMineruPages(cachedMineru.pages, cachedMineru.path, {
+                item: nextResolvedItem,
+                pdfPath: resolvedPdfPath,
+                pdfSource: resolvedSource,
+                statusMessage: cachedMineru.message,
+              });
+              setStatusMessage(cachedMineru.message);
+              return;
+            }
+
+            if (resolvedSource.kind !== 'local-path') {
+              return;
+            }
+
+            const cachedMineru = await tryLoadSavedMineruPages(nextResolvedItem);
+
+            if (!isCurrentOpen()) {
+              return;
+            }
+
+            if (cachedMineru) {
+              applyMineruPages(cachedMineru.pages, cachedMineru.path, {
+                item: nextResolvedItem,
+                pdfPath: resolvedPdfPath,
+                pdfSource: resolvedSource,
+                statusMessage: cachedMineru.message,
+              });
+              setStatusMessage(cachedMineru.message);
+              return;
+            }
+
+            if (!settings.autoLoadSiblingJson) {
+              return;
+            }
+
             const siblingJsonPath = guessSiblingJsonPath(resolvedSource.path);
 
             try {
               const jsonText = await readLocalTextFileIfExists(siblingJsonPath);
-              if (!jsonText) {
-                throw new Error('Sibling MinerU JSON not found');
+              if (!jsonText || !isCurrentOpen()) {
+                return;
               }
 
               const pages = parseMineruPages(jsonText);
+
+              if (!isCurrentOpen()) {
+                return;
+              }
 
               const siblingStatusMessage = lRef.current(
                 `已自动加载《${item.title}》同目录的 MinerU JSON`,
@@ -1119,7 +1191,7 @@ function DocumentReaderTab({
                 pdfSource: resolvedSource,
                 statusMessage: siblingStatusMessage,
               });
-              nextStatus = siblingStatusMessage;
+              setStatusMessage(siblingStatusMessage);
 
               await saveMineruParseCache({
                 item: nextResolvedItem,
@@ -1128,10 +1200,10 @@ function DocumentReaderTab({
                 contentJsonText: jsonText,
               }).catch(() => undefined);
             } catch {
-              nextStatus = openingStatus;
+              // Cache restore is opportunistic. Keep the PDF open even if parsing is unavailable.
             }
-          }
-        }
+          })().catch(() => undefined);
+        });
 
         setStatusMessage(nextStatus);
         return true;
@@ -1335,24 +1407,32 @@ function DocumentReaderTab({
 
   const handlePdfBlockSelect = useCallback(
     (block: PositionedMineruBlock, context?: PdfBlockSelectContext) => {
-      activateBlock(block, lRef.current(
-        `已从 PDF 选中结构块 ${block.blockId}`,
-        `Selected block ${block.blockId} from the PDF`,
+      const contentBlock = resolveBlockContentSource(block);
+      const clickedHighlight = createHighlightTarget(block);
+
+      activateBlock(contentBlock, lRef.current(
+        `已从 PDF 选中结构块 ${contentBlock.blockId}`,
+        `Selected block ${contentBlock.blockId} from the PDF`,
       ), {
         syncPdfHighlight: false,
       });
+      setActivePdfHighlight(clickedHighlight);
 
-      if (readingViewMode !== 'pdf-only' || !context) {
+      if (
+        readingViewMode !== 'pdf-only' ||
+        !context ||
+        !settings.enablePdfParagraphTranslationPopover
+      ) {
         return;
       }
 
-      const blockText = normalizeSelectedText(extractTextFromMineruBlock(block));
+      const blockText = extractTranslatableMarkdownFromMineruBlock(contentBlock).trim().slice(0, 4_000);
 
       if (!blockText) {
         return;
       }
 
-      const translatedText = blockTranslations[block.blockId]?.trim() ?? '';
+      const translatedText = blockTranslations[contentBlock.blockId]?.trim() ?? '';
 
       lastCapturedSelectionRef.current = null;
       autoTranslatedSelectionKeyRef.current = '';
@@ -1361,7 +1441,7 @@ function DocumentReaderTab({
         text: blockText,
         source: 'pdf',
         origin: 'pdf-block',
-        blockId: block.blockId,
+        blockId: contentBlock.blockId,
         createdAt: Date.now(),
         anchorClientX: context.anchorClientX,
         anchorClientY: context.anchorClientY,
@@ -1386,7 +1466,15 @@ function DocumentReaderTab({
             ),
       );
     },
-    [activateBlock, applySelectedExcerptTranslation, blockTranslations, readingViewMode],
+    [
+      activateBlock,
+      applySelectedExcerptTranslation,
+      blockTranslations,
+      createHighlightTarget,
+      readingViewMode,
+      resolveBlockContentSource,
+      settings.enablePdfParagraphTranslationPopover,
+    ],
   );
 
   const handlePdfBlockHover = useCallback((block: PositionedMineruBlock | null) => {
@@ -2001,6 +2089,10 @@ function DocumentReaderTab({
   );
 
   const handleTextSelect = useCallback((selection: TextSelectionPayload, source: TextSelectionSource) => {
+    if (!settings.enableSelectionTranslation) {
+      return;
+    }
+
     const normalizedText = normalizeSelectedText(selection.text);
 
     if (!normalizedText) {
@@ -2041,7 +2133,7 @@ function DocumentReaderTab({
         ? lRef.current('已选中 PDF 划词', 'Selected text from the PDF')
         : lRef.current('已选中结构块文本', 'Selected text from the structured block'),
     );
-  }, [resetSelectedExcerptTranslationState]);
+  }, [resetSelectedExcerptTranslationState, settings.enableSelectionTranslation]);
 
   const handleAppendSelectedExcerptToQa = useCallback(() => {
     if (!selectedExcerpt) {
@@ -2064,6 +2156,25 @@ function DocumentReaderTab({
     resetSelectedExcerptTranslationState();
     setStatusMessage(lRef.current('已清除划词内容', 'Cleared the selected excerpt'));
   }, [resetSelectedExcerptTranslationState]);
+
+  useEffect(() => {
+    if (!selectedExcerpt) {
+      return;
+    }
+
+    if (
+      selectedExcerpt.origin === 'pdf-block'
+        ? !settings.enablePdfParagraphTranslationPopover
+        : !settings.enableSelectionTranslation
+    ) {
+      handleClearSelectedExcerpt();
+    }
+  }, [
+    handleClearSelectedExcerpt,
+    selectedExcerpt,
+    settings.enablePdfParagraphTranslationPopover,
+    settings.enableSelectionTranslation,
+  ]);
 
   const legacyHandlePdfAnnotationSaveSuccess = useCallback((path: string) => {
     setStatusMessage(
@@ -2557,17 +2668,6 @@ function DocumentReaderTab({
       selectedQaSessionId,
     ],
   );
-
-  const handleAppendSelectedExcerptToNote = useCallback(() => {
-    if (!selectedExcerpt?.text.trim()) {
-      return;
-    }
-
-    setWorkspaceNoteMarkdown((current) =>
-      appendMarkdownSection(current, formatQuoteMarkdown(selectedExcerpt.text)),
-    );
-    setStatusMessage(lRef.current('已将划词内容追加到笔记', 'Appended the selected excerpt to the note'));
-  }, [selectedExcerpt]);
 
   const handleCreateAnnotation = useCallback(
     (note: string) => {
@@ -3133,6 +3233,151 @@ function DocumentReaderTab({
     localStorage.setItem(PANE_RATIO_STORAGE_KEY, String(leftPaneWidthRatio));
   }, [leftPaneWidthRatio]);
 
+  const assistantSidebarProps = useMemo(
+    () =>
+      buildReaderAssistantSidebarProps({
+        l: readerLocaleText,
+        activePanel: assistantActivePanel,
+        onActivePanelChange: setAssistantActivePanel,
+        currentDocument,
+        documentSource,
+        currentPdfName,
+        currentJsonName,
+        blockCount: flatBlocks.length,
+        translatedCount,
+        statusMessage,
+        hasBlocks: flatBlocks.length > 0,
+        aiConfigured,
+        notes,
+        activeNoteId,
+        notesLoading,
+        notesSaving,
+        notesError,
+        pendingAnchorInsert: pendingNoteAnchorInsert,
+        onPendingAnchorInsertHandled: handlePendingNoteAnchorInsertHandled,
+        noteEditorSourceId: readerNoteEditorSourceId,
+        externalUpdateNote: readerNoteExternalUpdate,
+        onExternalUpdateApply: handleReaderNoteExternalUpdateApply,
+        qaSessions,
+        selectedQaSessionId,
+        qaMessages,
+        qaInput,
+        qaAttachments,
+        qaModelPresets,
+        selectedQaPresetId,
+        qaRagEnabled,
+        qaAnswerRenderMode,
+        qaReasoningEffort,
+        qaLoading,
+        qaError,
+        screenshotLoading: screenshotBusy,
+        onQaInputChange: setQaInput,
+        onQaSubmit: () => {
+          void handleSubmitQa();
+        },
+        onQaPresetChange: handleQaPresetChange,
+        onQaRagEnabledChange: setQaRagEnabled,
+        onQaAnswerRenderModeChange: setQaAnswerRenderMode,
+        onQaReasoningEffortChange: setQaReasoningEffort,
+        onQaSessionCreate: handleCreateQaSession,
+        onQaSessionSelect: handleSelectQaSession,
+        onQaSessionDelete: handleDeleteQaSession,
+        onSelectImageAttachments: () => {
+          void handleSelectQaAttachments('image');
+        },
+        onSelectFileAttachments: () => {
+          void handleSelectQaAttachments('file');
+        },
+        onCaptureScreenshot: () => {
+          void handleCaptureSystemScreenshotNative();
+        },
+        onRemoveAttachment: handleRemoveAttachment,
+        onCitationClick: handleSelectQaCitation,
+        onCreateStandaloneNote: handleCreateStandaloneNote,
+        onSelectNote: handleSelectNote,
+        onUpdateNote: (noteId, patch, options) => {
+          void handleUpdateNote(noteId, patch, options);
+        },
+        onDeleteNote: (noteId) => {
+          void handleDeleteNote(noteId);
+        },
+        onJumpToNoteAnchor: handleJumpToNoteAnchor,
+        onAddSelectionToNote: () => {
+          void handleAddSelectionToNote();
+        },
+        onSaveAssistantMessageAsNote: handleSaveAssistantMessageAsNote,
+        selectedExcerpt,
+        selectedExcerptTranslation,
+        selectedExcerptTranslating,
+        selectedExcerptError,
+        onAppendSelectedExcerptToQa: handleAppendSelectedExcerptToQa,
+        onTranslateSelectedExcerpt: () => {
+          void handleTranslateSelectedExcerpt();
+        },
+        onClearSelectedExcerpt: handleClearSelectedExcerpt,
+        onOpenPreferences,
+      }),
+    [
+      activeNoteId,
+      aiConfigured,
+      assistantActivePanel,
+      currentDocument,
+      currentJsonName,
+      currentPdfName,
+      documentSource,
+      flatBlocks.length,
+      handleAddSelectionToNote,
+      handleAppendSelectedExcerptToQa,
+      handleCaptureSystemScreenshotNative,
+      handleClearSelectedExcerpt,
+      handleCreateQaSession,
+      handleCreateStandaloneNote,
+      handleDeleteNote,
+      handleDeleteQaSession,
+      handleJumpToNoteAnchor,
+      handlePendingNoteAnchorInsertHandled,
+      handleQaPresetChange,
+      handleReaderNoteExternalUpdateApply,
+      handleRemoveAttachment,
+      handleSaveAssistantMessageAsNote,
+      handleSelectNote,
+      handleSelectQaAttachments,
+      handleSelectQaCitation,
+      handleSelectQaSession,
+      handleSubmitQa,
+      handleTranslateSelectedExcerpt,
+      handleUpdateNote,
+      notes,
+      notesError,
+      notesLoading,
+      notesSaving,
+      onOpenPreferences,
+      pendingNoteAnchorInsert,
+      qaAnswerRenderMode,
+      qaAttachments,
+      qaError,
+      qaLoading,
+      qaMessages,
+      qaModelPresets,
+      qaRagEnabled,
+      qaReasoningEffort,
+      qaInput,
+      qaSessions,
+      readerLocaleText,
+      readerNoteExternalUpdate,
+      readerNoteEditorSourceId,
+      screenshotBusy,
+      selectedExcerpt,
+      selectedExcerptError,
+      selectedExcerptTranslating,
+      selectedExcerptTranslation,
+      selectedQaPresetId,
+      selectedQaSessionId,
+      statusMessage,
+      translatedCount,
+    ],
+  );
+
 
   useEffect(() => {
     const signature = `${document.workspaceId}::${document.attachmentKey ?? ''}`;
@@ -3184,6 +3429,7 @@ function DocumentReaderTab({
       !selectedExcerpt ||
       selectedExcerpt.origin === 'pdf-block' ||
       !translationConfigured ||
+      !settings.enableSelectionTranslation ||
       !settings.autoTranslateSelection
     ) {
       return;
@@ -3201,6 +3447,7 @@ function DocumentReaderTab({
     handleTranslateSelectedExcerpt,
     selectedExcerpt,
     settings.autoTranslateSelection,
+    settings.enableSelectionTranslation,
     translationConfigured,
   ]);
 
@@ -3261,43 +3508,55 @@ function DocumentReaderTab({
     };
   }, [isDraggingSplitter]);
 
-  useEffect(() => {
-    onBridgeStateChange(tabId, {
+  const handleBridgeTranslate = useCallback(() => {
+    void handleTranslateDocument();
+  }, [handleTranslateDocument]);
+
+  const handleBridgeCloudParse = useCallback(() => {
+    void handleCloudParse();
+  }, [handleCloudParse]);
+
+  const handleBridgeGenerateSummary = useCallback(() => {
+    void handleGeneratePaperSummary();
+  }, [handleGeneratePaperSummary]);
+
+  const bridgeState = useMemo<ReaderTabBridgeState>(
+    () => ({
       translating,
       translatedCount,
-      onTranslate: () => {
-        void handleTranslateDocument();
-      },
+      assistantSidebarProps,
+      onDetachAssistant: handleOpenFloatingAssistant,
+      onAttachAssistant: handleAttachAssistant,
+      onTranslate: handleBridgeTranslate,
       onClearTranslations: handleClearTranslations,
-      onCloudParse: () => {
-        void handleCloudParse();
-      },
-      onGenerateSummary: () => {
-        void handleGeneratePaperSummary();
-      },
-    });
+      onCloudParse: handleBridgeCloudParse,
+      onGenerateSummary: handleBridgeGenerateSummary,
+    }),
+    [
+      assistantSidebarProps,
+      handleAttachAssistant,
+      handleBridgeCloudParse,
+      handleBridgeGenerateSummary,
+      handleBridgeTranslate,
+      handleClearTranslations,
+      handleOpenFloatingAssistant,
+      translatedCount,
+      translating,
+    ],
+  );
+
+  useEffect(() => {
+    onBridgeStateChange(tabId, bridgeState);
 
     return () => {
       onBridgeStateChange(tabId, null);
     };
-  }, [
-    handleClearTranslations,
-    handleTranslateDocument,
-    onBridgeStateChange,
-    tabId,
-    translatedCount,
-    translating,
-    handleCloudParse,
-    handleGeneratePaperSummary,
-  ]);
-
-  if (!isActive) {
-    return <div className="relative h-full min-h-0" hidden />;
-  }
+  }, [bridgeState, onBridgeStateChange, tabId]);
 
   return (
     <div className="relative h-full min-h-0" hidden={!isActive}>
       <ReaderWorkspace
+        active={isActive}
         currentDocument={currentDocument}
         selectedSectionTitle={
           currentDocument.source === 'standalone'
@@ -3367,33 +3626,9 @@ function DocumentReaderTab({
         onTranslateDocument={() => void handleTranslateDocument()}
         onOpenPreferences={onOpenPreferences}
         notes={notes}
-        activeNoteId={activeNoteId}
-        notesLoading={notesLoading}
-        notesSaving={notesSaving}
-        notesError={notesError}
-        pendingAnchorInsert={pendingNoteAnchorInsert}
-        onPendingAnchorInsertHandled={handlePendingNoteAnchorInsertHandled}
-        noteEditorSourceId={readerNoteEditorSourceId}
-        externalUpdateNote={readerNoteExternalUpdate}
-        onExternalUpdateApply={handleReaderNoteExternalUpdateApply}
-        onCreateNote={(request) => void handleCreateNote(request)}
-        onCreateStandaloneNote={handleCreateStandaloneNote}
-        onSelectNote={handleSelectNote}
-        onUpdateNote={(noteId, patch, options) => void handleUpdateNote(noteId, patch, options)}
-        onDeleteNote={(noteId) => void handleDeleteNote(noteId)}
-        onJumpToNote={handleJumpToNote}
-        onJumpToNoteAnchor={handleJumpToNoteAnchor}
         onAddSelectionToNote={() => void handleAddSelectionToNote()}
-        workspaceNoteMarkdown={workspaceNoteMarkdown}
         annotations={annotations}
         selectedAnnotationId={selectedAnnotationId}
-        zoteroRelatedNotes={zoteroRelatedNotes}
-        zoteroRelatedNotesLoading={zoteroRelatedNotesLoading}
-        zoteroRelatedNotesError={zoteroRelatedNotesError}
-        onWorkspaceNoteChange={setWorkspaceNoteMarkdown}
-        onAppendSelectedExcerptToNote={handleAppendSelectedExcerptToNote}
-        onCreateAnnotation={handleCreateAnnotation}
-        onDeleteAnnotation={handleDeleteAnnotation}
         onSelectAnnotation={handleSelectAnnotation}
         paperSummary={paperSummary}
         paperSummaryLoading={paperSummaryLoading}
@@ -3431,18 +3666,15 @@ function DocumentReaderTab({
         selectedExcerptTranslation={selectedExcerptTranslation}
         selectedExcerptTranslating={selectedExcerptTranslating}
         selectedExcerptError={selectedExcerptError}
-        autoTranslateSelection={settings.autoTranslateSelection}
+        autoTranslateSelection={settings.enableSelectionTranslation && settings.autoTranslateSelection}
         onAppendSelectedExcerptToQa={handleAppendSelectedExcerptToQa}
         onTranslateSelectedExcerpt={() => void handleTranslateSelectedExcerpt()}
         onClearSelectedExcerpt={handleClearSelectedExcerpt}
         onPdfAnnotationSaveSuccess={handlePdfAnnotationSaveSuccess}
         aiConfigured={aiConfigured}
         assistantDetached={assistantDetached}
-        assistantActivePanel={assistantActivePanel}
-        onAssistantActivePanelChange={setAssistantActivePanel}
         leftSidebarCollapsed={false}
         onToggleLeftSidebar={() => undefined}
-        onDetachAssistant={handleOpenFloatingAssistant}
         onAttachAssistant={handleAttachAssistant}
         showLibraryToggle={false}
       />

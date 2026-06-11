@@ -38,9 +38,11 @@ import type {
   DocumentChatRenderMode,
   DocumentChatSession,
   ModelReasoningEffort,
+  TranslationDisplayMode,
   WorkspaceItem,
 } from '../../types/reader';
 import DocumentReaderTab from './DocumentReaderTab';
+import { AssistantSidebar } from './AssistantSidebar';
 import LiteratureLibraryView from '../literature/LiteratureLibraryView';
 import { emitLibraryMetadataEnrichRequest } from '../literature/libraryEvents';
 import OnboardingGuide from './OnboardingGuide';
@@ -52,6 +54,12 @@ import { useReaderZoteroSync } from './useReaderZoteroSync';
 import {
   buildPaperTaskState as buildLocalizedPaperTaskState,
 } from './paperTaskState';
+import {
+  ASSISTANT_PANEL_WIDTH_STORAGE_KEY,
+  MAX_ASSISTANT_PANEL_WIDTH,
+  MIN_ASSISTANT_PANEL_WIDTH,
+  loadStoredNumber,
+} from './readerWorkspaceShared';
 import {
   EMPTY_LIBRARY_PREVIEW_STATE,
   EMPTY_ONBOARDING_DEMO_REVEAL,
@@ -111,6 +119,31 @@ function isNoteAnchorJumpForWorkspace(
   return Boolean(detail && resolveNoteAnchorWorkspaceId(detail) === workspaceId);
 }
 
+function areReaderTabBridgeStatesEqual(
+  left: ReaderTabBridgeState | null | undefined,
+  right: ReaderTabBridgeState | null | undefined,
+) {
+  if (left === right) {
+    return true;
+  }
+
+  if (!left || !right) {
+    return false;
+  }
+
+  return (
+    left.translating === right.translating &&
+    left.translatedCount === right.translatedCount &&
+    left.assistantSidebarProps === right.assistantSidebarProps &&
+    left.onDetachAssistant === right.onDetachAssistant &&
+    left.onAttachAssistant === right.onAttachAssistant &&
+    left.onTranslate === right.onTranslate &&
+    left.onClearTranslations === right.onClearTranslations &&
+    left.onCloudParse === right.onCloudParse &&
+    left.onGenerateSummary === right.onGenerateSummary
+  );
+}
+
 function Reader({ workspaceActive = true }: ReaderProps) {
   const appWindow = getCurrentWindow();
   const tabs = useTabsStore((state) => state.tabs);
@@ -153,6 +186,7 @@ function Reader({ workspaceActive = true }: ReaderProps) {
     EMPTY_ONBOARDING_DEMO_REVEAL,
   );
   const onboardingPreviousThemeModeRef = useRef<'light' | 'dark' | 'system' | null>(null);
+  const readerMainRef = useRef<HTMLDivElement | null>(null);
 
   const [standaloneItems, setStandaloneItems] = useState<WorkspaceItem[]>([]);
   const [nativeLibraryItems, setNativeLibraryItems] = useState<WorkspaceItem[]>([]);
@@ -161,6 +195,10 @@ function Reader({ workspaceActive = true }: ReaderProps) {
   const [readerBridges, setReaderBridges] = useState<Record<string, ReaderTabBridgeState>>({});
   const [readerAssistantActivePanel, setReaderAssistantActivePanel] = useState<AssistantPanelKey>('chat');
   const [readerAssistantDetached, setReaderAssistantDetached] = useState(false);
+  const [readerAssistantPanelWidth, setReaderAssistantPanelWidth] = useState(() =>
+    loadStoredNumber(ASSISTANT_PANEL_WIDTH_STORAGE_KEY, 408),
+  );
+  const [readerAssistantPanelResizing, setReaderAssistantPanelResizing] = useState(false);
   const [readerQaSessions, setReaderQaSessions] = useState<DocumentChatSession[]>(() => [
     createQaSession(settings.uiLanguage),
   ]);
@@ -177,7 +215,6 @@ function Reader({ workspaceActive = true }: ReaderProps) {
   );
   const [readerQaLoading, setReaderQaLoading] = useState(false);
   const [readerQaError, setReaderQaError] = useState('');
-  const [readerWorkspaceNoteMarkdown, setReaderWorkspaceNoteMarkdown] = useState('');
   const [readerNotes, setReaderNotes] = useState<Note[]>([]);
   const [readerActiveNoteId, setReaderActiveNoteId] = useState<string | null>(null);
   const [readerNotesLoading, setReaderNotesLoading] = useState(false);
@@ -341,6 +378,65 @@ function Reader({ workspaceActive = true }: ReaderProps) {
 
   const activeReaderBridge =
     activeTab?.type === 'reader' ? readerBridges[activeTab.id] ?? null : null;
+  const activeAssistantSidebarProps =
+    workspaceActive && activeReaderBridge ? activeReaderBridge.assistantSidebarProps : null;
+  const showReaderAssistantSidebar = Boolean(
+    activeAssistantSidebarProps && !readerAssistantDetached,
+  );
+
+  useEffect(() => {
+    localStorage.setItem(
+      ASSISTANT_PANEL_WIDTH_STORAGE_KEY,
+      String(Math.round(readerAssistantPanelWidth)),
+    );
+  }, [readerAssistantPanelWidth]);
+
+  useEffect(() => {
+    if (!readerAssistantPanelResizing) {
+      return undefined;
+    }
+
+    const handlePointerMove = (event: PointerEvent) => {
+      const mainRect = readerMainRef.current?.getBoundingClientRect();
+
+      if (!mainRect) {
+        return;
+      }
+
+      const boundedMaxWidth = Math.min(
+        MAX_ASSISTANT_PANEL_WIDTH,
+        Math.max(MIN_ASSISTANT_PANEL_WIDTH, mainRect.width - 120),
+      );
+      const nextWidth = Math.round(
+        Math.min(
+          boundedMaxWidth,
+          Math.max(MIN_ASSISTANT_PANEL_WIDTH, mainRect.right - event.clientX),
+        ),
+      );
+
+      setReaderAssistantPanelWidth(nextWidth);
+    };
+
+    const handlePointerUp = () => {
+      setReaderAssistantPanelResizing(false);
+    };
+
+    const previousUserSelect = globalThis.document.body.style.userSelect;
+    const previousCursor = globalThis.document.body.style.cursor;
+
+    globalThis.document.body.style.userSelect = 'none';
+    globalThis.document.body.style.cursor = 'col-resize';
+
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp);
+
+    return () => {
+      globalThis.document.body.style.userSelect = previousUserSelect;
+      globalThis.document.body.style.cursor = previousCursor;
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+    };
+  }, [readerAssistantPanelResizing]);
 
   const {
     findExistingMineruJson,
@@ -430,6 +526,36 @@ function Reader({ workspaceActive = true }: ReaderProps) {
     saveLibraryMineruParseCache,
     openTab,
   });
+
+  const handleReaderZoteroUserIdChange = useCallback(
+    (value: string) => updateReaderSecret('zoteroUserId', value),
+    [updateReaderSecret],
+  );
+
+  const handleReaderQaActivePresetChange = useCallback(
+    (presetId: string) => updateSetting('qaActivePresetId', presetId),
+    [updateSetting],
+  );
+
+  const handleReaderOpenStandalonePdf = useCallback(() => {
+    void handleOpenStandalonePdf();
+  }, [handleOpenStandalonePdf]);
+
+  const handleReaderTranslationDisplayModeChange = useCallback(
+    (mode: TranslationDisplayMode) => updateSetting('translationDisplayMode', mode),
+    [updateSetting],
+  );
+
+  const translationTargetLanguageLabel = useMemo(
+    () => resolveLanguageLabel(settings.uiLanguage, settings.translationTargetLanguage),
+    [settings.translationTargetLanguage, settings.uiLanguage],
+  );
+
+  const handlePendingNoteAnchorJumpHandled = useCallback((requestId?: string) => {
+    setPendingNoteAnchorJump((current) =>
+      !requestId || current?.requestId === requestId ? null : current,
+    );
+  }, []);
 
   const {
     handleDetectLocalZotero,
@@ -790,6 +916,10 @@ function Reader({ workspaceActive = true }: ReaderProps) {
         return next;
       }
 
+      if (areReaderTabBridgeStatesEqual(current[tabId], bridge)) {
+        return current;
+      }
+
       return {
         ...current,
         [tabId]: bridge,
@@ -1032,25 +1162,26 @@ function Reader({ workspaceActive = true }: ReaderProps) {
     <AppLocaleProvider value={settings.uiLanguage}>
       <div className="relative h-full min-h-0 overflow-hidden bg-[#f4f4f4] text-[#202124] dark:bg-[#121212] dark:text-[#e8e8e8]">
         <div className="flex h-full min-h-0 flex-col bg-[#f7f7f7] dark:bg-[#181818]">
-          <main className="relative min-h-0 flex-1 overflow-hidden">
-            <div
-              className="h-full min-h-0 overflow-hidden"
-              hidden={!workspaceActive || activeTabId !== HOME_TAB_ID}
-            >
-              <LiteratureLibraryView
-                onOpenPaper={onboardingOpen ? handleOpenOnboardingDemoPaper : handleOpenNativeLibraryPaper}
-                mineruCacheDir={settings.mineruCacheDir}
-                autoLoadSiblingJson={settings.autoLoadSiblingJson}
-                showReadingHeatmap={settings.showLibraryReadingHeatmap}
-                demoLibrary={onboardingOpen ? onboardingDemoLibrary : null}
-                onRunMineruParse={onboardingOpen ? revealOnboardingWelcomeParse : handleNativeLibraryMineruParse}
-                onTranslatePaper={onboardingOpen ? revealOnboardingWelcomeTranslation : handleNativeLibraryTranslate}
-                onGenerateSummary={onboardingOpen ? handleOnboardingDemoGenerateSummary : handleNativeLibraryGenerateSummary}
-                paperActionStates={onboardingOpen ? onboardingPaperActionStates : nativePaperActionStates}
-              />
-            </div>
+          <main ref={readerMainRef} className="relative flex min-h-0 flex-1 overflow-hidden">
+            <div className="relative h-full min-h-0 min-w-0 flex-1 overflow-hidden">
+              <div
+                className="h-full min-h-0 overflow-hidden"
+                hidden={!workspaceActive || activeTabId !== HOME_TAB_ID}
+              >
+                <LiteratureLibraryView
+                  onOpenPaper={onboardingOpen ? handleOpenOnboardingDemoPaper : handleOpenNativeLibraryPaper}
+                  mineruCacheDir={settings.mineruCacheDir}
+                  autoLoadSiblingJson={settings.autoLoadSiblingJson}
+                  showReadingHeatmap={settings.showLibraryReadingHeatmap}
+                  demoLibrary={onboardingOpen ? onboardingDemoLibrary : null}
+                  onRunMineruParse={onboardingOpen ? revealOnboardingWelcomeParse : handleNativeLibraryMineruParse}
+                  onTranslatePaper={onboardingOpen ? revealOnboardingWelcomeTranslation : handleNativeLibraryTranslate}
+                  onGenerateSummary={onboardingOpen ? handleOnboardingDemoGenerateSummary : handleNativeLibraryGenerateSummary}
+                  paperActionStates={onboardingOpen ? onboardingPaperActionStates : nativePaperActionStates}
+                />
+              </div>
 
-            {readerTabs.map((tab) => {
+              {readerTabs.map((tab) => {
               const item = workspaceItemMap.get(tab.documentId);
 
               if (!item) {
@@ -1072,18 +1203,15 @@ function Reader({ workspaceActive = true }: ReaderProps) {
                     qaModelPresets={qaModelPresets}
                     zoteroApiKey={zoteroApiKey}
                     zoteroUserId={zoteroUserId}
-                    onZoteroUserIdChange={(value) => updateReaderSecret('zoteroUserId', value)}
-                    onQaActivePresetChange={(presetId) => updateSetting('qaActivePresetId', presetId)}
+                    onZoteroUserIdChange={handleReaderZoteroUserIdChange}
+                    onQaActivePresetChange={handleReaderQaActivePresetChange}
                     onDocumentResolved={handleWorkspaceItemResolved}
                     onLibraryPreviewSync={handleLibraryPreviewSync}
                     onOpenPreferences={handleOpenPreferences}
-                    onOpenStandalonePdf={() => void handleOpenStandalonePdf()}
+                    onOpenStandalonePdf={handleReaderOpenStandalonePdf}
                     onBridgeStateChange={handleBridgeStateChange}
-                    onTranslationDisplayModeChange={(mode) => updateSetting('translationDisplayMode', mode)}
-                    translationTargetLanguageLabel={resolveLanguageLabel(
-                      settings.uiLanguage,
-                      settings.translationTargetLanguage,
-                    )}
+                    onTranslationDisplayModeChange={handleReaderTranslationDisplayModeChange}
+                    translationTargetLanguageLabel={translationTargetLanguageLabel}
                     assistantActivePanel={readerAssistantActivePanel}
                     setAssistantActivePanel={setReaderAssistantActivePanel}
                     assistantDetached={readerAssistantDetached}
@@ -1108,8 +1236,6 @@ function Reader({ workspaceActive = true }: ReaderProps) {
                     setQaLoading={setReaderQaLoading}
                     qaError={readerQaError}
                     setQaError={setReaderQaError}
-                    workspaceNoteMarkdown={readerWorkspaceNoteMarkdown}
-                    setWorkspaceNoteMarkdown={setReaderWorkspaceNoteMarkdown}
                     notes={readerNotes}
                     setNotes={setReaderNotes}
                     activeNoteId={readerActiveNoteId}
@@ -1125,11 +1251,7 @@ function Reader({ workspaceActive = true }: ReaderProps) {
                         ? pendingNoteAnchorJump
                         : null
                     }
-                    onPendingNoteAnchorJumpHandled={(requestId) => {
-                      setPendingNoteAnchorJump((current) =>
-                        !requestId || current?.requestId === requestId ? null : current,
-                      );
-                    }}
+                    onPendingNoteAnchorJumpHandled={handlePendingNoteAnchorJumpHandled}
                     translationSnapshot={libraryTranslationSnapshots[item.workspaceId] ?? null}
                     onboardingWorkspaceStage={
                       tab.id === activeTabId && tab.id === onboardingDemoTabId
@@ -1142,7 +1264,37 @@ function Reader({ workspaceActive = true }: ReaderProps) {
                   />
                 </div>
               );
-            })}
+              })}
+            </div>
+
+            {showReaderAssistantSidebar && activeAssistantSidebarProps ? (
+              <>
+                {activeAssistantSidebarProps.activePanel ? (
+                  <div
+                    role="separator"
+                    aria-orientation="vertical"
+                    aria-label={l('调整问答侧栏宽度', 'Resize assistant sidebar')}
+                    onPointerDown={(event) => {
+                      event.preventDefault();
+                      setReaderAssistantPanelResizing(true);
+                    }}
+                    className="group relative z-20 ml-auto w-2 shrink-0 cursor-col-resize bg-transparent transition-all duration-200"
+                  >
+                    <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-slate-300/90 transition-all duration-200 group-hover:w-[3px] group-hover:bg-slate-400" />
+                    <div className="absolute left-1/2 top-1/2 h-14 w-1 -translate-x-1/2 -translate-y-1/2 rounded-full bg-slate-300 transition-all duration-200 group-hover:w-1.5 group-hover:bg-slate-500" />
+                  </div>
+                ) : null}
+
+                <aside className="flex min-h-0 shrink-0 self-stretch transition-all duration-300">
+                  <AssistantSidebar
+                    {...activeAssistantSidebarProps}
+                    panelWidth={readerAssistantPanelWidth}
+                    chatLayoutMode="compact"
+                    onDetach={activeReaderBridge?.onDetachAssistant}
+                  />
+                </aside>
+              </>
+            ) : null}
           </main>
         </div>
 

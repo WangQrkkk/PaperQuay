@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer, webUtils } = require('electron');
+const { clipboard, contextBridge, ipcRenderer, webUtils } = require('electron');
 
 function toFilePath(file) {
   if (webUtils && typeof webUtils.getPathForFile === 'function') {
@@ -109,6 +109,14 @@ contextBridge.exposeInMainWorld('paperquay', {
     },
     close() {
       return ipcRenderer.invoke('paperquay:window-control', 'close');
+    },
+  },
+  clipboard: {
+    readText() {
+      return clipboard.readText();
+    },
+    writeText(value) {
+      clipboard.writeText(String(value ?? ''));
     },
   },
   onFileDrop(callback) {

@@ -57,12 +57,17 @@ import {
 import {
   findMentionedCategoryScope,
   hasExplicitFullLibraryScope,
-  shouldUseFullLibraryCandidateSet,
 } from './agentCategoryScopes';
 
+const AGENT_CHAT_AUTO_SCROLL_BOTTOM_THRESHOLD = 96;
+
+function isNearScrollBottom(element: HTMLElement, threshold = AGENT_CHAT_AUTO_SCROLL_BOTTOM_THRESHOLD) {
+  return element.scrollHeight - element.scrollTop - element.clientHeight <= threshold;
+}
+
 const agentWelcomeText = {
-  zh: '直接输入问题即可。需要文献时，可打开输入区的 Paper Skill，也可以直接说“找文献 / 推荐论文 / 全库 RAG”。',
-  en: 'Type naturally. When papers are needed, open Paper Skill in the composer or ask to find papers, recommend papers, or use full-library RAG.',
+  zh: '直接输入问题即可。如需限定范围，可以选择文献；未选择时 RAG 会自动使用全库。',
+  en: 'Type naturally. Select papers to limit the scope; when none are selected, RAG uses the full library.',
 };
 
 const agentWelcomeMeta = {
@@ -104,8 +109,8 @@ function AgentWorkspace() {
       role: 'assistant',
       content:
         l(
-          '直接输入问题即可。需要文献时，可以打开输入区的 Paper Skill 选择范围，也可以直接说“找文献”“推荐论文”或“用全库 RAG”，Agent 会自动把文库作为候选上下文。',
-          'Type naturally. When papers are needed, open Paper Skill in the composer or ask to find papers, recommend papers, or use full-library RAG; the Agent will use the library as candidate context.',
+          '直接输入问题即可。如需限定范围，可以选择文献；未选择时，RAG 会自动使用全库作为候选上下文。',
+          'Type naturally. Select papers to limit the scope; when none are selected, RAG automatically uses the full library as candidate context.',
         ),
       meta: l(
         '共享文库 RAG · 文献推荐 · 可审批工具计划 · 本地写入前确认',
@@ -117,7 +122,7 @@ function AgentWorkspace() {
           id: 'welcome-intent',
           type: 'intent',
           title: l('等待用户指令', 'Waiting for user instruction'),
-          summary: l('文献范围现在由输入区的 Paper Skill 管理，检索和推荐任务会自动尝试使用全库候选。', 'Paper scope is managed by the Paper Skill in the composer; retrieval and recommendation tasks can automatically use the full library as candidates.'),
+          summary: l('可以在输入区选择文献来限定范围；未选择时，RAG 会自动使用全库候选。', 'Select papers in the composer to limit the scope; when none are selected, RAG automatically uses full-library candidates.'),
           status: 'waiting',
         },
       ],
@@ -133,6 +138,8 @@ function AgentWorkspace() {
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
   const historySidebarRef = useRef<HTMLElement | null>(null);
   const conversationPanelRef = useRef<HTMLElement | null>(null);
+  const shouldStickToBottomRef = useRef(true);
+  const previousLastMessageIdRef = useRef<string | null>(null);
   const handleHistoryWheelCapture = useWheelScrollDelegate({ rootRef: historySidebarRef });
   const handleConversationWheelCapture = useWheelScrollDelegate({ rootRef: conversationPanelRef });
 
@@ -140,8 +147,8 @@ function AgentWorkspace() {
     id: newMessageId(),
     role: 'assistant',
     content: l(
-      '直接输入问题即可。需要文献时，可以打开输入区的 Paper Skill 选择范围，也可以直接说“找文献”“推荐论文”或“用全库 RAG”，Agent 会自动把文库作为候选上下文。',
-      'Type naturally. When papers are needed, open Paper Skill in the composer or ask to find papers, recommend papers, or use full-library RAG; the Agent will use the library as candidate context.',
+      '直接输入问题即可。如需限定范围，可以选择文献；未选择时，RAG 会自动使用全库作为候选上下文。',
+      'Type naturally. Select papers to limit the scope; when none are selected, RAG automatically uses the full library as candidate context.',
     ),
     meta: l(
       '共享文库 RAG · 文献推荐 · 可审批工具计划 · 本地写入前确认',
@@ -153,7 +160,7 @@ function AgentWorkspace() {
         id: 'welcome-intent',
         type: 'intent',
         title: l('等待用户指令', 'Waiting for user instruction'),
-        summary: l('文献范围现在由输入区的 Paper Skill 管理，检索和推荐任务会自动尝试使用全库候选。', 'Paper scope is managed by the Paper Skill in the composer; retrieval and recommendation tasks can automatically use the full library as candidates.'),
+        summary: l('可以在输入区选择文献来限定范围；未选择时，RAG 会自动使用全库候选。', 'Select papers in the composer to limit the scope; when none are selected, RAG automatically uses full-library candidates.'),
         status: 'waiting',
       },
     ],
@@ -282,11 +289,55 @@ function AgentWorkspace() {
   }, [locale]);
 
   useEffect(() => {
-    chatScrollRef.current?.scrollTo({
-      top: chatScrollRef.current.scrollHeight,
-      behavior: 'smooth',
+    const scrollElement = chatScrollRef.current;
+
+    if (!scrollElement) {
+      return undefined;
+    }
+
+    const handleScroll = () => {
+      shouldStickToBottomRef.current = isNearScrollBottom(scrollElement);
+    };
+
+    handleScroll();
+    scrollElement.addEventListener('scroll', handleScroll, { passive: true });
+
+    return () => {
+      scrollElement.removeEventListener('scroll', handleScroll);
+    };
+  }, []);
+
+  useEffect(() => {
+    const scrollElement = chatScrollRef.current;
+
+    if (!scrollElement) {
+      return;
+    }
+
+    const lastMessageId = messages[messages.length - 1]?.id ?? null;
+    const lastMessageChanged = previousLastMessageIdRef.current !== lastMessageId;
+
+    previousLastMessageIdRef.current = lastMessageId;
+
+    if (lastMessageChanged) {
+      shouldStickToBottomRef.current = true;
+    }
+
+    if (!shouldStickToBottomRef.current && !isNearScrollBottom(scrollElement)) {
+      return;
+    }
+
+    shouldStickToBottomRef.current = true;
+    window.requestAnimationFrame(() => {
+      const nextScrollElement = chatScrollRef.current;
+
+      if (!nextScrollElement || (!shouldStickToBottomRef.current && !isNearScrollBottom(nextScrollElement))) {
+        return;
+      }
+
+      nextScrollElement.scrollTop = nextScrollElement.scrollHeight;
     });
-  }, [activeSessionRunning, applyingPlan, messages]);
+  }, [activeSessionId, activeSessionRunning, applyingPlan, messages]);
 
   useEffect(() => {
     const nextSession = buildAgentHistorySession({
@@ -424,7 +475,12 @@ function AgentWorkspace() {
 
   const clearSelection = () => {
     setSelectedPaperIds(new Set());
-    setStatusMessage(l('已清空当前选中的文献。', 'Cleared the current paper selection.'));
+    setStatusMessage(
+      l(
+        '已清空当前选中的文献。开启 RAG 时将自动使用全库候选。',
+        'Cleared the current paper selection. When RAG is enabled, the full library will be used automatically.',
+      ),
+    );
   };
 
   const handleFindPapers = () => {
@@ -439,7 +495,7 @@ function AgentWorkspace() {
 
   const handleRecommendPapers = () => {
     setAgentRagEnabled(true);
-    setSelectedPaperIds(new Set(papers.map((paper) => paper.id)));
+    setSelectedPaperIds(new Set());
     setComposerValue(
       l(
         '基于整个文库，推荐最值得优先阅读的论文。请按主题聚类，说明推荐理由、适合解决的问题，以及下一步阅读顺序。',
@@ -448,15 +504,15 @@ function AgentWorkspace() {
     );
     setStatusMessage(
       l(
-        `已选择全部 ${papers.length} 篇文献并开启 Agent RAG，推荐会复用文库共享向量库。`,
-        `Selected all ${papers.length} papers and enabled Agent RAG. Recommendations will reuse the shared library vector store.`,
+        `已清除手动选择并开启 Agent RAG，将从全库 ${papers.length} 篇文献中推荐。`,
+        `Cleared the manual selection and enabled Agent RAG. Recommendations will use all ${papers.length} library papers.`,
       ),
     );
   };
 
   const handleUseFullLibraryRag = () => {
     setAgentRagEnabled(true);
-    setSelectedPaperIds(new Set(papers.map((paper) => paper.id)));
+    setSelectedPaperIds(new Set());
     setComposerValue((current) =>
       current.trim()
         ? current
@@ -467,8 +523,8 @@ function AgentWorkspace() {
     );
     setStatusMessage(
       l(
-        `已将全部 ${papers.length} 篇文献加入本轮上下文。向量检索继续使用文库共享的 paperquay-rag.sqlite。`,
-        `Added all ${papers.length} papers to this turn. Vector retrieval still uses the shared library paperquay-rag.sqlite store.`,
+        `已清除手动选择并开启 RAG，将自动使用全库 ${papers.length} 篇文献作为候选。`,
+        `Cleared the manual selection and enabled RAG. All ${papers.length} library papers will be used as candidates automatically.`,
       ),
     );
   };
@@ -579,7 +635,7 @@ function AgentWorkspace() {
       !useCategoryScope &&
       papers.length > 0 &&
       (hasExplicitFullLibraryScope(instruction) ||
-        (selectedPapers.length === 0 && shouldUseFullLibraryCandidateSet(instruction)));
+        (agentRagEnabled && selectedPapers.length === 0));
     const selectedPapersSnapshot = useInlinePaperScope
       ? inlinePapers
       : useCategoryScope
@@ -615,13 +671,13 @@ function AgentWorkspace() {
         ? l(`本轮已选择 ${paperCount} 篇论文`, `This turn selected ${paperCount} papers`)
         : useCategoryScope && categoryScope
         ? l(
-          `Paper Skill 自动使用分类「${categoryScope.path}」：${paperCount} 篇`,
-          `Paper Skill auto-scoped to category "${categoryScope.path}": ${paperCount} papers`,
+          `文献范围：分类「${categoryScope.path}」中的 ${paperCount} 篇`,
+          `Paper scope: ${paperCount} papers in category "${categoryScope.path}"`,
         )
         : useFullLibraryCandidates
-          ? l(`Paper Skill 自动使用全库候选：${paperCount} 篇`, `Paper Skill auto-scoped to full library: ${paperCount} papers`)
+          ? l(`未手动选择，RAG 使用全库候选：${paperCount} 篇`, `No manual selection; RAG uses ${paperCount} full-library candidates`)
           : paperCount > 0
-            ? l(`Paper Skill 已选择 ${paperCount} 篇论文`, `Paper Skill selected ${paperCount} papers`)
+            ? l(`已选择 ${paperCount} 篇论文`, `${paperCount} papers selected`)
             : undefined,
       createdAt: Date.now(),
     };
@@ -713,8 +769,8 @@ function AgentWorkspace() {
         setStatusMessage(
           useCategoryScope && categoryScope
             ? l(
-              `正在调用大模型 Agent：${preset.label || preset.model}。Paper Skill 已自动使用分类「${categoryScope.path}」中的 ${paperCount} 篇文献。`,
-              `Calling Agent model: ${preset.label || preset.model}. Paper Skill auto-scoped to ${paperCount} papers in "${categoryScope.path}".`,
+              `正在调用大模型 Agent：${preset.label || preset.model}。本轮使用分类「${categoryScope.path}」中的 ${paperCount} 篇文献。`,
+              `Calling Agent model: ${preset.label || preset.model}. This turn uses ${paperCount} papers in "${categoryScope.path}".`,
             )
             : useInlinePaperScope
               ? l(
@@ -723,8 +779,8 @@ function AgentWorkspace() {
               )
               : useFullLibraryCandidates
               ? l(
-                `正在调用大模型 Agent：${preset.label || preset.model}。Paper Skill 已自动使用全库候选 ${paperCount} 篇。`,
-                `Calling Agent model: ${preset.label || preset.model}. Paper Skill auto-scoped to ${paperCount} full-library candidates.`,
+                `正在调用大模型 Agent：${preset.label || preset.model}。未手动选择文献，RAG 使用全库候选 ${paperCount} 篇。`,
+                `Calling Agent model: ${preset.label || preset.model}. No papers were manually selected, so RAG uses ${paperCount} full-library candidates.`,
               )
               : l(
                 `正在调用大模型 Agent：${preset.label || preset.model}...`,
@@ -1022,10 +1078,6 @@ function AgentWorkspace() {
     setStatusMessage(l('已把修改参数指令放入输入框，请编辑后重新发送。', 'The parameter-edit instruction was placed into the input. Edit it and send again.'));
   };
 
-  const handlePreviewOnly = () => {
-    setStatusMessage(l('当前计划仅预览，未写入文库。你可以继续检查 diff 或取消勾选计划项。', 'This plan is preview-only and has not been written to the library. You can keep checking diffs or uncheck items.'));
-  };
-
   const handleRetryAgent = (instruction: string) => {
     const nextInstruction = instruction.trim();
 
@@ -1277,7 +1329,6 @@ function AgentWorkspace() {
       handleModifyPreviousParameters={handleModifyPreviousParameters}
       handleNewAgentSession={handleNewAgentSession}
       handleOpenHistorySession={handleOpenHistorySession}
-      handlePreviewOnly={handlePreviewOnly}
       handleRetryAgent={handleRetryAgent}
       historySidebarCollapsed={historySidebarCollapsed}
       historySidebarRef={historySidebarRef}

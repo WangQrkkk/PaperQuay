@@ -7,9 +7,17 @@ const {
 } = require('./localPdfProtocol.cjs');
 
 const isDev = Boolean(process.env.VITE_DEV_SERVER_URL);
-const backend = createBackend({ app });
+let backend = null;
 
 registerLocalPdfProtocolScheme();
+
+function getBackend() {
+  if (!backend) {
+    backend = createBackend({ app });
+  }
+
+  return backend;
+}
 
 function getAppIconPath() {
   const iconFileName = process.platform === 'win32' ? 'icon.ico' : 'icon.png';
@@ -102,7 +110,7 @@ function createWindow() {
 }
 
 ipcMain.handle('paperquay:invoke', async (event, command, args) => {
-  return backend.invoke(command, args ?? {}, event);
+  return getBackend().invoke(command, args ?? {}, event);
 });
 
 ipcMain.handle('paperquay:window-control', (event, action) => {
@@ -136,6 +144,7 @@ app.whenReady().then(() => {
     app.setAppUserModelId('dev.paperquay.app');
   }
 
+  getBackend();
   registerLocalPdfProtocol();
   createWindow();
 
@@ -153,5 +162,5 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', () => {
-  backend.close();
+  backend?.close();
 });

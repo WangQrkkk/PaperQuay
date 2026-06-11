@@ -47,9 +47,49 @@ export function isEditableContextTarget(target: EventTarget | null) {
   return Boolean(target.closest('input, textarea, [contenteditable="true"], .ProseMirror'));
 }
 
+export function hasActiveTextSelection(target: EventTarget | null) {
+  if (typeof window === 'undefined' || !(target instanceof Node)) return false;
+
+  const selection = window.getSelection?.();
+  if (!selection || selection.isCollapsed || !selection.toString().trim()) return false;
+
+  const targetElement =
+    target instanceof HTMLElement ? target : target.parentElement;
+
+  if (!targetElement) return true;
+
+  for (let index = 0; index < selection.rangeCount; index += 1) {
+    const range = selection.getRangeAt(index);
+    const commonNode = range.commonAncestorContainer;
+    const commonElement =
+      commonNode instanceof HTMLElement ? commonNode : commonNode.parentElement;
+
+    if (commonElement && (targetElement.contains(commonElement) || commonElement.contains(targetElement))) {
+      return true;
+    }
+
+    try {
+      if (range.intersectsNode(targetElement)) return true;
+    } catch {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+export function shouldUseNativeTextContextMenu(target: EventTarget | null) {
+  return isEditableContextTarget(target) || hasActiveTextSelection(target);
+}
+
 export async function copyTextToClipboard(value: string) {
   const text = value.trim();
   if (!text) return;
+
+  if (window.paperquay?.clipboard?.writeText) {
+    window.paperquay.clipboard.writeText(text);
+    return;
+  }
 
   if (navigator.clipboard?.writeText) {
     await navigator.clipboard.writeText(text);
