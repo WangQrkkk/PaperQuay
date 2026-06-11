@@ -8,29 +8,16 @@ type Localize = (zh: string, en: string) => string;
 
 type ReadLocalTextFileIfExists = (path: string) => Promise<string | null>;
 type LoadPdfBinary = (source: PdfSource) => Promise<Uint8Array | null>;
-type FetchJsonText = (url: string) => Promise<string | null>;
 type ParseMineruPages = (payload: string | unknown) => MineruPage[];
 type SummaryCacheEnvelope = {
   sourceKey: string;
   summary: PaperSummary;
 };
 
-const ONBOARDING_WELCOME_WORKSPACE_ID = 'onboarding:welcome';
-const ONBOARDING_WELCOME_CACHE_DIR = '/onboarding/mineru-cache/welcome-bfc1ec86';
-
 export interface SavedMineruPagesResult {
   pages: MineruPage[];
   path: string;
   message: string;
-}
-
-async function defaultFetchJsonText(url: string) {
-  const response = await fetch(url);
-  return response.ok ? response.text() : null;
-}
-
-function isOnboardingWelcomeItem(item: WorkspaceItem | null | undefined): boolean {
-  return item?.workspaceId === ONBOARDING_WELCOME_WORKSPACE_ID;
 }
 
 export function isMatchingSummaryCacheEnvelope(
@@ -89,42 +76,16 @@ export async function loadSavedSummaryCache({
 export async function loadSavedMineruPages({
   item,
   mineruCacheDir,
-  onboardingDemoReveal,
   l,
   readText,
   parsePages,
-  fetchJsonText = defaultFetchJsonText,
 }: {
   item: WorkspaceItem;
   mineruCacheDir: string;
-  onboardingDemoReveal?: { parsed: boolean } | null;
   l: Localize;
   readText: ReadLocalTextFileIfExists;
   parsePages: ParseMineruPages;
-  fetchJsonText?: FetchJsonText;
 }): Promise<SavedMineruPagesResult | null> {
-  if (isOnboardingWelcomeItem(item)) {
-    if (onboardingDemoReveal && !onboardingDemoReveal.parsed) {
-      return null;
-    }
-
-    const path = `${ONBOARDING_WELCOME_CACHE_DIR}/content_list_v2.json`;
-    const jsonText = await fetchJsonText(path);
-
-    if (!jsonText) {
-      return null;
-    }
-
-    return {
-      pages: parsePages(jsonText),
-      path,
-      message: l(
-        '已加载 Welcome 内置 MinerU 解析结果',
-        'Loaded the built-in Welcome MinerU parse result',
-      ),
-    };
-  }
-
   if (!mineruCacheDir.trim()) {
     return null;
   }

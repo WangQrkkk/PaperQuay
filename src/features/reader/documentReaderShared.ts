@@ -29,7 +29,6 @@ export {
 export const MIN_LEFT_PANE_RATIO = 0.28;
 export const MAX_LEFT_PANE_RATIO = 0.72;
 export const PANE_RATIO_STORAGE_KEY = 'paper-reader-pane-ratio-v2';
-export const ONBOARDING_WELCOME_PDF_URL = '/onboarding/welcome.pdf';
 
 export interface ReaderTabBridgeState {
   translating: boolean;
@@ -38,6 +37,7 @@ export interface ReaderTabBridgeState {
   onDetachAssistant: () => void;
   onAttachAssistant: () => void;
   onTranslate: () => void;
+  onCancelTranslate: () => void;
   onClearTranslations: () => void;
   onCloudParse: () => void;
   onGenerateSummary: () => void;

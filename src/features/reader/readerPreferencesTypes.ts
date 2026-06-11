@@ -63,6 +63,7 @@ export interface ReaderPreferencesWindowProps {
   onQaModelPresetRemove: (presetId: string) => void;
   onQaModelPresetChange: (presetId: string, patch: Partial<QaModelPreset>) => void;
   onTranslate?: (() => void) | null;
+  onCancelTranslate?: (() => void) | null;
   onClearTranslations?: (() => void) | null;
   onBatchMineruParse: () => void;
   onBatchGenerateSummaries: () => void;

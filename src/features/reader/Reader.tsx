@@ -9,7 +9,6 @@ import { getCurrentWindow } from '../../platform/electron/window';
 
 import {
   JUMP_TO_NOTE_ANCHOR_EVENT,
-  OPEN_ONBOARDING_EVENT,
   OPEN_PREFERENCES_EVENT,
   OPEN_STANDALONE_PDF_EVENT,
   type JumpToNoteAnchorEventDetail,
@@ -19,17 +18,13 @@ import { selectDirectory } from '../../services/desktop';
 import { listLibraryPapers } from '../../services/library';
 import { AppLocaleProvider } from '../../i18n/uiLanguage';
 import { getHomeTabTitle, HOME_TAB_ID, type ReaderTab, useTabsStore } from '../../stores/useTabsStore';
-import { useThemeStore } from '../../stores/useThemeStore';
 import {
   createQaSession,
   type ReaderTabBridgeState,
 } from './documentReaderShared';
 import type {
-  LiteratureCategory,
-  LiteraturePaper,
   LiteraturePaperTaskKind,
   LiteraturePaperTaskState,
-  LibrarySettings,
 } from '../../types/library';
 import type { Note } from '../../types/notes';
 import type {
@@ -45,7 +40,6 @@ import DocumentReaderTab from './DocumentReaderTab';
 import { AssistantSidebar } from './AssistantSidebar';
 import LiteratureLibraryView from '../literature/LiteratureLibraryView';
 import { emitLibraryMetadataEnrichRequest } from '../literature/libraryEvents';
-import OnboardingGuide from './OnboardingGuide';
 import ReaderPreferencesWindow from './ReaderPreferencesWindow';
 import { useReaderLibraryActions } from './useReaderLibraryActions';
 import { useReaderLibraryPreview } from './useReaderLibraryPreview';
@@ -61,28 +55,11 @@ import {
   loadStoredNumber,
 } from './readerWorkspaceShared';
 import {
-  EMPTY_LIBRARY_PREVIEW_STATE,
-  EMPTY_ONBOARDING_DEMO_REVEAL,
-  formatPaperSummaryForLibrary,
-  isOnboardingWelcomeItem,
   mergeLocalPdfPath,
-  ONBOARDING_AGENT_STEP,
-  ONBOARDING_LIBRARY_END_STEP,
-  ONBOARDING_LIBRARY_START_STEP,
-  ONBOARDING_READER_OVERVIEW_STEP,
-  ONBOARDING_READER_READING_END_STEP,
-  ONBOARDING_READER_READING_START_STEP,
-  ONBOARDING_SEEN_STORAGE_KEY,
-  ONBOARDING_SETTINGS_STEP,
-  ONBOARDING_WELCOME_CACHE_DIR,
-  ONBOARDING_WELCOME_ITEM,
   createNativeLibraryWorkspaceItem,
   getModelRuntimeConfig,
   resolveLanguageLabel,
-  WELCOME_STANDALONE_ITEM,
-  type OnboardingDemoRevealState,
   type PreferencesSectionKey,
-  type SummaryCacheEnvelope,
 } from './readerShared';
 
 interface ReaderProps {
@@ -138,6 +115,7 @@ function areReaderTabBridgeStatesEqual(
     left.onDetachAssistant === right.onDetachAssistant &&
     left.onAttachAssistant === right.onAttachAssistant &&
     left.onTranslate === right.onTranslate &&
+    left.onCancelTranslate === right.onCancelTranslate &&
     left.onClearTranslations === right.onClearTranslations &&
     left.onCloudParse === right.onCloudParse &&
     left.onGenerateSummary === right.onGenerateSummary
@@ -180,12 +158,6 @@ function Reader({ workspaceActive = true }: ReaderProps) {
 
   const [preferencesOpen, setPreferencesOpen] = useState(false);
   const [preferredPreferencesSection, setPreferredPreferencesSection] = useState<PreferencesSectionKey | undefined>(undefined);
-  const [onboardingOpen, setOnboardingOpen] = useState(false);
-  const [onboardingStepIndex, setOnboardingStepIndex] = useState(0);
-  const [onboardingDemoReveal, setOnboardingDemoReveal] = useState<OnboardingDemoRevealState>(
-    EMPTY_ONBOARDING_DEMO_REVEAL,
-  );
-  const onboardingPreviousThemeModeRef = useRef<'light' | 'dark' | 'system' | null>(null);
   const readerMainRef = useRef<HTMLDivElement | null>(null);
 
   const [standaloneItems, setStandaloneItems] = useState<WorkspaceItem[]>([]);
@@ -222,7 +194,6 @@ function Reader({ workspaceActive = true }: ReaderProps) {
   const [readerNotesError, setReaderNotesError] = useState('');
   const [pendingNoteAnchorJump, setPendingNoteAnchorJump] =
     useState<JumpToNoteAnchorEventDetail | null>(null);
-  const { mode: themeMode, setMode: setThemeMode } = useThemeStore();
 
   const {
     mineruApiToken,
@@ -310,19 +281,6 @@ function Reader({ workspaceActive = true }: ReaderProps) {
     };
   }, []);
 
-  useEffect(() => {
-    try {
-      if (localStorage.getItem(ONBOARDING_SEEN_STORAGE_KEY) === 'true') {
-        return;
-      }
-    } catch {
-    }
-
-    onboardingPreviousThemeModeRef.current = themeMode;
-    setThemeMode('light');
-    setOnboardingOpen(true);
-  }, [setThemeMode, themeMode]);
-
   const activeTab = useMemo(
     () => tabs.find((tab) => tab.id === activeTabId) ?? tabs[0],
     [activeTabId, tabs],
@@ -348,15 +306,11 @@ function Reader({ workspaceActive = true }: ReaderProps) {
       }
     };
 
-    if (onboardingOpen) {
-      applyItems([ONBOARDING_WELCOME_ITEM]);
-    } else {
-      applyItems(standaloneItems);
-      applyItems(nativeLibraryItems);
-    }
+    applyItems(standaloneItems);
+    applyItems(nativeLibraryItems);
 
     return itemMap;
-  }, [nativeLibraryItems, onboardingOpen, standaloneItems]);
+  }, [nativeLibraryItems, standaloneItems]);
 
   const allKnownItems = useMemo(
     () => Array.from(workspaceItemMap.values()),
@@ -447,7 +401,6 @@ function Reader({ workspaceActive = true }: ReaderProps) {
     libraryTranslationSnapshots,
     loadLibraryPreviewBlocks,
     saveLibraryMineruParseCache,
-    setItemParseStatusMap,
     setLibraryPreviewStates,
     setLibraryTranslationSnapshots,
     syncLibraryParsedState,
@@ -457,8 +410,6 @@ function Reader({ workspaceActive = true }: ReaderProps) {
     allKnownItems,
     createPaperTaskState,
     l,
-    onboardingDemoReveal,
-    onboardingOpen,
     selectedLibraryItem,
     setError,
     setPreferencesOpen,
@@ -587,323 +538,6 @@ function Reader({ workspaceActive = true }: ReaderProps) {
     );
   }, [l, updateNativeLibrarySettings]);
 
-  const activeLibraryPreviewState = selectedLibraryItem
-    ? libraryPreviewStates[selectedLibraryItem.workspaceId] ?? EMPTY_LIBRARY_PREVIEW_STATE
-    : EMPTY_LIBRARY_PREVIEW_STATE;
-
-  const onboardingDemoItem = onboardingOpen
-    ? ONBOARDING_WELCOME_ITEM
-    : selectedLibraryItem ?? allKnownItems[0] ?? null;
-  const onboardingDemoTabId = onboardingDemoItem
-    ? readerTabs.find((tab) => tab.documentId === onboardingDemoItem.workspaceId)?.id ?? null
-    : null;
-  const onboardingWorkspaceStage = onboardingOpen
-    ? onboardingStepIndex === ONBOARDING_READER_OVERVIEW_STEP
-      ? 'overview'
-      : onboardingStepIndex >= ONBOARDING_READER_READING_START_STEP &&
-          onboardingStepIndex <= ONBOARDING_READER_READING_END_STEP
-        ? 'reading'
-        : null
-    : null;
-  const onboardingDemoItemId = onboardingDemoItem?.workspaceId ?? null;
-  const onboardingDemoItemTitle = onboardingDemoItem?.title ?? '';
-  const onboardingExistingTabId = onboardingDemoItemId
-    ? readerTabs.find((tab) => tab.documentId === onboardingDemoItemId)?.id ?? null
-    : null;
-  const selectedItemIsOnboardingWelcome = isOnboardingWelcomeItem(selectedLibraryItem);
-  const displayedLibraryPreviewState = selectedItemIsOnboardingWelcome && onboardingOpen
-    ? {
-        ...activeLibraryPreviewState,
-        summary: onboardingDemoReveal.summarized ? activeLibraryPreviewState.summary : null,
-        hasBlocks: onboardingDemoReveal.parsed && activeLibraryPreviewState.hasBlocks,
-        blockCount: onboardingDemoReveal.parsed ? activeLibraryPreviewState.blockCount : 0,
-        currentPdfName: activeLibraryPreviewState.currentPdfName || 'welcome.pdf',
-        currentJsonName: onboardingDemoReveal.parsed
-          ? activeLibraryPreviewState.currentJsonName || 'content_list_v2.json'
-          : l('尚未解析', 'Not parsed yet'),
-        statusMessage: onboardingDemoReveal.parsed
-          ? onboardingDemoReveal.translated
-            ? l(
-                'Welcome 演示文档已显示内置解析和全文翻译结果，可以继续查看概览或进入阅读器。',
-                'The Welcome demo now shows the built-in parse and full-translation results. Continue to the overview or open the reader.',
-              )
-            : activeLibraryPreviewState.statusMessage ||
-              l(
-                '已显示内置 MinerU 解析结果。下一步可以点击全文翻译显示内置译文。',
-                'The built-in MinerU parse result is visible. Next, click Translate Document to reveal the bundled translation.',
-              )
-          : l(
-              '这是新手引导内置的 Welcome 文档。请按引导先点击 MinerU 解析，解析结果会立即显示，不会调用 API。',
-              'This is the built-in Welcome document for onboarding. Follow the guide and click MinerU Parse first; the result appears instantly without calling any API.',
-            ),
-        loading: false,
-        error: '',
-      }
-    : activeLibraryPreviewState;
-
-  const onboardingDemoLibrary = useMemo(() => {
-    const demoCategoryId = 'onboarding-demo-category';
-    const summaryText =
-      onboardingDemoReveal.summarized && displayedLibraryPreviewState.summary
-        ? formatPaperSummaryForLibrary(displayedLibraryPreviewState.summary)
-        : null;
-    const demoSettings: LibrarySettings = {
-      storageDir: '',
-      zoteroLocalDataDir: zoteroLocalDataDir,
-      importMode: 'copy',
-      autoRenameFiles: true,
-      fileNamingRule: '{author}_{year}_{title}',
-      createCategoryFolders: false,
-      folderWatchEnabled: false,
-      backupEnabled: false,
-      preserveOriginalPath: true,
-      openAlexEnabled: true,
-      openAlexApiKey: '',
-      openAlexMailto: '',
-    };
-    const demoCategories: LiteratureCategory[] = [
-      {
-        id: 'onboarding-system-all',
-        name: l('全部文献', 'All Papers'),
-        parentId: null,
-        sortOrder: 0,
-        isSystem: true,
-        systemKey: 'all',
-        createdAt: 0,
-        updatedAt: 0,
-        paperCount: 1,
-      },
-      {
-        id: 'onboarding-system-recent',
-        name: l('最近导入', 'Recently Imported'),
-        parentId: null,
-        sortOrder: 1,
-        isSystem: true,
-        systemKey: 'recent',
-        createdAt: 0,
-        updatedAt: 0,
-        paperCount: 1,
-      },
-      {
-        id: demoCategoryId,
-        name: l('新手引导', 'Onboarding'),
-        parentId: null,
-        sortOrder: 2,
-        isSystem: false,
-        systemKey: null,
-        createdAt: 0,
-        updatedAt: 0,
-        paperCount: 1,
-      },
-    ];
-    const demoPaper: LiteraturePaper = {
-      id: ONBOARDING_WELCOME_ITEM.workspaceId,
-      title: ONBOARDING_WELCOME_ITEM.title,
-      year: '2026',
-      publication: l('PaperQuay 内置文档', 'PaperQuay Built-in Document'),
-      doi: null,
-      url: null,
-      abstractText: l(
-        '这是一篇随软件打包的 Welcome 演示文档，用于展示导入、MinerU 解析、全文翻译、AI 概览和阅读器跳转流程。',
-        'This bundled Welcome document demonstrates import, MinerU parsing, full translation, AI overview, and reader navigation.',
-      ),
-      keywords: ['PaperQuay', 'Onboarding', 'AI Reading'],
-      importedAt: 0,
-      updatedAt: 0,
-      lastReadAt: null,
-      readingProgress: 0,
-      isFavorite: false,
-      userNote: null,
-      aiSummary: summaryText,
-      citation: null,
-      source: 'onboarding',
-      sortOrder: 0,
-      authors: [
-        {
-          id: 'onboarding-author',
-          name: 'PaperQuay',
-          givenName: null,
-          familyName: null,
-          sortOrder: 0,
-        },
-      ],
-      tags: [
-        {
-          id: 'onboarding-tag-demo',
-          name: l('演示', 'Demo'),
-          color: '#2dd4bf',
-        },
-      ],
-      categoryIds: [demoCategoryId],
-      attachments: [
-        {
-          id: 'onboarding-welcome-pdf',
-          paperId: ONBOARDING_WELCOME_ITEM.workspaceId,
-          kind: 'pdf',
-          originalPath: null,
-          storedPath: ONBOARDING_WELCOME_ITEM.localPdfPath ?? '/onboarding/welcome.pdf',
-          relativePath: null,
-          fileName: 'welcome.pdf',
-          mimeType: 'application/pdf',
-          fileSize: 0,
-          contentHash: null,
-          createdAt: 0,
-          missing: false,
-        },
-      ],
-    };
-
-    return {
-      settings: demoSettings,
-      categories: demoCategories,
-      papers: [demoPaper],
-      statusMessage: displayedLibraryPreviewState.statusMessage,
-      paperStatuses: {
-        [demoPaper.id]: {
-          mineruParsed: onboardingDemoReveal.parsed,
-          overviewGenerated: onboardingDemoReveal.summarized,
-          checkingMineru: false,
-        },
-      },
-    };
-  }, [
-    displayedLibraryPreviewState.statusMessage,
-    displayedLibraryPreviewState.summary,
-    l,
-    onboardingDemoReveal.parsed,
-    onboardingDemoReveal.summarized,
-    zoteroLocalDataDir,
-  ]);
-
-  const onboardingPaperActionStates = useMemo(
-    () => ({
-      [ONBOARDING_WELCOME_ITEM.workspaceId]: displayedLibraryPreviewState.operation,
-    }),
-    [displayedLibraryPreviewState.operation],
-  );
-
-  const markOnboardingSeen = useCallback(() => {
-    try {
-      localStorage.setItem(ONBOARDING_SEEN_STORAGE_KEY, 'true');
-    } catch {
-    }
-  }, []);
-
-  const handleOpenOnboarding = useCallback(() => {
-    if (!onboardingOpen) {
-      onboardingPreviousThemeModeRef.current = themeMode;
-    }
-    setThemeMode('light');
-    setPreferencesOpen(false);
-    setActiveTab(HOME_TAB_ID);
-    setOnboardingStepIndex(0);
-    setOnboardingDemoReveal(EMPTY_ONBOARDING_DEMO_REVEAL);
-    setLibraryPreviewStates((current) => {
-      const next = { ...current };
-      delete next[ONBOARDING_WELCOME_ITEM.workspaceId];
-      return next;
-    });
-    setItemParseStatusMap((current) => ({
-      ...current,
-      [ONBOARDING_WELCOME_ITEM.workspaceId]: false,
-    }));
-    setOnboardingOpen(true);
-  }, [onboardingOpen, setActiveTab, setItemParseStatusMap, setLibraryPreviewStates, setThemeMode, themeMode]);
-
-  const handleCloseOnboarding = useCallback(() => {
-    markOnboardingSeen();
-    setOnboardingOpen(false);
-    const previousThemeMode = onboardingPreviousThemeModeRef.current;
-    onboardingPreviousThemeModeRef.current = null;
-    if (previousThemeMode && previousThemeMode !== 'light') {
-      setThemeMode(previousThemeMode);
-    }
-  }, [markOnboardingSeen, setThemeMode]);
-
-  const handleFinishOnboarding = useCallback(() => {
-    setStandaloneItems((current) => {
-      const existingItems = current.filter(
-        (item) => item.workspaceId !== WELCOME_STANDALONE_ITEM.workspaceId,
-      );
-
-      return [WELCOME_STANDALONE_ITEM, ...existingItems];
-    });
-    setSelectedLibraryItemId(WELCOME_STANDALONE_ITEM.workspaceId);
-    handleCloseOnboarding();
-  }, [handleCloseOnboarding]);
-
-  const handleOnboardingStepChange = useCallback((nextStepIndex: number) => {
-    setOnboardingStepIndex(nextStepIndex);
-  }, []);
-
-  useEffect(() => {
-    if (!onboardingOpen) {
-      return;
-    }
-
-    if (selectedLibraryItemId !== ONBOARDING_WELCOME_ITEM.workspaceId) {
-      setSelectedLibraryItemId(ONBOARDING_WELCOME_ITEM.workspaceId);
-    }
-
-    if (onboardingStepIndex < ONBOARDING_SETTINGS_STEP) {
-      setPreferencesOpen(false);
-      setActiveTab(HOME_TAB_ID);
-      return;
-    }
-
-    if (onboardingStepIndex === ONBOARDING_SETTINGS_STEP) {
-      setActiveTab(HOME_TAB_ID);
-      setPreferredPreferencesSection('library');
-      setPreferencesOpen(true);
-      return;
-    }
-
-    if (
-      onboardingStepIndex >= ONBOARDING_LIBRARY_START_STEP &&
-      onboardingStepIndex <= ONBOARDING_LIBRARY_END_STEP
-    ) {
-      setPreferencesOpen(false);
-      setActiveTab(HOME_TAB_ID);
-      if (!selectedLibraryItemId && onboardingDemoItemId) {
-        setSelectedLibraryItemId(onboardingDemoItemId);
-      }
-      return;
-    }
-
-    if (
-      onboardingStepIndex >= ONBOARDING_READER_READING_START_STEP &&
-      onboardingStepIndex <= ONBOARDING_READER_OVERVIEW_STEP
-    ) {
-      setPreferencesOpen(false);
-      if (!onboardingDemoItemId) {
-        setActiveTab(HOME_TAB_ID);
-        return;
-      }
-
-      if (selectedLibraryItemId !== onboardingDemoItemId) {
-        setSelectedLibraryItemId(onboardingDemoItemId);
-      }
-
-      const nextTabId = onboardingExistingTabId ?? openTab(onboardingDemoItemId, onboardingDemoItemTitle);
-      setActiveTab(nextTabId);
-      return;
-    }
-
-    if (onboardingStepIndex >= ONBOARDING_AGENT_STEP) {
-      setPreferencesOpen(false);
-      setActiveTab(HOME_TAB_ID);
-    }
-  }, [
-    onboardingDemoItemId,
-    onboardingDemoItemTitle,
-    onboardingExistingTabId,
-    onboardingOpen,
-    onboardingStepIndex,
-    openTab,
-    selectedLibraryItemId,
-    setActiveTab,
-  ]);
-
   const handleBridgeStateChange = useCallback((tabId: string, bridge: ReaderTabBridgeState | null) => {
     setReaderBridges((current) => {
       if (!bridge) {
@@ -926,116 +560,6 @@ function Reader({ workspaceActive = true }: ReaderProps) {
       };
     });
   }, []);
-
-  const revealOnboardingWelcomeParse = useCallback(() => {
-    setSelectedLibraryItemId(ONBOARDING_WELCOME_ITEM.workspaceId);
-    setOnboardingDemoReveal((current) => ({ ...current, parsed: true }));
-    setLibraryPreviewStates((current) => ({
-      ...current,
-      [ONBOARDING_WELCOME_ITEM.workspaceId]: {
-        ...(current[ONBOARDING_WELCOME_ITEM.workspaceId] ?? EMPTY_LIBRARY_PREVIEW_STATE),
-        loading: false,
-        error: '',
-        operation: createPaperTaskState(
-          'mineru',
-          'success',
-          l('已显示内置 MinerU 解析结果', 'Displayed the built-in MinerU parse result'),
-          100,
-          100,
-        ),
-        currentPdfName: 'welcome.pdf',
-        currentJsonName: 'content_list_v2.json',
-        statusMessage: l(
-          '已显示内置 MinerU 解析结果。这个演示没有调用 API。',
-          'Displayed the built-in MinerU parse result without calling an API.',
-        ),
-      },
-    }));
-    void generateLibraryPreview(ONBOARDING_WELCOME_ITEM, false, { allowGenerate: false });
-  }, [createPaperTaskState, generateLibraryPreview, l, setLibraryPreviewStates]);
-
-  const revealOnboardingWelcomeTranslation = useCallback(() => {
-    setSelectedLibraryItemId(ONBOARDING_WELCOME_ITEM.workspaceId);
-    setOnboardingDemoReveal((current) => ({ ...current, parsed: true, translated: true }));
-    setLibraryPreviewStates((current) => ({
-      ...current,
-      [ONBOARDING_WELCOME_ITEM.workspaceId]: {
-        ...(current[ONBOARDING_WELCOME_ITEM.workspaceId] ?? EMPTY_LIBRARY_PREVIEW_STATE),
-        loading: false,
-        error: '',
-        operation: createPaperTaskState(
-          'translation',
-          'success',
-          l('已显示内置全文翻译', 'Displayed the built-in full translation'),
-          100,
-          100,
-        ),
-        currentPdfName: 'welcome.pdf',
-        currentJsonName: 'content_list_v2.json',
-        statusMessage: l(
-          '已显示 Welcome 内置全文翻译。这个演示没有调用 API。',
-          'Displayed the built-in Welcome full translation without calling an API.',
-        ),
-      },
-    }));
-    void generateLibraryPreview(ONBOARDING_WELCOME_ITEM, false, { allowGenerate: false });
-  }, [createPaperTaskState, generateLibraryPreview, l, setLibraryPreviewStates]);
-
-  const revealOnboardingWelcomeSummary = useCallback(async () => {
-    setOnboardingDemoReveal((current) => ({ ...current, parsed: true, summarized: true }));
-
-    try {
-      const previewContext = await loadLibraryPreviewBlocks(ONBOARDING_WELCOME_ITEM);
-      const response = await fetch(`${ONBOARDING_WELCOME_CACHE_DIR}/summaries/614ada92.json`);
-      const parsed = response.ok ? (await response.json()) as Partial<SummaryCacheEnvelope> : null;
-      const summary = parsed?.summary ?? null;
-
-      setLibraryPreviewStates((current) => ({
-        ...current,
-        [ONBOARDING_WELCOME_ITEM.workspaceId]: {
-          ...(current[ONBOARDING_WELCOME_ITEM.workspaceId] ?? EMPTY_LIBRARY_PREVIEW_STATE),
-          summary,
-          loading: false,
-          error: '',
-          operation: createPaperTaskState(
-            'overview',
-            'success',
-            l('已显示内置 AI 概览', 'Displayed the built-in AI overview'),
-            100,
-            100,
-          ),
-          hasBlocks: true,
-          blockCount: previewContext.blocks.length,
-          currentPdfName: 'welcome.pdf',
-          currentJsonName: 'content_list_v2.json',
-          statusMessage: l(
-            '已显示 Welcome 内置 AI 概览。这个演示结果来自随软件打包的数据，没有调用 API。',
-            'Displayed the built-in Welcome AI overview. This demo result is bundled with the app and did not call any API.',
-          ),
-          sourceKey: parsed?.sourceKey || 'onboarding:welcome::summary',
-        },
-      }));
-    } catch (nextError) {
-      setLibraryPreviewStates((current) => ({
-        ...current,
-        [ONBOARDING_WELCOME_ITEM.workspaceId]: {
-          ...(current[ONBOARDING_WELCOME_ITEM.workspaceId] ?? EMPTY_LIBRARY_PREVIEW_STATE),
-          loading: false,
-          error: nextError instanceof Error ? nextError.message : l('加载内置概览失败', 'Failed to load the built-in overview'),
-          statusMessage: l('加载内置概览失败', 'Failed to load the built-in overview'),
-        },
-      }));
-    }
-  }, [createPaperTaskState, l, loadLibraryPreviewBlocks, setLibraryPreviewStates]);
-
-  const handleOpenOnboardingDemoPaper = useCallback(() => {
-    setSelectedLibraryItemId(ONBOARDING_WELCOME_ITEM.workspaceId);
-    openTab(ONBOARDING_WELCOME_ITEM.workspaceId, ONBOARDING_WELCOME_ITEM.title);
-  }, [openTab]);
-
-  const handleOnboardingDemoGenerateSummary = useCallback(() => {
-    void revealOnboardingWelcomeSummary();
-  }, [revealOnboardingWelcomeSummary]);
 
   const openNoteAnchorJump = useCallback(
     async (detail: JumpToNoteAnchorEventDetail) => {
@@ -1119,9 +643,6 @@ function Reader({ workspaceActive = true }: ReaderProps) {
     const handleOpenStandalonePdfEvent = () => {
       void handleOpenStandalonePdf();
     };
-    const handleOpenOnboardingEvent = () => {
-      handleOpenOnboarding();
-    };
     const handleJumpToNoteAnchorEvent = (event: Event) => {
       const detail = (event as CustomEvent<JumpToNoteAnchorEventDetail>).detail;
       if (!detail?.noteId || !detail.anchorId) {
@@ -1132,15 +653,13 @@ function Reader({ workspaceActive = true }: ReaderProps) {
     };
 
     window.addEventListener(OPEN_STANDALONE_PDF_EVENT, handleOpenStandalonePdfEvent);
-    window.addEventListener(OPEN_ONBOARDING_EVENT, handleOpenOnboardingEvent);
     window.addEventListener(JUMP_TO_NOTE_ANCHOR_EVENT, handleJumpToNoteAnchorEvent);
 
     return () => {
       window.removeEventListener(OPEN_STANDALONE_PDF_EVENT, handleOpenStandalonePdfEvent);
-      window.removeEventListener(OPEN_ONBOARDING_EVENT, handleOpenOnboardingEvent);
       window.removeEventListener(JUMP_TO_NOTE_ANCHOR_EVENT, handleJumpToNoteAnchorEvent);
     };
-  }, [handleOpenOnboarding, handleOpenStandalonePdf, openNoteAnchorJump]);
+  }, [handleOpenStandalonePdf, openNoteAnchorJump]);
 
   useEffect(() => {
     if (!workspaceActive) {
@@ -1169,15 +688,14 @@ function Reader({ workspaceActive = true }: ReaderProps) {
                 hidden={!workspaceActive || activeTabId !== HOME_TAB_ID}
               >
                 <LiteratureLibraryView
-                  onOpenPaper={onboardingOpen ? handleOpenOnboardingDemoPaper : handleOpenNativeLibraryPaper}
+                  onOpenPaper={handleOpenNativeLibraryPaper}
                   mineruCacheDir={settings.mineruCacheDir}
                   autoLoadSiblingJson={settings.autoLoadSiblingJson}
                   showReadingHeatmap={settings.showLibraryReadingHeatmap}
-                  demoLibrary={onboardingOpen ? onboardingDemoLibrary : null}
-                  onRunMineruParse={onboardingOpen ? revealOnboardingWelcomeParse : handleNativeLibraryMineruParse}
-                  onTranslatePaper={onboardingOpen ? revealOnboardingWelcomeTranslation : handleNativeLibraryTranslate}
-                  onGenerateSummary={onboardingOpen ? handleOnboardingDemoGenerateSummary : handleNativeLibraryGenerateSummary}
-                  paperActionStates={onboardingOpen ? onboardingPaperActionStates : nativePaperActionStates}
+                  onRunMineruParse={handleNativeLibraryMineruParse}
+                  onTranslatePaper={handleNativeLibraryTranslate}
+                  onGenerateSummary={handleNativeLibraryGenerateSummary}
+                  paperActionStates={nativePaperActionStates}
                 />
               </div>
 
@@ -1253,14 +771,6 @@ function Reader({ workspaceActive = true }: ReaderProps) {
                     }
                     onPendingNoteAnchorJumpHandled={handlePendingNoteAnchorJumpHandled}
                     translationSnapshot={libraryTranslationSnapshots[item.workspaceId] ?? null}
-                    onboardingWorkspaceStage={
-                      tab.id === activeTabId && tab.id === onboardingDemoTabId
-                        ? onboardingWorkspaceStage
-                        : null
-                    }
-                    onboardingDemoReveal={
-                      tab.id === onboardingDemoTabId ? onboardingDemoReveal : undefined
-                    }
                   />
                 </div>
               );
@@ -1297,15 +807,6 @@ function Reader({ workspaceActive = true }: ReaderProps) {
             ) : null}
           </main>
         </div>
-
-        <OnboardingGuide
-          open={onboardingOpen}
-          language={settings.uiLanguage}
-          stepIndex={onboardingStepIndex}
-          onStepIndexChange={handleOnboardingStepChange}
-          onClose={handleCloseOnboarding}
-          onFinish={handleFinishOnboarding}
-        />
 
         <ReaderPreferencesWindow
           open={preferencesOpen}
@@ -1347,6 +848,7 @@ function Reader({ workspaceActive = true }: ReaderProps) {
           onQaModelPresetRemove={removeQaModelPreset}
           onQaModelPresetChange={updateQaModelPreset}
           onTranslate={activeReaderBridge?.onTranslate}
+          onCancelTranslate={activeReaderBridge?.onCancelTranslate}
           onClearTranslations={activeReaderBridge?.onClearTranslations}
           onBatchMineruParse={() => void handleBatchMineruParse()}
           onBatchGenerateSummaries={() => void handleBatchGenerateSummaries()}

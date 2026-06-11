@@ -52,6 +52,7 @@ interface ReaderWorkspaceProps {
   onReadingViewModeChange: (mode: ReaderViewMode) => void;
   loading: boolean;
   translating: boolean;
+  translationCancelling: boolean;
   error: string;
   statusMessage: string;
   activeBlockSummary: string;
@@ -94,12 +95,14 @@ interface ReaderWorkspaceProps {
   onPdfBlockHover: (block: PositionedMineruBlock | null) => void;
   onPdfBlockSelect: (block: PositionedMineruBlock, context?: PdfBlockSelectContext) => void;
   onBlockClick: (block: PositionedMineruBlock) => void;
+  onRetranslateBlock: (block: PositionedMineruBlock) => void;
   onTranslationDisplayModeChange: (mode: TranslationDisplayMode) => void;
   onTextSelect: (selection: TextSelectionPayload, source: TextSelectionSource) => void;
   onOpenStandalonePdf: () => void;
   onOpenMineruJson: () => void;
   onCloudParse: () => void;
   onTranslateDocument: () => void;
+  onCancelTranslateDocument: () => void;
   onOpenPreferences: () => void;
   notes: Note[];
   onAddSelectionToNote: () => void;
@@ -187,6 +190,7 @@ function ReadingStage(props: ReaderWorkspaceProps & { immersiveReading: boolean 
     translationProgressCompleted,
     translationProgressTotal,
     translating,
+    translationCancelling,
     currentDocument,
     selectedSectionTitle,
     statusMessage,
@@ -199,6 +203,7 @@ function ReadingStage(props: ReaderWorkspaceProps & { immersiveReading: boolean 
     onPdfBlockHover,
     onPdfBlockSelect,
     onBlockClick,
+    onRetranslateBlock,
     onTextSelect,
     qaSessions,
     selectedQaSessionId,
@@ -382,7 +387,9 @@ function ReadingStage(props: ReaderWorkspaceProps & { immersiveReading: boolean 
                   hidePageDecorations={hidePageDecorationsInBlockView}
                   smoothScroll={smoothScroll}
                   active={active}
+                  translationBusy={translating}
                   onBlockClick={onBlockClick}
+                  onRetranslateBlock={onRetranslateBlock}
                   onTranslationDisplayModeChange={props.onTranslationDisplayModeChange}
                   onTextSelect={handleBlockTextSelect}
                 />
@@ -425,12 +432,14 @@ function ReaderWorkspace(props: ReaderWorkspaceProps) {
     onReadingViewModeChange,
     loading,
     translating,
+    translationCancelling,
     error,
     statusMessage,
     activeBlockSummary,
     onOpenMineruJson,
     onCloudParse,
     onTranslateDocument,
+    onCancelTranslateDocument,
     onOpenPreferences,
     onCurrentPdfPathChange,
     assistantDetached,
@@ -510,12 +519,14 @@ function ReaderWorkspace(props: ReaderWorkspaceProps) {
           readingViewMode={readingViewMode}
           loading={loading}
           translating={translating}
+          translationCancelling={translationCancelling}
           onStageChange={onStageChange}
           onReadingViewModeChange={onReadingViewModeChange}
           onCurrentPdfPathChange={onCurrentPdfPathChange}
           onOpenMineruJson={onOpenMineruJson}
           onCloudParse={onCloudParse}
           onTranslateDocument={onTranslateDocument}
+          onCancelTranslateDocument={onCancelTranslateDocument}
           onOpenPreferences={onOpenPreferences}
           onEnterImmersive={() => setImmersiveReading(true)}
         />
@@ -535,6 +546,7 @@ function ReaderWorkspace(props: ReaderWorkspaceProps) {
           currentJsonName={props.currentJsonName}
           loading={props.loading}
           translating={props.translating}
+          translationCancelling={props.translationCancelling}
           blocks={props.blocks}
           translationProgressCompleted={props.translationProgressCompleted}
           translationProgressTotal={props.translationProgressTotal}
@@ -546,6 +558,7 @@ function ReaderWorkspace(props: ReaderWorkspaceProps) {
           onOpenMineruJson={props.onOpenMineruJson}
           onCloudParse={props.onCloudParse}
           onTranslateDocument={props.onTranslateDocument}
+          onCancelTranslateDocument={props.onCancelTranslateDocument}
           aiConfigured={props.aiConfigured}
         />
       ) : (
@@ -575,7 +588,7 @@ function ReaderWorkspace(props: ReaderWorkspaceProps) {
 
       <footer className="flex shrink-0 items-center justify-between gap-3 border-t border-slate-200/80 bg-white/70 px-6 py-2.5 text-xs text-slate-500 backdrop-blur-xl dark:border-white/10 dark:bg-[var(--pq-bg-primary)] dark:text-[var(--pq-text-faint)]">
         <div className="min-w-0 truncate">
-          {loading || translating ? l('正在处理中...', 'Processing...') : statusMessage}
+          {loading || translating ? statusMessage || l('正在处理中...', 'Processing...') : statusMessage}
         </div>
         <div className="hidden items-center gap-4 lg:flex">
           <span>{activeBlockSummary}</span>

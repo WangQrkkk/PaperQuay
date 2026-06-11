@@ -23,51 +23,6 @@ import { getFileNameFromPath } from '../../utils/text';
 export const SETTINGS_STORAGE_KEY = 'paper-reader-settings-v3';
 export const SECRETS_STORAGE_KEY = 'paper-reader-secrets-v1';
 export const CONFIG_WRITE_DEBOUNCE_MS = 350;
-export const ONBOARDING_SEEN_STORAGE_KEY = 'paperquay-onboarding-seen-v1';
-export const ONBOARDING_WELCOME_CACHE_DIR = '/onboarding/mineru-cache/welcome-bfc1ec86';
-export const ONBOARDING_SETTINGS_STEP = 2;
-export const ONBOARDING_LIBRARY_START_STEP = 3;
-export const ONBOARDING_LIBRARY_END_STEP = 7;
-export const ONBOARDING_READER_READING_START_STEP = 8;
-export const ONBOARDING_READER_READING_END_STEP = 9;
-export const ONBOARDING_READER_OVERVIEW_STEP = 10;
-export const ONBOARDING_AGENT_STEP = 11;
-
-export const ONBOARDING_WELCOME_ITEM: WorkspaceItem = {
-  itemKey: 'onboarding:welcome',
-  title: 'Welcome to PaperQuay',
-  creators: 'PaperQuay',
-  year: '2026',
-  itemType: 'pdf',
-  attachmentFilename: 'welcome.pdf',
-  localPdfPath: '/onboarding/welcome.pdf',
-  source: 'onboarding',
-  workspaceId: 'onboarding:welcome',
-  groupKey: 'onboarding:welcome',
-};
-
-export const WELCOME_STANDALONE_ITEM: WorkspaceItem = {
-  ...ONBOARDING_WELCOME_ITEM,
-  itemKey: 'standalone:onboarding:welcome',
-  creators: 'PaperQuay Demo',
-  source: 'standalone',
-};
-
-export function isOnboardingWelcomeItem(item: WorkspaceItem | null | undefined): boolean {
-  return item?.workspaceId === ONBOARDING_WELCOME_ITEM.workspaceId;
-}
-
-export interface OnboardingDemoRevealState {
-  parsed: boolean;
-  translated: boolean;
-  summarized: boolean;
-}
-
-export const EMPTY_ONBOARDING_DEMO_REVEAL: OnboardingDemoRevealState = {
-  parsed: false,
-  translated: false,
-  summarized: false,
-};
 
 export type PreferencesSectionKey =
   | 'general'

@@ -272,8 +272,8 @@ export default function LiteratureLibraryView({
   const showDemoLockedMessage = useCallback(() => {
     setStatusMessage(
       l(
-        '引导模式只展示欢迎示例。完成或退出引导后即可管理真实文库。',
-        'Onboarding mode only shows the Welcome demo. Finish or exit onboarding to manage the real library.',
+        '演示模式不允许修改真实文库。',
+        'Demo mode does not allow changes to the real library.',
       ),
     );
   }, [l]);

@@ -95,21 +95,6 @@ test('loadSavedMineruPages restores the first readable MinerU JSON cache', async
   assert.equal(reads.length, 1);
 });
 
-test('loadSavedMineruPages respects unrevealed onboarding demo content', async () => {
-  const loaded = await loadSavedMineruPages({
-    item: item({ source: 'onboarding', workspaceId: 'onboarding:welcome', itemKey: 'welcome' }),
-    mineruCacheDir: 'D:/cache',
-    onboardingDemoReveal: { parsed: false },
-    l: zh,
-    parsePages,
-    fetchJsonText: async () => {
-      throw new Error('should not fetch hidden onboarding content');
-    },
-  });
-
-  assert.equal(loaded, null);
-});
-
 test('resolveSavedPdfPath returns the first manifest path that still loads as a PDF', async () => {
   const loadAttempts: string[] = [];
   const resolved = await resolveSavedPdfPath({

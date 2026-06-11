@@ -32,8 +32,6 @@ import {
   guessSiblingMarkdownPath,
 } from '../../utils/mineruCache';
 import {
-  isOnboardingWelcomeItem,
-  ONBOARDING_WELCOME_CACHE_DIR,
   type LibraryPreviewLoadResult,
   type MineruCacheManifest,
   type SummaryCacheEnvelope,
@@ -185,23 +183,6 @@ export async function loadReaderLibraryPreviewBlocks({
 }): Promise<LibraryPreviewLoadResult> {
   const pdfName = item.localPdfPath ? getFileNameFromPath(item.localPdfPath) : noPdfLoadedText;
 
-  if (isOnboardingWelcomeItem(item)) {
-    const response = await fetch(`${ONBOARDING_WELCOME_CACHE_DIR}/content_list_v2.json`);
-    const jsonText = await response.text();
-    const pages = parseMineruPages(jsonText);
-    const blocks = flattenMineruPages(pages);
-
-    return {
-      blocks,
-      currentPdfName: 'welcome.pdf',
-      currentJsonName: 'content_list_v2.json',
-      statusMessage: l(
-        `已加载 Welcome 内置解析结果：${blocks.length} 个结构块`,
-        `Loaded built-in Welcome parse result: ${blocks.length} structured blocks`,
-      ),
-    };
-  }
-
   if (settings.mineruCacheDir.trim()) {
     for (const cachePaths of buildMineruCachePathCandidates(settings.mineruCacheDir.trim(), item)) {
       for (const candidatePath of [cachePaths.contentJsonPath, cachePaths.middleJsonPath]) {
@@ -292,27 +273,6 @@ export async function buildLibraryPreviewSummaryRequest({
 }): Promise<PreviewSummaryRequest> {
   const summaryInputs = buildSummaryBlockInputs(blocks);
   const summaryLanguage = resolveSummaryOutputLanguage(settings);
-
-  if (isOnboardingWelcomeItem(item)) {
-    try {
-      const response = await fetch(`${ONBOARDING_WELCOME_CACHE_DIR}/full.md`);
-      const documentText = response.ok ? await response.text() : buildMineruMarkdownDocument(blocks);
-
-      return {
-        summaryInputs,
-        sourceKey: `${item.workspaceId}::${SUMMARY_PROMPT_VERSION}::${summaryLanguage}::mineru-markdown::welcome::${blocks.length}`,
-        documentText,
-        errorMessage: '',
-      };
-    } catch {
-      return {
-        summaryInputs,
-        sourceKey: `${item.workspaceId}::${SUMMARY_PROMPT_VERSION}::${summaryLanguage}::mineru-markdown::welcome::${blocks.length}`,
-        documentText: buildMineruMarkdownDocument(blocks),
-        errorMessage: '',
-      };
-    }
-  }
 
   if (settings.summarySourceMode === 'pdf-text') {
     const pdfPath = item.localPdfPath?.trim() ?? '';
@@ -414,17 +374,6 @@ export async function readSavedPreviewSummary({
   mineruCacheDir: string;
   sourceKey: string;
 }): Promise<PaperSummary | null> {
-  if (isOnboardingWelcomeItem(item)) {
-    try {
-      const response = await fetch(`${ONBOARDING_WELCOME_CACHE_DIR}/summaries/614ada92.json`);
-      const parsed = (await response.json()) as Partial<SummaryCacheEnvelope>;
-
-      return parsed.summary ?? null;
-    } catch {
-      return null;
-    }
-  }
-
   if (!mineruCacheDir.trim() || !sourceKey.trim()) {
     return null;
   }

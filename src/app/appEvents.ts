@@ -3,7 +3,6 @@ import type { NotePdfLocation } from '../types/notes';
 export const OPEN_PREFERENCES_EVENT = 'paperquay:open-preferences';
 export const UI_LANGUAGE_CHANGED_EVENT = 'paperquay:ui-language-changed';
 export const OPEN_STANDALONE_PDF_EVENT = 'paperquay:open-standalone-pdf';
-export const OPEN_ONBOARDING_EVENT = 'paperquay:open-onboarding';
 export const JUMP_TO_NOTE_ANCHOR_EVENT = 'paperquay:jump-to-note-anchor';
 export const NOTE_CHANGED_EVENT = 'paperquay:note-changed';
 
@@ -50,10 +49,6 @@ export interface NoteChangedEventDetail {
 
 export function emitOpenStandalonePdf() {
   window.dispatchEvent(new CustomEvent(OPEN_STANDALONE_PDF_EVENT));
-}
-
-export function emitOpenOnboarding() {
-  window.dispatchEvent(new CustomEvent(OPEN_ONBOARDING_EVENT));
 }
 
 export function emitJumpToNoteAnchor(detail: JumpToNoteAnchorEventDetail) {

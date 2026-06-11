@@ -1,4 +1,4 @@
-import { ArrowRight, FileJson, FileText, Languages, ScanSearch, Sparkles } from 'lucide-react';
+import { ArrowRight, CircleStop, FileJson, FileText, Languages, ScanSearch, Sparkles } from 'lucide-react';
 import { useLocaleText } from '../../i18n/uiLanguage';
 import type { PaperSummary, PositionedMineruBlock } from '../../types/reader';
 import { SectionCard, SummaryPanel } from './AssistantSidebar';
@@ -11,6 +11,7 @@ export interface ReaderWorkspaceOverviewProps {
   currentJsonName: string;
   loading: boolean;
   translating: boolean;
+  translationCancelling: boolean;
   blocks: PositionedMineruBlock[];
   translationProgressCompleted: number;
   translationProgressTotal: number;
@@ -22,6 +23,7 @@ export interface ReaderWorkspaceOverviewProps {
   onOpenMineruJson: () => void;
   onCloudParse: () => void;
   onTranslateDocument: () => void;
+  onCancelTranslateDocument: () => void;
   aiConfigured: boolean;
 }
 
@@ -67,6 +69,7 @@ export function ReaderWorkspaceOverview({
   currentJsonName,
   loading,
   translating,
+  translationCancelling,
   blocks,
   translationProgressCompleted,
   translationProgressTotal,
@@ -78,6 +81,7 @@ export function ReaderWorkspaceOverview({
   onOpenMineruJson,
   onCloudParse,
   onTranslateDocument,
+  onCancelTranslateDocument,
   aiConfigured,
 }: ReaderWorkspaceOverviewProps) {
   const l = useLocaleText();
@@ -131,12 +135,25 @@ export function ReaderWorkspaceOverview({
                 <button
                   type="button"
                   data-tour="overview-translate-document"
-                  onClick={onTranslateDocument}
-                  disabled={loading || translating || blocks.length === 0}
-                  className="inline-flex items-center rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition-all duration-200 hover:border-slate-300 hover:bg-slate-50 disabled:opacity-60"
+                  onClick={translating ? onCancelTranslateDocument : onTranslateDocument}
+                  disabled={translating ? translationCancelling : loading || blocks.length === 0}
+                  className={[
+                    'inline-flex items-center rounded-2xl border px-4 py-2.5 text-sm font-medium transition-all duration-200 disabled:opacity-60',
+                    translating
+                      ? 'border-rose-200 bg-rose-50 text-rose-600 hover:bg-rose-100'
+                      : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50',
+                  ].join(' ')}
                 >
-                  <Languages className="mr-2 h-4 w-4" strokeWidth={1.8} />
-                  {translating ? l('翻译中...', 'Translating...') : l('翻译全文', 'Translate Document')}
+                  {translating ? (
+                    <CircleStop className="mr-2 h-4 w-4" strokeWidth={1.8} />
+                  ) : (
+                    <Languages className="mr-2 h-4 w-4" strokeWidth={1.8} />
+                  )}
+                  {translating
+                    ? translationCancelling
+                      ? l('取消中...', 'Cancelling...')
+                      : l('取消翻译', 'Cancel Translation')
+                    : l('翻译全文', 'Translate Document')}
                 </button>
               </div>
             </div>
@@ -146,7 +163,11 @@ export function ReaderWorkspaceOverview({
             <InlineProgressBar
               completed={translationProgressCompleted}
               total={translationProgressTotal}
-              label={l('MinerU 结构块翻译进度', 'MinerU Block Translation Progress')}
+              label={
+                translationCancelling
+                  ? l('正在取消全文翻译', 'Cancelling Full Translation')
+                  : l('MinerU 结构块翻译进度', 'MinerU Block Translation Progress')
+              }
             />
           ) : null}
 

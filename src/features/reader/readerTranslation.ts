@@ -16,6 +16,7 @@ export interface IncrementalTranslationProgress {
 }
 
 export interface IncrementalTranslationResult {
+  cancelled: boolean;
   failedBlocks: TranslationBlockInput[];
   failureMessages: string[];
   totalBlocks: number;
@@ -35,6 +36,7 @@ export interface TranslateBlocksBestEffortOptions {
   onProgress?: (progress: IncrementalTranslationProgress) => Promise<void> | void;
   reasoningEffort?: OpenAICompatibleTranslateOptions['reasoningEffort'];
   requestsPerMinute?: number;
+  signal?: AbortSignal;
   sourceLanguage: string;
   targetLanguage: string;
   temperature?: number;
@@ -186,6 +188,7 @@ export async function translateBlocksBestEffort({
   onProgress,
   reasoningEffort,
   requestsPerMinute,
+  signal,
   sourceLanguage,
   targetLanguage,
   temperature,
@@ -206,6 +209,7 @@ export async function translateBlocksBestEffort({
 
   if (requestedBlocks.length === 0) {
     return {
+      cancelled: Boolean(signal?.aborted),
       failedBlocks: [],
       failureMessages: [],
       totalBlocks: 0,
@@ -242,6 +246,7 @@ export async function translateBlocksBestEffort({
     const translations = Object.fromEntries(collectedTranslations);
 
     return {
+      cancelled: Boolean(signal?.aborted),
       failedBlocks: [],
       failureMessages: [],
       totalBlocks: requestedBlocks.length,
@@ -253,10 +258,14 @@ export async function translateBlocksBestEffort({
   let cursor = 0;
   const runWorker = async () => {
     while (true) {
+      if (signal?.aborted) {
+        return;
+      }
+
       const currentIndex = cursor;
       cursor += 1;
 
-      if (currentIndex >= batches.length) {
+      if (currentIndex >= batches.length || signal?.aborted) {
         return;
       }
 
@@ -277,6 +286,11 @@ export async function translateBlocksBestEffort({
           targetLanguage,
           temperature,
         });
+
+        if (signal?.aborted) {
+          return;
+        }
+
         const nextTranslations = new Map<string, string>();
 
         for (const output of outputs) {
@@ -314,6 +328,10 @@ export async function translateBlocksBestEffort({
 
         await emitProgress();
       } catch (error) {
+        if (signal?.aborted) {
+          return;
+        }
+
         const message = toErrorMessage(error).trim();
 
         if (message) {
@@ -337,6 +355,7 @@ export async function translateBlocksBestEffort({
   const translations = Object.fromEntries(collectedTranslations);
 
   return {
+    cancelled: Boolean(signal?.aborted),
     failedBlocks: requestedBlocks.filter((block) => !translations[block.blockId]?.trim()),
     failureMessages,
     totalBlocks: requestedBlocks.length,

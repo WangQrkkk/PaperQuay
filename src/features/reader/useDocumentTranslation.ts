@@ -17,14 +17,13 @@ import type {
   QaModelPreset,
   ReaderSettings,
   SelectedExcerpt,
+  TranslationBlockInput,
   TranslationMap,
   WorkspaceItem,
 } from "../../types/reader";
 import { isPaperTaskRunning } from "./paperTaskState";
 import {
-  ONBOARDING_WELCOME_CACHE_DIR,
   getModelRuntimeConfig,
-  isOnboardingWelcomeItem,
 } from "./readerShared";
 import type { ReaderDocumentTranslationSnapshot } from "./documentReaderShared";
 import {
@@ -40,16 +39,27 @@ import {
 
 type LocaleTextFn = (zh: string, en: string) => string;
 
+function buildTranslatableBlockInput(block: PositionedMineruBlock): TranslationBlockInput | null {
+  if (block.contentSourceBlockId) {
+    return null;
+  }
+
+  const text = extractTranslatableMarkdownFromMineruBlock(block).trim();
+
+  return text ? { blockId: block.blockId, text } : null;
+}
+
+function buildTranslatableBlockInputs(blocks: PositionedMineruBlock[]): TranslationBlockInput[] {
+  return blocks
+    .map((block) => buildTranslatableBlockInput(block))
+    .filter((block): block is TranslationBlockInput => Boolean(block));
+}
+
 interface UseDocumentTranslationOptions {
   currentDocument: WorkspaceItem;
   flatBlocks: PositionedMineruBlock[];
   libraryOperationRunning: boolean;
   onOpenPreferences: () => void;
-  onboardingDemoReveal?: {
-    parsed: boolean;
-    translated: boolean;
-    summarized: boolean;
-  };
   selectedExcerpt: SelectedExcerpt | null;
   selectionTranslationModelPreset: QaModelPreset | null;
   settings: ReaderSettings;
@@ -70,7 +80,9 @@ interface UseDocumentTranslationOptions {
 interface UseDocumentTranslationResult {
   applySelectedExcerptTranslation: (translation: string) => void;
   blockTranslations: TranslationMap;
+  handleCancelDocumentTranslation: () => void;
   handleClearTranslations: () => void;
+  handleRetranslateBlock: (block: PositionedMineruBlock) => Promise<void>;
   handleTranslateDocument: () => Promise<void>;
   handleTranslateSelectedExcerpt: (
     openPreferencesOnMissingKey?: boolean,
@@ -82,6 +94,7 @@ interface UseDocumentTranslationResult {
   selectedExcerptTranslating: boolean;
   translatedCount: number;
   translating: boolean;
+  translationCancelling: boolean;
   translationProgressCompleted: number;
   translationProgressTotal: number;
 }
@@ -91,7 +104,6 @@ export function useDocumentTranslation({
   flatBlocks,
   libraryOperationRunning,
   onOpenPreferences,
-  onboardingDemoReveal,
   selectedExcerpt,
   selectionTranslationModelPreset,
   settings,
@@ -102,8 +114,12 @@ export function useDocumentTranslation({
   updateLibraryOperation,
   lRef,
 }: UseDocumentTranslationOptions): UseDocumentTranslationResult {
+  const documentTranslationAbortControllerRef = useRef<AbortController | null>(null);
+  const documentTranslationRequestIdRef = useRef(0);
   const selectedExcerptRequestIdRef = useRef(0);
   const selectionRequestKeyRef = useRef("");
+  const blockTranslationsRef = useRef<TranslationMap>({});
+  const translationProgressTotalRef = useRef(0);
 
   const [blockTranslations, setBlockTranslations] = useState<TranslationMap>(
     {},
@@ -111,6 +127,7 @@ export function useDocumentTranslation({
   const [blockTranslationTargetLanguage, setBlockTranslationTargetLanguage] =
     useState("");
   const [translating, setTranslating] = useState(false);
+  const [translationCancelling, setTranslationCancelling] = useState(false);
   const [translationProgressCompleted, setTranslationProgressCompleted] =
     useState(0);
   const [translationProgressTotal, setTranslationProgressTotal] = useState(0);
@@ -124,6 +141,14 @@ export function useDocumentTranslation({
     () => countTranslatedBlocks(blockTranslations),
     [blockTranslations],
   );
+
+  useEffect(() => {
+    blockTranslationsRef.current = blockTranslations;
+  }, [blockTranslations]);
+
+  useEffect(() => {
+    translationProgressTotalRef.current = translationProgressTotal;
+  }, [translationProgressTotal]);
 
   const tryLoadSavedTranslations = useCallback(
     async (item: WorkspaceItem) =>
@@ -249,68 +274,12 @@ export function useDocumentTranslation({
     lRef,
   ]);
 
-  useEffect(() => {
-    if (
-      !isOnboardingWelcomeItem(currentDocument) ||
-      flatBlocks.length === 0 ||
-      !onboardingDemoReveal?.translated
-    ) {
-      return;
-    }
-
-    if (
-      blockTranslationTargetLanguage === settings.translationTargetLanguage &&
-      translatedCount > 0
-    ) {
-      return;
-    }
-
-    let cancelled = false;
-
-    void fetch(`${ONBOARDING_WELCOME_CACHE_DIR}/translations/chinese.json`)
-      .then((response) => (response.ok ? response.json() : null))
-      .then((parsed: { translations?: TranslationMap } | null) => {
-        if (cancelled || !parsed?.translations) {
-          return;
-        }
-
-        setBlockTranslations(parsed.translations);
-        setBlockTranslationTargetLanguage(settings.translationTargetLanguage);
-        setStatusMessage(
-          lRef.current(
-            "已加载 Welcome 内置全文翻译",
-            "Loaded the built-in Welcome translation",
-          ),
-        );
-      })
-      .catch(() => undefined);
-
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    blockTranslationTargetLanguage,
-    currentDocument,
-    flatBlocks.length,
-    onboardingDemoReveal?.translated,
-    settings.translationTargetLanguage,
-    setStatusMessage,
-    translatedCount,
-    lRef,
-  ]);
-
   const handleTranslateDocument = useCallback(async () => {
     if (translating || libraryOperationRunning) {
       return;
     }
 
-    const blocksToTranslate = flatBlocks
-      .filter((block) => !block.contentSourceBlockId)
-      .map((block) => ({
-        blockId: block.blockId,
-        text: extractTranslatableMarkdownFromMineruBlock(block),
-      }))
-      .filter((block) => block.text.trim().length > 0);
+    const blocksToTranslate = buildTranslatableBlockInputs(flatBlocks);
 
     if (blocksToTranslate.length === 0) {
       const message = lRef.current(
@@ -319,79 +288,6 @@ export function useDocumentTranslation({
       );
       setStatusMessage(message);
       updateLibraryOperation("translation", "error", message, 100, 100);
-      return;
-    }
-
-    if (isOnboardingWelcomeItem(currentDocument)) {
-      try {
-        setTranslating(true);
-        setError("");
-        updateLibraryOperation(
-          "translation",
-          "running",
-          lRef.current(
-            "正在加载 Welcome 内置全文翻译...",
-            "Loading the built-in Welcome translation...",
-          ),
-          0,
-          blocksToTranslate.length,
-        );
-        const response = await fetch(
-          `${ONBOARDING_WELCOME_CACHE_DIR}/translations/chinese.json`,
-        );
-        const parsed = response.ok
-          ? ((await response.json()) as {
-              translations?: TranslationMap;
-            } | null)
-          : null;
-
-        if (!parsed?.translations) {
-          throw new Error(
-            lRef.current(
-              "未找到 Welcome 内置译文",
-              "The built-in Welcome translation was not found",
-            ),
-          );
-        }
-
-        setBlockTranslations(parsed.translations);
-        setBlockTranslationTargetLanguage(settings.translationTargetLanguage);
-        setTranslationProgressCompleted(
-          countTranslatedBlocks(parsed.translations),
-        );
-        const successMessage = lRef.current(
-          "已显示 Welcome 内置全文翻译，没有调用 API。",
-          "Displayed the built-in Welcome full translation without calling any API.",
-        );
-        setStatusMessage(successMessage);
-        updateLibraryOperation(
-          "translation",
-          "success",
-          successMessage,
-          countTranslatedBlocks(parsed.translations),
-          blocksToTranslate.length,
-        );
-      } catch (error) {
-        const message =
-          error instanceof Error
-            ? error.message
-            : lRef.current(
-                "加载内置译文失败",
-                "Failed to load the built-in translation",
-              );
-        setError(message);
-        setStatusMessage(
-          lRef.current(
-            "加载内置译文失败",
-            "Failed to load the built-in translation",
-          ),
-        );
-        updateLibraryOperation("translation", "error", message, 100, 100);
-      } finally {
-        setTranslating(false);
-        setTranslationProgressTotal(0);
-      }
-
       return;
     }
 
@@ -406,7 +302,14 @@ export function useDocumentTranslation({
       return;
     }
 
+    const requestId = documentTranslationRequestIdRef.current + 1;
+    const abortController = new AbortController();
+
+    documentTranslationRequestIdRef.current = requestId;
+    documentTranslationAbortControllerRef.current = abortController;
+
     setTranslating(true);
+    setTranslationCancelling(false);
     setTranslationProgressTotal(blocksToTranslate.length);
     setError("");
     const translationStartMessage = lRef.current(
@@ -453,6 +356,13 @@ export function useDocumentTranslation({
         existingTranslations: resumedTranslations,
         model: translationModelPreset.model,
         onProgress: async (progress) => {
+          if (
+            documentTranslationRequestIdRef.current !== requestId ||
+            abortController.signal.aborted
+          ) {
+            return;
+          }
+
           setBlockTranslations(progress.translations);
           setBlockTranslationTargetLanguage(settings.translationTargetLanguage);
           setTranslationProgressCompleted(progress.translatedCount);
@@ -480,11 +390,17 @@ export function useDocumentTranslation({
         reasoningEffort: getModelRuntimeConfig(settings, "translation")
           .reasoningEffort,
         requestsPerMinute: settings.translationRequestsPerMinute,
+        signal: abortController.signal,
         sourceLanguage: settings.translationSourceLanguage,
         targetLanguage: settings.translationTargetLanguage,
         temperature: getModelRuntimeConfig(settings, "translation").temperature,
         translateBatch: translateBlocksOpenAICompatible,
       });
+
+      if (documentTranslationRequestIdRef.current !== requestId) {
+        return;
+      }
+
       const nextTranslations = result.translations;
       const nextTranslatedCount = countTranslatedBlocks(nextTranslations);
 
@@ -495,12 +411,31 @@ export function useDocumentTranslation({
       await saveTranslationCache(currentDocument, nextTranslations).catch(
         () => undefined,
       );
+
+      if (result.cancelled) {
+        const remainingCount = Math.max(0, blocksToTranslate.length - nextTranslatedCount);
+        const cancelledMessage = lRef.current(
+          `已取消全文翻译，已保留 ${nextTranslatedCount} 段译文，剩余 ${remainingCount} 段可再次点击翻译全文继续`,
+          `Full-document translation cancelled. Kept ${nextTranslatedCount} translated blocks; click Translate Document again to continue the remaining ${remainingCount}`,
+        );
+
+        setStatusMessage(cancelledMessage);
+        updateLibraryOperation(
+          "translation",
+          "success",
+          cancelledMessage,
+          nextTranslatedCount,
+          blocksToTranslate.length,
+        );
+        return;
+      }
+
       const failedCount = result.failedBlocks.length;
       const finishedMessage =
         failedCount > 0
           ? lRef.current(
-              `翻译已部分完成，已保存 ${nextTranslatedCount} 段译文，剩余 ${failedCount} 段可稍后重试`,
-              `Translation partially completed. Saved ${nextTranslatedCount} translated blocks, with ${failedCount} remaining for retry`,
+              `翻译已部分完成，已保存 ${nextTranslatedCount} 段译文，剩余 ${failedCount} 段可再次点击翻译全文继续`,
+              `Translation partially completed. Saved ${nextTranslatedCount} translated blocks; click Translate Document again to continue the remaining ${failedCount}`,
             )
           : lRef.current(
               `翻译完成，已生成 ${nextTranslatedCount} 段译文`,
@@ -525,6 +460,10 @@ export function useDocumentTranslation({
         );
       }
     } catch (error) {
+      if (documentTranslationRequestIdRef.current !== requestId) {
+        return;
+      }
+
       const message = sanitizeTranslationErrorMessage(
         error,
         lRef.current,
@@ -534,8 +473,14 @@ export function useDocumentTranslation({
       setStatusMessage(message);
       updateLibraryOperation("translation", "error", message, 100, 100);
     } finally {
-      setTranslating(false);
-      setTranslationProgressTotal(0);
+      if (documentTranslationRequestIdRef.current === requestId) {
+        setTranslating(false);
+        setTranslationCancelling(false);
+        setTranslationProgressTotal(0);
+        if (documentTranslationAbortControllerRef.current === abortController) {
+          documentTranslationAbortControllerRef.current = null;
+        }
+      }
     }
   }, [
     blockTranslations,
@@ -558,6 +503,213 @@ export function useDocumentTranslation({
     updateLibraryOperation,
     lRef,
   ]);
+
+  const handleCancelDocumentTranslation = useCallback(() => {
+    const abortController = documentTranslationAbortControllerRef.current;
+
+    if (!abortController || abortController.signal.aborted) {
+      return;
+    }
+
+    abortController.abort();
+    setTranslationCancelling(true);
+
+    const translatedBlockCount = countTranslatedBlocks(blockTranslationsRef.current);
+    const totalBlockCount = translationProgressTotalRef.current || null;
+    const message = lRef.current(
+      "正在取消全文翻译，当前批次结束后会停止，并保留已完成译文。",
+      "Cancelling full-document translation. It will stop after the current batch and keep completed translations.",
+    );
+
+    setStatusMessage(message);
+    updateLibraryOperation(
+      "translation",
+      "running",
+      message,
+      translatedBlockCount,
+      totalBlockCount,
+    );
+  }, [setStatusMessage, updateLibraryOperation, lRef]);
+
+  const handleRetranslateBlock = useCallback(
+    async (block: PositionedMineruBlock) => {
+      if (translating || libraryOperationRunning) {
+        return;
+      }
+
+      const blockToTranslate = buildTranslatableBlockInput(block);
+
+      if (!blockToTranslate) {
+        const message = lRef.current(
+          "这个结构块没有可翻译文本",
+          "This structured block has no translatable text",
+        );
+        setStatusMessage(message);
+        return;
+      }
+
+      if (!translationModelPreset || !translationModelPreset.apiKey.trim()) {
+        onOpenPreferences();
+        const message = lRef.current(
+          "请先在设置中填写 AI 接口 API Key",
+          "Configure the AI API key in Settings first",
+        );
+        setError(message);
+        updateLibraryOperation("translation", "error", message, 100, 100);
+        return;
+      }
+
+      const requestId = documentTranslationRequestIdRef.current + 1;
+      const abortController = new AbortController();
+
+      documentTranslationRequestIdRef.current = requestId;
+      documentTranslationAbortControllerRef.current = abortController;
+
+      setTranslating(true);
+      setTranslationCancelling(false);
+      setTranslationProgressCompleted(0);
+      setTranslationProgressTotal(1);
+      setError("");
+
+      const startMessage = lRef.current(
+        `正在重新翻译第 ${block.pageIndex + 1} 页的结构块`,
+        `Retranslating the structured block on page ${block.pageIndex + 1}`,
+      );
+      setStatusMessage(startMessage);
+      updateLibraryOperation("translation", "running", startMessage, 0, 1);
+
+      try {
+        const result = await translateBlocksBestEffort({
+          apiKey: translationModelPreset.apiKey.trim(),
+          apiMode: translationModelPreset.apiMode,
+          baseUrl: translationModelPreset.baseUrl,
+          batchSize: 1,
+          blocks: [blockToTranslate],
+          concurrency: 1,
+          existingTranslations: {},
+          model: translationModelPreset.model,
+          onProgress: async (progress) => {
+            if (
+              documentTranslationRequestIdRef.current !== requestId ||
+              abortController.signal.aborted
+            ) {
+              return;
+            }
+
+            const mergedTranslations = mergeReaderTranslations(
+              blockTranslationsRef.current,
+              progress.translations,
+            );
+
+            setBlockTranslations(mergedTranslations);
+            setBlockTranslationTargetLanguage(settings.translationTargetLanguage);
+            setTranslationProgressCompleted(progress.translatedCount);
+
+            if (progress.translatedCount > 0) {
+              await saveTranslationCache(currentDocument, mergedTranslations).catch(
+                () => undefined,
+              );
+            }
+          },
+          reasoningEffort: getModelRuntimeConfig(settings, "translation").reasoningEffort,
+          requestsPerMinute: settings.translationRequestsPerMinute,
+          signal: abortController.signal,
+          sourceLanguage: settings.translationSourceLanguage,
+          targetLanguage: settings.translationTargetLanguage,
+          temperature: getModelRuntimeConfig(settings, "translation").temperature,
+          translateBatch: translateBlocksOpenAICompatible,
+        });
+
+        if (documentTranslationRequestIdRef.current !== requestId) {
+          return;
+        }
+
+        const nextTranslations = mergeReaderTranslations(
+          blockTranslationsRef.current,
+          result.translations,
+        );
+        const translatedText = result.translations[block.blockId]?.trim() ?? "";
+
+        setBlockTranslations(nextTranslations);
+        setBlockTranslationTargetLanguage(settings.translationTargetLanguage);
+        setTranslationProgressCompleted(translatedText ? 1 : 0);
+        await saveTranslationCache(currentDocument, nextTranslations).catch(
+          () => undefined,
+        );
+
+        if (result.cancelled) {
+          const message = lRef.current(
+            "已取消单块重译，原有译文已保留。",
+            "Block retranslation cancelled. Existing translation was kept.",
+          );
+          setStatusMessage(message);
+          updateLibraryOperation("translation", "success", message, translatedText ? 1 : 0, 1);
+          return;
+        }
+
+        if (!translatedText) {
+          const message = lRef.current(
+            "这个结构块重译失败，已保留原有译文。",
+            "Failed to retranslate this block. Existing translation was kept.",
+          );
+          setStatusMessage(message);
+          updateLibraryOperation("translation", "error", message, 1, 1);
+          setError(
+            sanitizeTranslationErrorMessage(
+              result.failureMessages[0],
+              lRef.current,
+              "document",
+            ),
+          );
+          return;
+        }
+
+        const message = lRef.current(
+          "已重新翻译当前结构块",
+          "Retranslated the selected structured block",
+        );
+        setStatusMessage(message);
+        updateLibraryOperation("translation", "success", message, 1, 1);
+      } catch (error) {
+        if (documentTranslationRequestIdRef.current !== requestId) {
+          return;
+        }
+
+        const message = sanitizeTranslationErrorMessage(
+          error,
+          lRef.current,
+          "document",
+        );
+        setError(message);
+        setStatusMessage(message);
+        updateLibraryOperation("translation", "error", message, 1, 1);
+      } finally {
+        if (documentTranslationRequestIdRef.current === requestId) {
+          setTranslating(false);
+          setTranslationCancelling(false);
+          setTranslationProgressTotal(0);
+          if (documentTranslationAbortControllerRef.current === abortController) {
+            documentTranslationAbortControllerRef.current = null;
+          }
+        }
+      }
+    },
+    [
+      currentDocument,
+      libraryOperationRunning,
+      onOpenPreferences,
+      saveTranslationCache,
+      setError,
+      setStatusMessage,
+      settings.translationRequestsPerMinute,
+      settings.translationSourceLanguage,
+      settings.translationTargetLanguage,
+      translating,
+      translationModelPreset,
+      updateLibraryOperation,
+      lRef,
+    ],
+  );
 
   const handleClearTranslations = useCallback(() => {
     setBlockTranslations({});
@@ -755,10 +907,14 @@ export function useDocumentTranslation({
   );
 
   const resetDocumentTranslationState = useCallback(() => {
+    documentTranslationAbortControllerRef.current?.abort();
+    documentTranslationAbortControllerRef.current = null;
+    documentTranslationRequestIdRef.current += 1;
     selectionRequestKeyRef.current = "";
     setBlockTranslations({});
     setBlockTranslationTargetLanguage("");
     setTranslating(false);
+    setTranslationCancelling(false);
     setTranslationProgressCompleted(0);
     setTranslationProgressTotal(0);
     setSelectedExcerptTranslation("");
@@ -776,7 +932,9 @@ export function useDocumentTranslation({
   return {
     applySelectedExcerptTranslation,
     blockTranslations,
+    handleCancelDocumentTranslation,
     handleClearTranslations,
+    handleRetranslateBlock,
     handleTranslateDocument,
     handleTranslateSelectedExcerpt,
     resetDocumentTranslationState,
@@ -786,6 +944,7 @@ export function useDocumentTranslation({
     selectedExcerptTranslating,
     translatedCount,
     translating,
+    translationCancelling,
     translationProgressCompleted,
     translationProgressTotal,
   };

@@ -2,7 +2,6 @@ import { Component, useEffect, useMemo, useState, type ErrorInfo, type ReactNode
 import {
   Bot,
   FilePlus2,
-  HelpCircle,
   Library,
   Minus,
   Moon,
@@ -18,7 +17,6 @@ import AgentWorkspace from '../features/agent/AgentWorkspace';
 import NotesWorkspace from '../features/notes/NotesWorkspace';
 import TabBar from '../components/tabs/TabBar';
 import {
-  emitOpenOnboarding,
   emitOpenPreferences,
   emitOpenStandalonePdf,
   UI_LANGUAGE_CHANGED_EVENT,
@@ -180,11 +178,6 @@ function App() {
     dispatchReaderAction(emitOpenStandalonePdf);
   };
 
-  const handleOpenOnboarding = () => {
-    setActiveTab(HOME_TAB_ID);
-    emitOpenOnboarding();
-  };
-
   const handleOpenPreferences = () => {
     emitOpenPreferences();
   };
@@ -219,7 +212,6 @@ function App() {
           ? 'System theme'
           : '\u8ddf\u968f\u7cfb\u7edf';
   const openPdfLabel = isEnglish ? 'Open PDF' : '\u6253\u5f00 PDF';
-  const guideLabel = isEnglish ? 'Guide' : '\u65b0\u624b\u5f15\u5bfc';
   const settingsLabel = isEnglish ? 'Settings' : '\u8bbe\u7f6e';
   const minimizeWindowLabel = isEnglish ? 'Minimize window' : '\u6700\u5c0f\u5316\u7a97\u53e3';
   const minimizeLabel = isEnglish ? 'Minimize' : '\u6700\u5c0f\u5316';
@@ -270,15 +262,6 @@ function App() {
               aria-label={openPdfLabel}
             >
               <FilePlus2 className="h-4 w-4" strokeWidth={1.8} />
-            </button>
-            <button
-              type="button"
-              onClick={handleOpenOnboarding}
-              className="pq-icon-button h-8 w-8 cursor-default"
-              title={guideLabel}
-              aria-label={guideLabel}
-            >
-              <HelpCircle className="h-4 w-4" strokeWidth={1.8} />
             </button>
             <button
               type="button"

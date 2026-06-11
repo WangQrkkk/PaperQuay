@@ -511,6 +511,7 @@ interface BlockItemProps {
   translatedText?: string;
   translationDisplayMode: TranslationDisplayMode;
   onClick: (block: PositionedMineruBlock) => void;
+  onContextMenu?: (block: PositionedMineruBlock, event: ReactMouseEvent<HTMLDivElement>) => void;
   registerRef: (blockId: string, element: HTMLDivElement | null) => void;
 }
 
@@ -525,6 +526,7 @@ function BlockItemComponent({
   translatedText,
   translationDisplayMode,
   onClick,
+  onContextMenu,
   registerRef,
 }: BlockItemProps) {
   const l = useLocaleText();
@@ -613,6 +615,7 @@ function BlockItemComponent({
         };
       }}
       onClick={handleClick}
+      onContextMenu={(event) => onContextMenu?.(block, event)}
       style={contentVisibilityStyle}
       className={cn(
         'group relative cursor-text select-text rounded-[18px] border border-transparent transition-all duration-200',

@@ -5,9 +5,11 @@ import {
   useMemo,
   useRef,
   useState,
+  type MouseEvent as ReactMouseEvent,
 } from 'react';
 import {
   Languages,
+  RefreshCw,
   SearchCode,
   Sparkles,
   ZoomIn,
@@ -15,6 +17,7 @@ import {
 } from 'lucide-react';
 
 import EmptyState from '../../components/EmptyState';
+import { ContextMenu, type ContextMenuEntry } from '../../components/ContextMenu';
 import { useLocaleText } from '../../i18n/uiLanguage';
 import { buildRenderableBlocks } from '../../services/mineru';
 import type {
@@ -41,7 +44,9 @@ interface BlockViewerProps {
   hidePageDecorations?: boolean;
   smoothScroll: boolean;
   active?: boolean;
+  translationBusy?: boolean;
   onBlockClick: (block: PositionedMineruBlock) => void;
+  onRetranslateBlock?: (block: PositionedMineruBlock) => void;
   onTranslationDisplayModeChange?: (mode: TranslationDisplayMode) => void;
   onTextSelect?: (selection: TextSelectionPayload) => void;
 }
@@ -52,6 +57,12 @@ const CONTENT_SCALE_STEP = 0.05;
 const INITIAL_RENDER_BLOCK_COUNT = 80;
 const RENDER_BLOCK_BATCH_SIZE = 120;
 const ACTIVE_BLOCK_RENDER_MARGIN = 24;
+
+function hasActiveTextSelection() {
+  const selection = window.getSelection();
+
+  return Boolean(selection && !selection.isCollapsed && selection.toString().trim());
+}
 
 function clampContentScale(nextScale: number) {
   return Math.min(CONTENT_MAX_SCALE, Math.max(CONTENT_MIN_SCALE, Number(nextScale.toFixed(2))));
@@ -152,7 +163,9 @@ function BlockViewer({
   hidePageDecorations = false,
   smoothScroll,
   active = true,
+  translationBusy = false,
   onBlockClick,
+  onRetranslateBlock,
   onTranslationDisplayModeChange,
   onTextSelect,
 }: BlockViewerProps) {
@@ -188,6 +201,11 @@ function BlockViewer({
   const lastSelectionRef = useRef<{ text: string; emittedAt: number } | null>(null);
   const selectionStartedInsideRef = useRef(false);
   const selectionCommitTimerRef = useRef<number | null>(null);
+  const [contextMenu, setContextMenu] = useState<{
+    block: PositionedMineruBlock;
+    x: number;
+    y: number;
+  } | null>(null);
   const [flashBlockId, setFlashBlockId] = useState<string | null>(null);
   const [contentScale, setContentScale] = useState(1);
 
@@ -279,6 +297,42 @@ function BlockViewer({
 
     delete blockRefs.current[blockId];
   }, []);
+
+  const handleBlockContextMenu = useCallback(
+    (block: PositionedMineruBlock, event: ReactMouseEvent<HTMLDivElement>) => {
+      if (!onRetranslateBlock || hasActiveTextSelection()) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      setContextMenu({
+        block,
+        x: event.clientX,
+        y: event.clientY,
+      });
+    },
+    [onRetranslateBlock],
+  );
+
+  const contextMenuEntries = useMemo<ContextMenuEntry[]>(() => {
+    if (!contextMenu || !onRetranslateBlock) {
+      return [];
+    }
+
+    return [
+      {
+        id: 'retranslate-block',
+        label: translationBusy
+          ? l('翻译进行中', 'Translation in progress')
+          : l('重新翻译此块', 'Retranslate This Block'),
+        icon: <RefreshCw className="h-4 w-4" strokeWidth={1.9} />,
+        disabled: translationBusy,
+        tone: 'accent',
+        onSelect: () => onRetranslateBlock(contextMenu.block),
+      },
+    ];
+  }, [contextMenu, l, onRetranslateBlock, translationBusy]);
 
   const emitSelectedText = () => {
     if (!onTextSelect) {
@@ -536,6 +590,7 @@ function BlockViewer({
                 translatedText={translations[renderable.block.blockId]}
                 translationDisplayMode={translationDisplayMode}
                 onClick={onBlockClick}
+                onContextMenu={handleBlockContextMenu}
                 registerRef={registerBlockRef}
               />
             ))}
@@ -552,6 +607,19 @@ function BlockViewer({
           </div>
         </article>
       </div>
+
+      {contextMenu ? (
+        <ContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          title={l(
+            `第 ${contextMenu.block.pageIndex + 1} 页 · 块 ${contextMenu.block.blockIndex + 1}`,
+            `Page ${contextMenu.block.pageIndex + 1} · Block ${contextMenu.block.blockIndex + 1}`,
+          )}
+          entries={contextMenuEntries}
+          onClose={() => setContextMenu(null)}
+        />
+      ) : null}
     </div>
   );
 }

@@ -63,6 +63,49 @@ test("translateBlocksBestEffort keeps successful translations when later batches
   assert.deepEqual(progressSnapshots, [1, 1]);
 });
 
+test("translateBlocksBestEffort stops launching new batches after cancellation", async () => {
+  const abortController = new AbortController();
+  const translatedBlockIds: string[] = [];
+
+  const result = await translateBlocksBestEffort({
+    apiKey: "test-key",
+    baseUrl: "https://example.com",
+    batchSize: 1,
+    blocks: [
+      { blockId: "a", text: "Alpha" },
+      { blockId: "b", text: "Beta" },
+    ],
+    concurrency: 1,
+    model: "demo-model",
+    onProgress: (progress) => {
+      if (progress.translatedCount === 1) {
+        abortController.abort();
+      }
+    },
+    signal: abortController.signal,
+    sourceLanguage: "English",
+    targetLanguage: "Chinese",
+    translateBatch: async (options) => {
+      const [block] = options.blocks;
+
+      if (!block) {
+        return [];
+      }
+
+      translatedBlockIds.push(block.blockId);
+      return [{ blockId: block.blockId, translatedText: `译文 ${block.text}` }];
+    },
+  });
+
+  assert.equal(result.cancelled, true);
+  assert.deepEqual(translatedBlockIds, ["a"]);
+  assert.deepEqual(result.translations, { a: "译文 Alpha" });
+  assert.deepEqual(
+    result.failedBlocks.map((block) => block.blockId),
+    ["b"],
+  );
+});
+
 test("sanitizeTranslationErrorMessage hides raw JSON parse details for selection translation", () => {
   const message = sanitizeTranslationErrorMessage(
     "Translation output was not valid JSON: EOF while parsing a value",

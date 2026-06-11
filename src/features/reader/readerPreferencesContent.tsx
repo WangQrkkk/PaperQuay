@@ -9,6 +9,7 @@ import {
   Settings2,
   Sparkles,
 } from 'lucide-react';
+import clsx from 'clsx';
 
 import { openExternalUrl } from '../../services/desktop';
 import { resolveSummaryOutputLanguage } from '../../services/summarySource';
@@ -74,6 +75,7 @@ interface ReaderPreferencesContentProps
     | 'onQaModelPresetRemove'
     | 'onQaModelPresetChange'
     | 'onTranslate'
+    | 'onCancelTranslate'
     | 'onClearTranslations'
     | 'onBatchMineruParse'
     | 'onBatchGenerateSummaries'
@@ -235,6 +237,7 @@ export function ReaderPreferencesContent({
   onQaModelPresetRemove,
   onQaModelPresetChange,
   onTranslate,
+  onCancelTranslate,
   onClearTranslations,
   onBatchMineruParse,
   onBatchGenerateSummaries,
@@ -260,6 +263,7 @@ export function ReaderPreferencesContent({
     settings.summaryModelPresetId,
   );
   const canTriggerTranslate = Boolean(onTranslate);
+  const canCancelTranslate = Boolean(onCancelTranslate);
   const canClearTranslations = Boolean(onClearTranslations);
   const activeLibrarySettings = librarySettings ?? DEFAULT_LIBRARY_SETTINGS;
   const updateLibrarySetting = <Key extends keyof LibrarySettings>(
@@ -1010,13 +1014,18 @@ export function ReaderPreferencesContent({
             <div className="flex flex-wrap gap-2">
               <button
                 type="button"
-                onClick={() => onTranslate?.()}
-                disabled={!canTriggerTranslate || translating}
-                className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800 disabled:opacity-60"
+                onClick={() => (translating ? onCancelTranslate?.() : onTranslate?.())}
+                disabled={translating ? !canCancelTranslate : !canTriggerTranslate}
+                className={clsx(
+                  'rounded-xl px-4 py-2 text-sm font-medium text-white transition disabled:opacity-60',
+                  translating
+                    ? 'bg-rose-600 hover:bg-rose-700'
+                    : 'bg-slate-900 hover:bg-slate-800',
+                )}
               >
                 <Languages className="mr-2 inline h-4 w-4" strokeWidth={1.8} />
                 {translating
-                  ? l('翻译中...', 'Translating...')
+                  ? l('取消翻译', 'Cancel Translation')
                   : l('开始整篇翻译', 'Translate Document')}
               </button>
               <button

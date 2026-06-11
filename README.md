@@ -191,7 +191,7 @@ PaperQuay uses Electron as its desktop host. The React renderer talks to a local
 | -------------------------- | ----------------------------------------------------------------------------------------------------------------- |
 | `src/`                     | React + TypeScript UI, feature modules, state, and frontend services                                              |
 | `src/features/literature/` | Local literature library UI, import workflow, category tree, and paper details                                    |
-| `src/features/reader/`     | Reader shell, linked reading workspace, settings, onboarding, and AI reading actions                              |
+| `src/features/reader/`     | Reader shell, linked reading workspace, settings, and AI reading actions                                          |
 | `src/features/pdf/`        | PDF rendering, overlays, annotation surface, and PDF-specific interactions                                        |
 | `src/features/blocks/`     | MinerU block rendering and structured content views                                                               |
 | `src/features/agent/`      | Agent chat UI, execution traces, tool cards, and library operation entry points                                   |

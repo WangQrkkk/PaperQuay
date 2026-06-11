@@ -50,13 +50,11 @@ import {
   EMPTY_LIBRARY_PREVIEW_STATE,
   formatPaperSummaryForLibrary,
   getModelRuntimeConfig,
-  isOnboardingWelcomeItem,
   textSignature,
   type LibraryPreviewLoadResult,
   type LibraryPreviewOutcome,
   type LibraryPreviewState,
   type MineruCacheManifest,
-  type OnboardingDemoRevealState,
   type PreferencesSectionKey,
 } from './readerShared';
 
@@ -75,8 +73,6 @@ export interface UseReaderLibraryPreviewOptions {
   allKnownItems: WorkspaceItem[];
   createPaperTaskState: CreatePaperTaskState;
   l: LocaleTextFn;
-  onboardingDemoReveal: OnboardingDemoRevealState;
-  onboardingOpen: boolean;
   selectedLibraryItem: WorkspaceItem | null;
   setError: (value: string) => void;
   setPreferencesOpen: (value: boolean) => void;
@@ -134,8 +130,6 @@ export function useReaderLibraryPreview({
   allKnownItems,
   createPaperTaskState,
   l,
-  onboardingDemoReveal,
-  onboardingOpen,
   selectedLibraryItem,
   setPreferencesOpen,
   setPreferredPreferencesSection,
@@ -214,8 +208,6 @@ export function useReaderLibraryPreview({
   );
 
   const handleLibraryPreviewSync = useCallback((payload: LibraryPreviewSyncPayload) => {
-    const isWelcomeDemoPayload = isOnboardingWelcomeItem(payload.item);
-
     if (payload.summary) {
       void persistNativeLibraryOverview(
         payload.item,
@@ -237,9 +229,7 @@ export function useReaderLibraryPreview({
 
     setItemParseStatusMap((current) => ({
       ...current,
-      [payload.item.workspaceId]: isWelcomeDemoPayload && onboardingOpen
-        ? onboardingDemoReveal.parsed
-        : payload.hasBlocks,
+      [payload.item.workspaceId]: payload.hasBlocks,
     }));
 
     setLibraryPreviewStates((current) => {
@@ -252,39 +242,20 @@ export function useReaderLibraryPreview({
       return {
         ...current,
         [payload.item.workspaceId]: {
-          summary: isWelcomeDemoPayload && onboardingOpen && !onboardingDemoReveal.summarized
-            ? null
-            : hasSummary ? payload.summary ?? null : existingState?.summary ?? null,
+          summary: hasSummary ? payload.summary ?? null : existingState?.summary ?? null,
           loading: hasLoading ? Boolean(payload.loading) : false,
           error: hasError ? payload.error ?? '' : '',
           operation: hasOperation ? payload.operation ?? null : existingState?.operation ?? null,
-          hasBlocks: isWelcomeDemoPayload && onboardingOpen
-            ? onboardingDemoReveal.parsed && payload.hasBlocks
-            : payload.hasBlocks,
-          blockCount: isWelcomeDemoPayload && onboardingOpen && !onboardingDemoReveal.parsed
-            ? 0
-            : payload.blockCount,
+          hasBlocks: payload.hasBlocks,
+          blockCount: payload.blockCount,
           currentPdfName: payload.currentPdfName,
-          currentJsonName: isWelcomeDemoPayload && onboardingOpen && !onboardingDemoReveal.parsed
-            ? l('尚未解析', 'Not parsed yet')
-            : payload.currentJsonName,
-          statusMessage: isWelcomeDemoPayload && onboardingOpen && !onboardingDemoReveal.parsed
-            ? l(
-                '请按新手引导点击 MinerU 解析，内置结构块会在这里显示。',
-                'Follow the onboarding guide and click MinerU Parse to reveal the bundled structure blocks here.',
-              )
-            : payload.statusMessage,
+          currentJsonName: payload.currentJsonName,
+          statusMessage: payload.statusMessage,
           sourceKey: payload.sourceKey,
         },
       };
     });
-  }, [
-    l,
-    onboardingDemoReveal.parsed,
-    onboardingDemoReveal.summarized,
-    onboardingOpen,
-    persistNativeLibraryOverview,
-  ]);
+  }, [persistNativeLibraryOverview]);
 
   const findExistingMineruJson = useCallback(
     async (item: WorkspaceItem) =>

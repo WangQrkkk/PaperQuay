@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ReaderWorkspace from './ReaderWorkspace';
 import {
   captureSystemScreenshot,
@@ -116,7 +116,6 @@ import {
   LibraryPreviewSyncPayload,
   loadPaneRatio,
   normalizeSelectedText,
-  ONBOARDING_WELCOME_PDF_URL,
   PANE_RATIO_STORAGE_KEY,
   ReaderDocumentTranslationSnapshot,
   ReaderTabBridgeState,
@@ -137,11 +136,8 @@ import {
 import {
   chunkItems,
   getModelRuntimeConfig,
-  isOnboardingWelcomeItem,
-  ONBOARDING_WELCOME_CACHE_DIR,
   pickLocaleText,
   resolveModelPreset,
-  type SummaryCacheEnvelope,
 } from './readerShared';
 import type { LocalRagResolution } from './readerQaContext';
 import { buildQaContext, formatQaContextStatus } from './readerQaContext';
@@ -266,12 +262,6 @@ interface DocumentReaderTabProps {
   pendingNoteAnchorJump?: JumpToNoteAnchorEventDetail | null;
   onPendingNoteAnchorJumpHandled?: (requestId?: string) => void;
   translationSnapshot?: ReaderDocumentTranslationSnapshot | null;
-  onboardingWorkspaceStage?: WorkspaceStage | null;
-  onboardingDemoReveal?: {
-    parsed: boolean;
-    translated: boolean;
-    summarized: boolean;
-  };
 }
 
 
@@ -334,8 +324,6 @@ function DocumentReaderTab({
   pendingNoteAnchorJump = null,
   onPendingNoteAnchorJumpHandled,
   translationSnapshot = null,
-  onboardingWorkspaceStage = null,
-  onboardingDemoReveal,
 }: DocumentReaderTabProps) {
   const locale = useAppLocale();
   const l = useLocaleText();
@@ -440,17 +428,6 @@ function DocumentReaderTab({
     lRef.current = l;
   }, [l, locale]);
 
-  useEffect(() => {
-    if (!isActive || !onboardingWorkspaceStage) {
-      return;
-    }
-
-    setWorkspaceStage(onboardingWorkspaceStage);
-    if (onboardingWorkspaceStage === 'reading') {
-      setReadingViewMode('dual-pane');
-    }
-  }, [isActive, onboardingWorkspaceStage]);
-
   const hasDocument = Boolean(currentDocument && pdfSource);
   const translationModelPreset =
     resolveModelPreset(qaModelPresets, settings.translationModelPresetId) ?? qaModelPresets[0] ?? null;
@@ -487,7 +464,9 @@ function DocumentReaderTab({
   const {
     applySelectedExcerptTranslation,
     blockTranslations,
+    handleCancelDocumentTranslation,
     handleClearTranslations,
+    handleRetranslateBlock,
     handleTranslateDocument,
     handleTranslateSelectedExcerpt,
     resetDocumentTranslationState,
@@ -497,6 +476,7 @@ function DocumentReaderTab({
     selectedExcerptTranslating,
     translatedCount,
     translating,
+    translationCancelling,
     translationProgressCompleted,
     translationProgressTotal,
   } = useDocumentTranslation({
@@ -504,7 +484,6 @@ function DocumentReaderTab({
     flatBlocks,
     libraryOperationRunning: isPaperTaskRunning(libraryOperation, 'translation'),
     onOpenPreferences,
-    onboardingDemoReveal,
     selectedExcerpt,
     selectionTranslationModelPreset,
     settings,
@@ -784,30 +763,6 @@ function DocumentReaderTab({
     statusMessage,
   ]);
 
-  useEffect(() => {
-    if (!isOnboardingWelcomeItem(currentDocument) || paperSummary || !onboardingDemoReveal?.summarized) {
-      return;
-    }
-
-    let cancelled = false;
-
-    void fetch(`${ONBOARDING_WELCOME_CACHE_DIR}/summaries/614ada92.json`)
-      .then((response) => (response.ok ? response.json() : null))
-      .then((parsed: Partial<SummaryCacheEnvelope> | null) => {
-        if (cancelled || !parsed?.summary) {
-          return;
-        }
-
-        setPaperSummary(parsed.summary);
-        setPaperSummarySourceKey(parsed.sourceKey || 'onboarding:welcome::summary');
-      })
-      .catch(() => undefined);
-
-    return () => {
-      cancelled = true;
-    };
-  }, [currentDocument, onboardingDemoReveal?.summarized, paperSummary]);
-
   const resetDocumentState = useCallback(() => {
     // Allow the next opened document, including reopening the same workspace item,
     // to restore cached reading history before any auto-generation runs.
@@ -962,13 +917,12 @@ function DocumentReaderTab({
       return loadSavedMineruPages({
         item,
         mineruCacheDir: settings.mineruCacheDir,
-        onboardingDemoReveal,
         l: lRef.current,
         readText: readLocalTextFileIfExists,
         parsePages: parseMineruPages,
       });
     },
-    [onboardingDemoReveal, settings.mineruCacheDir],
+    [settings.mineruCacheDir],
   );
 
   const tryResolveSavedPdfPath = useCallback(
@@ -1124,23 +1078,6 @@ function DocumentReaderTab({
               return;
             }
 
-            if (isOnboardingWelcomeItem(nextResolvedItem)) {
-              const cachedMineru = await tryLoadSavedMineruPages(nextResolvedItem);
-
-              if (!isCurrentOpen() || !cachedMineru) {
-                return;
-              }
-
-              applyMineruPages(cachedMineru.pages, cachedMineru.path, {
-                item: nextResolvedItem,
-                pdfPath: resolvedPdfPath,
-                pdfSource: resolvedSource,
-                statusMessage: cachedMineru.message,
-              });
-              setStatusMessage(cachedMineru.message);
-              return;
-            }
-
             if (resolvedSource.kind !== 'local-path') {
               return;
             }
@@ -1228,16 +1165,6 @@ function DocumentReaderTab({
   );
 
   const openDocumentItem = useCallback(async () => {
-    if (isOnboardingWelcomeItem(document)) {
-      await openWorkspaceDocument(
-        document,
-        { kind: 'remote-url', url: ONBOARDING_WELCOME_PDF_URL, fileName: 'welcome.pdf' },
-        lRef.current('正在打开 Welcome 演示文档', 'Opening the Welcome demo document'),
-        'reading',
-      );
-      return;
-    }
-
     const history = loadPaperHistory(document.workspaceId);
     const cachedPdfPath = await tryResolveSavedPdfPath(document);
     const candidateLocalPaths = buildReaderLocalPdfPathCandidates({
@@ -1495,56 +1422,6 @@ function DocumentReaderTab({
 
   const handleCloudParse = useCallback(async () => {
     if (isPaperTaskRunning(libraryOperation, 'mineru')) {
-      return;
-    }
-
-    if (isOnboardingWelcomeItem(currentDocument)) {
-      try {
-        updateLibraryOperation(
-          'mineru',
-          'running',
-          lRef.current('正在加载 Welcome 内置解析结果...', 'Loading the built-in Welcome parse result...'),
-          10,
-          100,
-        );
-
-        const response = await fetch(`${ONBOARDING_WELCOME_CACHE_DIR}/content_list_v2.json`);
-
-        if (!response.ok) {
-          const message = lRef.current('加载 Welcome 内置解析结果失败', 'Failed to load the built-in Welcome parse result');
-          setError(message);
-          setStatusMessage(message);
-          updateLibraryOperation('mineru', 'error', message, 100, 100);
-          return;
-        }
-
-        const jsonText = await response.text();
-        const pages = parseMineruPages(jsonText);
-        const nextPath = `${ONBOARDING_WELCOME_CACHE_DIR}/content_list_v2.json`;
-        const nextStatusMessage = lRef.current(
-          '已显示 Welcome 内置 MinerU 解析结果，没有调用 API。',
-          'Displayed the built-in Welcome MinerU parse result without calling any API.',
-        );
-
-        applyMineruPages(pages, nextPath, {
-          item: currentDocument,
-          pdfPath,
-          pdfSource,
-          statusMessage: nextStatusMessage,
-        });
-        setStatusMessage(nextStatusMessage);
-        setError('');
-        const blockCount = flattenMineruPages(pages).length;
-        updateLibraryOperation('mineru', 'success', nextStatusMessage, blockCount, blockCount || null);
-      } catch (nextError) {
-        const message =
-          nextError instanceof Error
-            ? nextError.message
-            : lRef.current('加载 Welcome 内置解析结果失败', 'Failed to load the built-in Welcome parse result');
-        setError(message);
-        setStatusMessage(message);
-        updateLibraryOperation('mineru', 'error', message, 100, 100);
-      }
       return;
     }
 
@@ -1883,55 +1760,6 @@ function DocumentReaderTab({
       }
 
       if (!currentDocument) {
-        return;
-      }
-
-      if (isOnboardingWelcomeItem(currentDocument)) {
-        const requestId = summaryRequestIdRef.current + 1;
-        summaryRequestIdRef.current = requestId;
-        setPaperSummaryLoading(true);
-        setPaperSummaryError('');
-        const loadingMessage = lRef.current('正在加载 Welcome 内置概览…', 'Loading the built-in Welcome overview...');
-        setStatusMessage(loadingMessage);
-        updateLibraryOperation('overview', 'running', loadingMessage, 15, 100);
-
-        try {
-          const response = await fetch(`${ONBOARDING_WELCOME_CACHE_DIR}/summaries/614ada92.json`);
-          const parsed = response.ok ? (await response.json()) as Partial<SummaryCacheEnvelope> : null;
-
-          if (!parsed?.summary) {
-            throw new Error(lRef.current('未找到 Welcome 内置概览', 'The built-in Welcome overview was not found'));
-          }
-
-          if (summaryRequestIdRef.current !== requestId) {
-            return;
-          }
-
-          setPaperSummary(parsed.summary);
-          setPaperSummarySourceKey(parsed.sourceKey || 'onboarding:welcome::summary');
-          const successMessage = lRef.current(
-            '已显示 Welcome 内置 AI 概览，没有调用 API。',
-            'Displayed the built-in Welcome AI overview without calling any API.',
-          );
-          setStatusMessage(successMessage);
-          updateLibraryOperation('overview', 'success', successMessage, 100, 100);
-        } catch (nextError) {
-          if (summaryRequestIdRef.current !== requestId) {
-            return;
-          }
-
-          setPaperSummary(null);
-          const message =
-            nextError instanceof Error ? nextError.message : lRef.current('加载内置概览失败', 'Failed to load the built-in overview');
-          setPaperSummaryError(message);
-          setStatusMessage(lRef.current('加载内置概览失败', 'Failed to load the built-in overview'));
-          updateLibraryOperation('overview', 'error', message, 100, 100);
-        } finally {
-          if (summaryRequestIdRef.current === requestId) {
-            setPaperSummaryLoading(false);
-          }
-        }
-
         return;
       }
 
@@ -3051,9 +2879,7 @@ function DocumentReaderTab({
       return;
     }
 
-    if (!onboardingWorkspaceStage) {
-      setWorkspaceStage(history.workspaceStage);
-    }
+    setWorkspaceStage(history.workspaceStage);
     setReadingViewMode(history.readingViewMode);
     setPaperSummary(history.paperSummary);
     setPaperSummarySourceKey(history.paperSummarySourceKey);
@@ -3065,7 +2891,6 @@ function DocumentReaderTab({
   }, [
     currentDocument.workspaceId,
     pdfSource,
-    onboardingWorkspaceStage,
   ]);
 
   useEffect(() => {
@@ -3512,6 +3337,10 @@ function DocumentReaderTab({
     void handleTranslateDocument();
   }, [handleTranslateDocument]);
 
+  const handleBridgeCancelTranslate = useCallback(() => {
+    handleCancelDocumentTranslation();
+  }, [handleCancelDocumentTranslation]);
+
   const handleBridgeCloudParse = useCallback(() => {
     void handleCloudParse();
   }, [handleCloudParse]);
@@ -3528,6 +3357,7 @@ function DocumentReaderTab({
       onDetachAssistant: handleOpenFloatingAssistant,
       onAttachAssistant: handleAttachAssistant,
       onTranslate: handleBridgeTranslate,
+      onCancelTranslate: handleBridgeCancelTranslate,
       onClearTranslations: handleClearTranslations,
       onCloudParse: handleBridgeCloudParse,
       onGenerateSummary: handleBridgeGenerateSummary,
@@ -3535,6 +3365,7 @@ function DocumentReaderTab({
     [
       assistantSidebarProps,
       handleAttachAssistant,
+      handleBridgeCancelTranslate,
       handleBridgeCloudParse,
       handleBridgeGenerateSummary,
       handleBridgeTranslate,
@@ -3579,6 +3410,7 @@ function DocumentReaderTab({
         onReadingViewModeChange={setReadingViewMode}
         loading={loading}
         translating={translating}
+        translationCancelling={translationCancelling}
         error={error}
         statusMessage={statusMessage}
         activeBlockSummary={activeBlockSummary}
@@ -3618,12 +3450,14 @@ function DocumentReaderTab({
         onPdfBlockHover={handlePdfBlockHover}
         onPdfBlockSelect={handlePdfBlockSelect}
         onBlockClick={handleBlockClick}
+        onRetranslateBlock={(block) => void handleRetranslateBlock(block)}
         onTranslationDisplayModeChange={onTranslationDisplayModeChange}
         onTextSelect={handleTextSelect}
         onOpenStandalonePdf={onOpenStandalonePdf}
         onOpenMineruJson={() => void handleOpenMineruJson()}
         onCloudParse={() => void handleCloudParse()}
         onTranslateDocument={() => void handleTranslateDocument()}
+        onCancelTranslateDocument={handleCancelDocumentTranslation}
         onOpenPreferences={onOpenPreferences}
         notes={notes}
         onAddSelectionToNote={() => void handleAddSelectionToNote()}
