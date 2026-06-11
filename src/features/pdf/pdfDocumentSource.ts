@@ -1,5 +1,5 @@
 import type { PdfSource } from '../../types/reader';
-import { PDFJS_COMPATIBILITY_OPTIONS } from '../../utils/pdfJsCompatibility';
+import { PDFJS_COMPATIBILITY_OPTIONS } from '../../utils/pdfJsCompatibility.ts';
 
 export const LOCAL_PDF_PROTOCOL = 'paperquay-pdf';
 
