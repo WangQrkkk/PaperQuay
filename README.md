@@ -194,6 +194,8 @@ These items are implemented in the current desktop app.
 9. Configure a MinerU API key if you want MinerU parsing.
 10. Optionally connect a Zotero data directory and import existing Zotero collections and PDFs.
 
+For local RAG, choose the embedding input format in its dedicated settings. **Plain text** remains the default for existing configurations. Select **Retrieval prefixes (`query:` / `passage:`)** only when your embedding model requires different inputs for search queries and document passages. Changing this option uses a different RAG index key, so existing documents must be indexed again for the new format.
+
 ---
 
 ## Architecture

@@ -459,6 +459,7 @@ function normalizeStoredReaderSettings(value: Partial<ReaderSettings>): Pick<
   | 'ragSourceMode'
   | 'embeddingBaseUrl'
   | 'embeddingModel'
+  | 'embeddingInputFormat'
   | 'embeddingDimensions'
   | 'embeddingRequestTimeoutSeconds'
   | 'embeddingBatchSize'
@@ -478,6 +479,8 @@ function normalizeStoredReaderSettings(value: Partial<ReaderSettings>): Pick<
         : 'hybrid',
     embeddingBaseUrl: value.embeddingBaseUrl?.trim() || 'https://api.openai.com',
     embeddingModel: value.embeddingModel?.trim() || 'text-embedding-3-small',
+    embeddingInputFormat:
+      value.embeddingInputFormat === 'query-passage' ? 'query-passage' : 'plain',
     embeddingDimensions:
       typeof value.embeddingDimensions === 'number' && Number.isFinite(value.embeddingDimensions)
         ? Math.max(1, Math.min(4096, Math.trunc(value.embeddingDimensions)))
@@ -862,6 +865,7 @@ async function loadPaperContext(
             baseUrl: ragSettings.embeddingBaseUrl,
             apiKey: secrets.embeddingApiKey.trim(),
             model: ragSettings.embeddingModel,
+            inputFormat: ragSettings.embeddingInputFormat,
             dimensions: ragSettings.embeddingDimensions,
             timeoutSeconds: ragSettings.embeddingRequestTimeoutSeconds,
           },

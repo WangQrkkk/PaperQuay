@@ -1799,6 +1799,7 @@ function DocumentReaderTab({
           baseUrl: settings.embeddingBaseUrl,
           apiKey: embeddingApiKey.trim(),
           model: settings.embeddingModel,
+          inputFormat: settings.embeddingInputFormat,
           dimensions: settings.embeddingDimensions,
           timeoutSeconds: settings.embeddingRequestTimeoutSeconds,
         },

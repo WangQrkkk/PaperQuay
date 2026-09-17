@@ -806,8 +806,8 @@ export function ReaderPreferencesContent({
         <SettingsField
           label={l('本地 RAG Embedding 配置', 'Local RAG Embedding Configuration')}
           description={l(
-            '本地 RAG 会只读取这里的 Base URL、API Key 和 Model，不再复用 AI 模型预设。',
-            'Local RAG reads only the Base URL, API key, and model configured here instead of the shared AI model presets.',
+            '本地 RAG 使用这里独立配置的服务、模型和输入格式，不再复用 AI 模型预设。',
+            'Local RAG uses the endpoint, model, and input format configured here instead of shared AI model presets.',
           )}
         >
           <div className="grid gap-3 md:grid-cols-2">
@@ -842,6 +842,31 @@ export function ReaderPreferencesContent({
                 onChange={(event) => onSettingChange('embeddingModel', event.target.value)}
                 placeholder="text-embedding-3-small / Qwen/Qwen3-Embedding-8B"
               />
+            </div>
+            <div className="space-y-2 md:col-span-2">
+              <div className="text-xs font-medium text-slate-500">
+                {l('向量输入格式', 'Embedding input format')}
+              </div>
+              <SettingsSelect
+                value={settings.embeddingInputFormat}
+                onChange={(event) =>
+                  onSettingChange(
+                    'embeddingInputFormat',
+                    event.target.value as ReaderSettings['embeddingInputFormat'],
+                  )
+                }
+              >
+                <option value="plain">{l('原样输入（默认）', 'Plain text (default)')}</option>
+                <option value="query-passage">
+                  {l('检索前缀（query: / passage:）', 'Retrieval prefixes (query: / passage:)')}
+                </option>
+              </SettingsSelect>
+              <div className="text-[11px] leading-5 text-slate-400">
+                {l(
+                  '仅在模型要求区分查询和文档输入时启用；切换后会使用新的索引键。',
+                  'Enable only for models that require distinct query and document inputs. Switching uses a new index key.',
+                )}
+              </div>
             </div>
             <div className="space-y-2">
               <div className="text-xs font-medium text-slate-500">

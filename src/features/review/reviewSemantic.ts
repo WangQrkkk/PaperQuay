@@ -16,6 +16,7 @@ export interface ReviewEmbeddingConfig {
   baseUrl: string;
   apiKey: string;
   model: string;
+  inputFormat: ReaderSettings['embeddingInputFormat'];
   dimensions: number | null;
   timeoutSeconds: number;
 }
@@ -65,6 +66,7 @@ export async function loadReviewEmbeddingConfig(): Promise<ReviewEmbeddingConfig
     apiKey,
     baseUrl,
     model,
+    inputFormat: settings.embeddingInputFormat === 'query-passage' ? 'query-passage' : 'plain',
     dimensions:
       typeof settings.embeddingDimensions === 'number' && Number.isFinite(settings.embeddingDimensions)
         ? settings.embeddingDimensions
@@ -104,6 +106,7 @@ export async function semanticRerankPapers(
     baseUrl: config.baseUrl,
     apiKey: config.apiKey,
     model: config.model,
+    inputFormat: config.inputFormat,
     dimensions: config.dimensions,
     timeoutSeconds: config.timeoutSeconds,
   };
@@ -113,7 +116,7 @@ export async function semanticRerankPapers(
 
   const [queryVector, candidateVectors] = await Promise.all([
     embedRagText(trimmedQuery, embedding),
-    Promise.all(head.map((item) => embedRagText(candidateEmbedText(item), embedding))),
+    Promise.all(head.map((item) => embedRagText(candidateEmbedText(item), embedding, 'passage'))),
   ]);
 
   const reranked = head

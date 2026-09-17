@@ -189,6 +189,7 @@ export interface OpenAICompatibleModelListResult {
 }
 
 export type RagSourceMode = "off" | "mineru-markdown" | "pdf-text" | "hybrid";
+export type EmbeddingInputFormat = "plain" | "query-passage";
 
 export interface RagChunkInput {
   chunkId: string;
@@ -553,6 +554,7 @@ export interface ReaderSettings {
   agentModelPresetId: string;
   embeddingBaseUrl: string;
   embeddingModel: string;
+  embeddingInputFormat: EmbeddingInputFormat;
   embeddingDimensions: number | null;
   embeddingRequestTimeoutSeconds: number;
   embeddingBatchSize: number;

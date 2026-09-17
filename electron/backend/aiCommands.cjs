@@ -14,6 +14,7 @@ const {
   pickStreamTextDelta,
   readOpenAiStreamResponse,
 } = require('./utils.cjs');
+const { formatEmbeddingInput } = require('./embeddingInput.cjs');
 
 const TEST_MODEL_TIMEOUT_MS = 20_000;
 
@@ -954,13 +955,22 @@ function createAiCommands(context) {
     },
 
     async rag_embed_text({ request }) {
-      const [embedding] = await embedTexts([request.text], request.embedding);
+      const input = formatEmbeddingInput(
+        request.text,
+        request.embedding?.inputFormat,
+        request.role ?? 'query',
+      );
+      const [embedding] = await embedTexts([input], request.embedding);
       return embedding ?? [];
     },
 
     async rag_embed_chunks({ request }) {
-      const vectors = await embedTexts((request.chunks ?? []).map((chunk) => chunk.text), request.embedding);
-      return (request.chunks ?? []).map((chunk, index) => ({ ...chunk, embedding: vectors[index] ?? [] }));
+      const chunks = request.chunks ?? [];
+      const inputs = chunks.map((chunk) =>
+        formatEmbeddingInput(chunk.text, request.embedding?.inputFormat, 'passage'),
+      );
+      const vectors = await embedTexts(inputs, request.embedding);
+      return chunks.map((chunk, index) => ({ ...chunk, embedding: vectors[index] ?? [] }));
     },
 
     async rag_index_document({ request }) {

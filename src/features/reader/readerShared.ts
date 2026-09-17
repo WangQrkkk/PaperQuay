@@ -209,6 +209,7 @@ export const DEFAULT_SETTINGS: ReaderSettings = {
   agentModelPresetId: 'default',
   embeddingBaseUrl: 'https://api.openai.com',
   embeddingModel: 'text-embedding-3-small',
+  embeddingInputFormat: 'plain',
   embeddingDimensions: null,
   embeddingRequestTimeoutSeconds: 180,
   embeddingBatchSize: 24,
@@ -771,6 +772,8 @@ export function normalizeReaderSettings(value?: Partial<ReaderSettings> | null):
     ),
     embeddingBaseUrl: merged.embeddingBaseUrl?.trim() || DEFAULT_SETTINGS.embeddingBaseUrl,
     embeddingModel: merged.embeddingModel?.trim() || DEFAULT_SETTINGS.embeddingModel,
+    embeddingInputFormat:
+      merged.embeddingInputFormat === 'query-passage' ? 'query-passage' : 'plain',
     embeddingDimensions: clampEmbeddingDimensions(merged.embeddingDimensions),
     embeddingRequestTimeoutSeconds: clampEmbeddingRequestTimeoutSeconds(
       merged.embeddingRequestTimeoutSeconds,

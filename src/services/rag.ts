@@ -1,6 +1,7 @@
 import { invoke } from '../platform/electron/core';
 
 import type {
+  EmbeddingInputFormat,
   RagChunkInput,
   RagDocumentIndexStatus,
   RagIndexDocumentRequest,
@@ -14,6 +15,7 @@ interface RagEmbeddingOptions {
   baseUrl: string;
   apiKey: string;
   model: string;
+  inputFormat?: EmbeddingInputFormat;
   dimensions?: number | null;
   timeoutSeconds?: number;
 }
@@ -56,17 +58,20 @@ function normalizeBaseUrl(baseUrl: string): string | undefined {
 }
 
 export function buildRagEmbeddingModelKey(options: RagEmbeddingOptions): string {
-  return `${normalizeBaseUrl(options.baseUrl) ?? ''}::${options.model.trim()}::${options.dimensions ?? 'default'}`;
+  const legacyKey = `${normalizeBaseUrl(options.baseUrl) ?? ''}::${options.model.trim()}::${options.dimensions ?? 'default'}`;
+  return options.inputFormat === 'query-passage' ? `${legacyKey}::input=qp-v1` : legacyKey;
 }
 
 export async function embedRagText(
   text: string,
   options: RagEmbeddingOptions,
+  role: 'query' | 'passage' = 'query',
 ): Promise<number[]> {
   try {
     return await invoke<number[]>('rag_embed_text', {
       request: {
         text,
+        role,
         embedding: {
           ...options,
           baseUrl: normalizeBaseUrl(options.baseUrl) ?? options.baseUrl.trim(),
