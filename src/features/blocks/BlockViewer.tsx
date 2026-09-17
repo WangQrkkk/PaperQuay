@@ -582,7 +582,7 @@ function BlockViewer({
   return (
     <div
       ref={containerRef}
-      className="flex h-full min-h-0 flex-col bg-[radial-gradient(circle_at_top,#ffffff,#f8fafc_34%,#f5f5f4_100%)] text-slate-900 dark:bg-[var(--pq-bg-primary)] dark:text-[var(--pq-text)]"
+      className="flex h-full min-h-0 flex-col bg-[radial-gradient(circle_at_top,#ffffff,#f8fafc_34%,#f5f5f4_100%)] text-slate-900 dark:bg-[var(--pq-bg-primary)] dark:bg-none dark:text-[var(--pq-text)]"
       onMouseUp={active ? () => scheduleSelectionCommit() : undefined}
       onKeyUp={active ? () => scheduleSelectionCommit() : undefined}
     >

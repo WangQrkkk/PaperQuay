@@ -203,7 +203,7 @@ function MarkdownContentComponent({
           </ol>
         ),
         li: ({ children }) => (
-          <li className="text-slate-700" style={bodyStyle}>
+          <li className="text-slate-700 dark:text-[var(--pq-text-muted)]" style={bodyStyle}>
             {children}
           </li>
         ),
@@ -412,7 +412,7 @@ function TableContentComponent({
         <>
           {captionText ? (
             <div
-              className="font-medium leading-6 text-slate-600"
+              className="font-medium leading-6 text-slate-600 dark:text-[var(--pq-text-muted)]"
               style={{
                 fontSize: `${14 * scale}px`,
                 lineHeight: `${24 * scale}px`,
