@@ -61,6 +61,7 @@ export interface UseReaderLibraryActionsOptions {
   l: LocaleTextFn;
   libraryPreviewStates: Record<string, LibraryPreviewState>;
   librarySettings: LibrarySettings | null;
+  loadLibraryBatchItems: () => Promise<WorkspaceItem[]>;
   loadLibraryPreviewBlocks: (item: WorkspaceItem) => Promise<LibraryPreviewLoadResult>;
   mineruApiToken: string;
   settings: ReaderSettings;

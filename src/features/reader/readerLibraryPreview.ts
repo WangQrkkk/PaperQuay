@@ -20,6 +20,7 @@ import type {
   PaperSummary,
   PositionedMineruBlock,
   ReaderSettings,
+  TranslationBlockInput,
   TranslationMap,
   WorkspaceItem,
 } from '../../types/reader';
@@ -513,12 +514,14 @@ export async function writeLibraryTranslationCache({
   sourceLanguage,
   targetLanguage,
   translations,
+  sourceBlocks,
 }: {
   item: WorkspaceItem;
   mineruCacheDir: string;
   sourceLanguage: string;
   targetLanguage: string;
   translations: TranslationMap;
+  sourceBlocks?: TranslationBlockInput[];
 }) {
   return writeTranslationCache({
     item,
@@ -526,5 +529,6 @@ export async function writeLibraryTranslationCache({
     sourceLanguage,
     targetLanguage,
     translations,
+    sourceBlocks,
   });
 }

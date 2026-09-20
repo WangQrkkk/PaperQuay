@@ -333,6 +333,8 @@ export function useReaderLibraryPreview({
             return {
               item,
               count,
+              blockSourceFingerprints: cachedTranslation.blockSourceFingerprints,
+              sourceFingerprint: cachedTranslation.sourceFingerprint,
               translations: cachedTranslation.translations,
             };
           }),
@@ -340,6 +342,8 @@ export function useReaderLibraryPreview({
       ).filter((entry): entry is {
         item: WorkspaceItem;
         count: number;
+        blockSourceFingerprints: Record<string, string>;
+        sourceFingerprint: string;
         translations: ReaderDocumentTranslationSnapshot['translations'];
       } => Boolean(entry));
 
@@ -367,6 +371,8 @@ export function useReaderLibraryPreview({
           next[entry.item.workspaceId] = {
             targetLanguage: settings.translationTargetLanguage,
             translations: entry.translations,
+            blockSourceFingerprints: entry.blockSourceFingerprints,
+            sourceFingerprint: entry.sourceFingerprint,
             updatedAt: restoredAt,
           };
           changed = true;

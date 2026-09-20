@@ -21,7 +21,7 @@ import {
   buildRagSourceOptions,
   buildSummaryLanguageOptions,
   buildSummarySourceOptions,
-  clampBatchConcurrency,
+  clampMineruBatchConcurrency,
   resolveModelPreset,
   type PreferencesSectionKey,
 } from './readerShared';
@@ -53,6 +53,10 @@ interface ReaderPreferencesContentProps
     | 'zoteroApiKey'
     | 'zoteroUserId'
     | 'libraryLoading'
+    | 'mineruBatchCandidateCount'
+    | 'mineruBatchHydrating'
+    | 'statusMessage'
+    | 'errorMessage'
     | 'translating'
     | 'onSettingChange'
     | 'onNativeLibrarySettingsChange'
@@ -78,16 +82,22 @@ interface ReaderPreferencesContentProps
     | 'onCancelTranslate'
     | 'onClearTranslations'
     | 'onBatchMineruParse'
+    | 'onBatchTranslateEnglish'
     | 'onBatchGenerateSummaries'
     | 'onToggleBatchMineruPause'
     | 'onCancelBatchMineru'
+    | 'onToggleBatchTranslationPause'
+    | 'onCancelBatchTranslation'
     | 'onToggleBatchSummaryPause'
     | 'onCancelBatchSummary'
     | 'batchMineruRunning'
+    | 'batchTranslationRunning'
     | 'batchSummaryRunning'
     | 'batchMineruPaused'
+    | 'batchTranslationPaused'
     | 'batchSummaryPaused'
     | 'batchMineruProgress'
+    | 'batchTranslationProgress'
     | 'batchSummaryProgress'
   > {
   activeSection: PreferencesSectionKey;
@@ -206,6 +216,10 @@ export function ReaderPreferencesContent({
   zoteroApiKey,
   zoteroUserId,
   libraryLoading,
+  mineruBatchCandidateCount,
+  mineruBatchHydrating = false,
+  statusMessage = '',
+  errorMessage = '',
   translating = false,
   onSettingChange,
   onNativeLibrarySettingsChange,
@@ -231,16 +245,22 @@ export function ReaderPreferencesContent({
   onCancelTranslate,
   onClearTranslations,
   onBatchMineruParse,
+  onBatchTranslateEnglish,
   onBatchGenerateSummaries,
   onToggleBatchMineruPause,
   onCancelBatchMineru,
+  onToggleBatchTranslationPause,
+  onCancelBatchTranslation,
   onToggleBatchSummaryPause,
   onCancelBatchSummary,
   batchMineruRunning = false,
+  batchTranslationRunning = false,
   batchSummaryRunning = false,
   batchMineruPaused = false,
+  batchTranslationPaused = false,
   batchSummaryPaused = false,
   batchMineruProgress,
+  batchTranslationProgress,
   batchSummaryProgress,
 }: ReaderPreferencesContentProps) {
   const languageOptions = buildLanguageOptions(settings.uiLanguage);
@@ -620,6 +640,21 @@ export function ReaderPreferencesContent({
 
       {activeSection === 'mineru' ? (
         <>
+          {errorMessage ? (
+            <div
+              role="alert"
+              className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm leading-6 text-rose-700"
+            >
+              {errorMessage}
+            </div>
+          ) : statusMessage ? (
+            <div
+              role="status"
+              className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm leading-6 text-sky-700"
+            >
+              {statusMessage}
+            </div>
+          ) : null}
           <SettingsField
             label="MinerU API Token"
             description={
@@ -703,6 +738,14 @@ export function ReaderPreferencesContent({
             )}
           >
             <div className="space-y-3">
+              <div className="rounded-2xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm text-indigo-800">
+                {mineruBatchHydrating
+                  ? l('正在加载完整文库…', 'Loading the full library…')
+                  : l(
+                      `已发现 ${mineruBatchCandidateCount} 份可处理 PDF`,
+                      `${mineruBatchCandidateCount} processable PDFs found`,
+                    )}
+              </div>
               <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_140px]">
                 <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
                   <div className="text-sm font-medium text-slate-900">
@@ -710,21 +753,21 @@ export function ReaderPreferencesContent({
                   </div>
                   <div className="mt-1 text-xs leading-5 text-slate-500">
                     {l(
-                      '控制批量 MinerU 解析的并发度，数值过高可能导致限流或性能波动。',
-                      'Controls batch MinerU parse concurrency. Values that are too high may cause rate limits or unstable performance.',
+                      '控制批量 MinerU 解析的并发度；全库任务安全上限为 2。',
+                      'Controls batch MinerU parse concurrency; full-library runs are capped at 2 for safety.',
                     )}
                   </div>
                 </div>
                 <SettingsInput
                   type="number"
                   min={1}
-                  max={8}
+                  max={2}
                   step={1}
                   value={String(settings.libraryBatchConcurrency)}
                   onChange={(event) =>
                     onSettingChange(
                       'libraryBatchConcurrency',
-                      clampBatchConcurrency(Number(event.target.value)),
+                      clampMineruBatchConcurrency(Number(event.target.value)),
                     )
                   }
                 />
@@ -742,12 +785,20 @@ export function ReaderPreferencesContent({
                 <button
                   type="button"
                   onClick={onBatchMineruParse}
-                  disabled={batchMineruRunning}
+                  disabled={
+                    batchMineruRunning ||
+                    mineruBatchHydrating ||
+                    mineruBatchCandidateCount === 0
+                  }
                   className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800 disabled:opacity-60"
                 >
                   {batchMineruRunning
                     ? l('处理中...', 'Processing...')
-                    : l('启动 MinerU 批量解析', 'Start MinerU Batch Parse')}
+                    : mineruBatchHydrating
+                      ? l('正在加载文库…', 'Loading library…')
+                      : mineruBatchCandidateCount === 0
+                        ? l('没有可处理的 PDF', 'No processable PDFs')
+                        : l('启动 MinerU 批量解析', 'Start MinerU Batch Parse')}
                 </button>
                 {batchMineruRunning ? (
                   <button
@@ -1051,6 +1102,63 @@ export function ReaderPreferencesContent({
               >
                 {l('清空翻译缓存', 'Clear Translation Cache')}
               </button>
+            </div>
+          </SettingsField>
+
+          <SettingsField
+            label={l('文库英文论文批量翻译', 'Batch Translate English Papers')}
+            description={l(
+              '只处理已完成 MinerU 解析且正文可靠判定为英文的论文，固定翻译为中文；中文、语言不明确和已有完整中文缓存的论文会跳过。',
+              'Only MinerU-parsed papers whose body is confidently English are translated to Chinese; Chinese, uncertain-language, and fully cached papers are skipped.',
+            )}
+          >
+            <div className="space-y-3">
+              <ToggleRow
+                title={l('自动批量翻译英文论文', 'Auto Translate English Papers')}
+                description={l(
+                  '默认关闭。开启后，在新的 MinerU 结果就绪时自动补齐中文全文缓存；遇到 429 会停止当轮。',
+                  'Off by default. When enabled, new MinerU results automatically receive a Chinese full-text cache; a 429 stops the run.',
+                )}
+                checked={settings.autoTranslateEnglishLibrary}
+                onChange={(checked) =>
+                  onSettingChange('autoTranslateEnglishLibrary', checked)
+                }
+              />
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={onBatchTranslateEnglish}
+                  disabled={batchTranslationRunning}
+                  className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800 disabled:opacity-60"
+                >
+                  {batchTranslationRunning
+                    ? l('处理中...', 'Processing...')
+                    : l('翻译全部英文论文', 'Translate All English Papers')}
+                </button>
+                {batchTranslationRunning ? (
+                  <button
+                    type="button"
+                    onClick={onToggleBatchTranslationPause}
+                    className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm text-slate-700 transition hover:bg-slate-50"
+                  >
+                    {batchTranslationPaused ? l('继续', 'Resume') : l('暂停', 'Pause')}
+                  </button>
+                ) : null}
+                {batchTranslationRunning ? (
+                  <button
+                    type="button"
+                    onClick={onCancelBatchTranslation}
+                    className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-2 text-sm text-rose-600 transition hover:bg-rose-100"
+                  >
+                    {l('取消', 'Cancel')}
+                  </button>
+                ) : null}
+              </div>
+              <BatchProgressCard
+                title={l('英文论文批量翻译进度', 'English-Paper Translation Progress')}
+                progress={batchTranslationProgress}
+                tone="emerald"
+              />
             </div>
           </SettingsField>
 

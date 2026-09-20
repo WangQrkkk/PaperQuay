@@ -520,6 +520,7 @@ export interface ReaderSettings {
   uiLanguage: UiLanguage;
   autoLoadSiblingJson: boolean;
   autoMineruParse: boolean;
+  autoTranslateEnglishLibrary: boolean;
   autoGenerateSummary: boolean;
   localRagEnabled: boolean;
   localRagTopK: number;

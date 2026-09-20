@@ -36,6 +36,10 @@ import {
   readTranslationCache,
   writeTranslationCache,
 } from "./readerTranslationCache";
+import {
+  buildTranslationSourceMetadata,
+  selectReusableCachedTranslations,
+} from './readerTranslationSource';
 
 type LocaleTextFn = (zh: string, en: string) => string;
 
@@ -123,6 +127,7 @@ export function useDocumentTranslation({
   const selectedExcerptRequestIdRef = useRef(0);
   const selectionRequestKeyRef = useRef("");
   const blockTranslationsRef = useRef<TranslationMap>({});
+  const blockTranslationSourceFingerprintRef = useRef("");
   const translationProgressTotalRef = useRef(0);
 
   const [blockTranslations, setBlockTranslations] = useState<TranslationMap>(
@@ -140,6 +145,15 @@ export function useDocumentTranslation({
   const [selectedExcerptTranslating, setSelectedExcerptTranslating] =
     useState(false);
   const [selectedExcerptError, setSelectedExcerptError] = useState("");
+
+  const translationSourceBlocks = useMemo(
+    () => buildTranslatableBlockInputs(flatBlocks),
+    [flatBlocks],
+  );
+  const translationSourceMetadata = useMemo(
+    () => buildTranslationSourceMetadata(translationSourceBlocks),
+    [translationSourceBlocks],
+  );
 
   const translatedCount = useMemo(
     () => countTranslatedBlocks(blockTranslations),
@@ -165,13 +179,18 @@ export function useDocumentTranslation({
   );
 
   const saveTranslationCache = useCallback(
-    async (item: WorkspaceItem, translations: TranslationMap) => {
+    async (
+      item: WorkspaceItem,
+      translations: TranslationMap,
+      sourceBlocks: TranslationBlockInput[],
+    ) => {
       await writeTranslationCache({
         item,
         mineruCacheDir: settings.mineruCacheDir,
         sourceLanguage: settings.translationSourceLanguage,
         targetLanguage: settings.translationTargetLanguage,
         translations,
+        sourceBlocks,
       });
     },
     [
@@ -188,8 +207,24 @@ export function useDocumentTranslation({
     ) {
       setBlockTranslations({});
       setBlockTranslationTargetLanguage("");
+      blockTranslationSourceFingerprintRef.current = "";
     }
   }, [blockTranslationTargetLanguage, settings.translationTargetLanguage]);
+
+  useEffect(() => {
+    const activeSourceFingerprint = blockTranslationSourceFingerprintRef.current;
+
+    if (
+      !activeSourceFingerprint ||
+      activeSourceFingerprint === translationSourceMetadata.sourceFingerprint
+    ) {
+      return;
+    }
+
+    blockTranslationSourceFingerprintRef.current = "";
+    setBlockTranslations({});
+    setBlockTranslationTargetLanguage("");
+  }, [translationSourceMetadata.sourceFingerprint]);
 
   useEffect(() => {
     if (
@@ -199,9 +234,11 @@ export function useDocumentTranslation({
       return;
     }
 
-    const incomingCount = countTranslatedBlocks(
-      translationSnapshot.translations,
+    const reusableSnapshotTranslations = selectReusableCachedTranslations(
+      translationSnapshot,
+      translationSourceBlocks,
     );
+    const incomingCount = countTranslatedBlocks(reusableSnapshotTranslations);
 
     if (incomingCount === 0) {
       return;
@@ -209,12 +246,16 @@ export function useDocumentTranslation({
 
     if (
       blockTranslationTargetLanguage === translationSnapshot.targetLanguage &&
+      blockTranslationSourceFingerprintRef.current ===
+        translationSourceMetadata.sourceFingerprint &&
       translatedCount >= incomingCount
     ) {
       return;
     }
 
-    setBlockTranslations(translationSnapshot.translations);
+    blockTranslationSourceFingerprintRef.current =
+      translationSourceMetadata.sourceFingerprint;
+    setBlockTranslations(reusableSnapshotTranslations);
     setBlockTranslationTargetLanguage(translationSnapshot.targetLanguage);
     setStatusMessage(
       lRef.current(
@@ -228,6 +269,8 @@ export function useDocumentTranslation({
     setStatusMessage,
     translatedCount,
     translationSnapshot,
+    translationSourceBlocks,
+    translationSourceMetadata.sourceFingerprint,
     lRef,
   ]);
 
@@ -253,9 +296,20 @@ export function useDocumentTranslation({
         return;
       }
 
-      setBlockTranslations(cachedTranslationResult.translations);
+      const reusableCachedTranslations = selectReusableCachedTranslations(
+        cachedTranslationResult,
+        translationSourceBlocks,
+      );
+      const restoredCount = countTranslatedBlocks(reusableCachedTranslations);
+
+      if (restoredCount === 0) {
+        return;
+      }
+
+      blockTranslationSourceFingerprintRef.current =
+        translationSourceMetadata.sourceFingerprint;
+      setBlockTranslations(reusableCachedTranslations);
       setBlockTranslationTargetLanguage(settings.translationTargetLanguage);
-      const restoredCount = countTranslatedBlocks(cachedTranslationResult.translations);
       setStatusMessage(
         lRef.current(
           `已恢复历史翻译 ${restoredCount} 条（${settings.translationTargetLanguage}）`,
@@ -301,6 +355,8 @@ export function useDocumentTranslation({
     setStatusMessage,
     translatedCount,
     tryLoadSavedTranslations,
+    translationSourceBlocks,
+    translationSourceMetadata.sourceFingerprint,
     updateLibraryOperation,
     lRef,
   ]);
@@ -310,7 +366,7 @@ export function useDocumentTranslation({
       return;
     }
 
-    const blocksToTranslate = buildTranslatableBlockInputs(flatBlocks);
+    const blocksToTranslate = translationSourceBlocks;
 
     if (blocksToTranslate.length === 0) {
       const message = lRef.current(
@@ -364,16 +420,38 @@ export function useDocumentTranslation({
         console.warn('Failed to read translation cache before translation resume', cacheError);
         return null;
       });
+      const reusableCachedTranslations = selectReusableCachedTranslations(
+        cachedTranslationResult,
+        blocksToTranslate,
+      );
+      const reusableSnapshotTranslations =
+        translationSnapshot?.targetLanguage === settings.translationTargetLanguage
+          ? selectReusableCachedTranslations(translationSnapshot, blocksToTranslate)
+          : {};
+      const reusableInMemoryTranslations =
+        blockTranslationTargetLanguage === settings.translationTargetLanguage &&
+        blockTranslationSourceFingerprintRef.current ===
+          translationSourceMetadata.sourceFingerprint
+          ? selectReusableCachedTranslations(
+              {
+                ...translationSourceMetadata,
+                translations: blockTranslationsRef.current,
+              },
+              blocksToTranslate,
+            )
+          : {};
       const resumedTranslations = mergeReaderTranslations(
         mergeReaderTranslations(
-          blockTranslations,
-          cachedTranslationResult?.translations,
+          reusableCachedTranslations,
+          reusableSnapshotTranslations,
         ),
-        translationSnapshot?.translations,
+        reusableInMemoryTranslations,
       );
       const resumedCount = countTranslatedBlocks(resumedTranslations);
 
       if (resumedCount > 0) {
+        blockTranslationSourceFingerprintRef.current =
+          translationSourceMetadata.sourceFingerprint;
         setBlockTranslations(resumedTranslations);
         setBlockTranslationTargetLanguage(settings.translationTargetLanguage);
         setTranslationProgressCompleted(resumedCount);
@@ -399,12 +477,18 @@ export function useDocumentTranslation({
           }
 
           setBlockTranslations(progress.translations);
+          blockTranslationSourceFingerprintRef.current =
+            translationSourceMetadata.sourceFingerprint;
           setBlockTranslationTargetLanguage(settings.translationTargetLanguage);
           setTranslationProgressCompleted(progress.translatedCount);
 
           if (progress.translatedCount > 0) {
             try {
-              await saveTranslationCache(currentDocument, progress.translations);
+              await saveTranslationCache(
+                currentDocument,
+                progress.translations,
+                blocksToTranslate,
+              );
             } catch (cacheError) {
               cacheWriteError = cacheError;
               console.error('Failed to save translation progress', cacheError);
@@ -441,12 +525,14 @@ export function useDocumentTranslation({
       const nextTranslations = result.translations;
       const nextTranslatedCount = countTranslatedBlocks(nextTranslations);
 
+      blockTranslationSourceFingerprintRef.current =
+        translationSourceMetadata.sourceFingerprint;
       setBlockTranslations(nextTranslations);
       setBlockTranslationTargetLanguage(settings.translationTargetLanguage);
       setTranslationProgressCompleted(nextTranslatedCount);
 
       try {
-        await saveTranslationCache(currentDocument, nextTranslations);
+        await saveTranslationCache(currentDocument, nextTranslations, blocksToTranslate);
       } catch (cacheError) {
         cacheWriteError = cacheError;
         console.error('Failed to save completed translation cache', cacheError);
@@ -537,9 +623,8 @@ export function useDocumentTranslation({
       }
     }
   }, [
-    blockTranslations,
     currentDocument,
-    flatBlocks,
+    blockTranslationTargetLanguage,
     libraryOperationRunning,
     onOpenPreferences,
     saveTranslationCache,
@@ -552,7 +637,9 @@ export function useDocumentTranslation({
     settings.translationTargetLanguage,
     translating,
     translationModelPreset,
-    translationSnapshot?.translations,
+    translationSnapshot,
+    translationSourceBlocks,
+    translationSourceMetadata,
     tryLoadSavedTranslations,
     updateLibraryOperation,
     lRef,
@@ -632,6 +719,8 @@ export function useDocumentTranslation({
       setStatusMessage(startMessage);
       updateLibraryOperation("translation", "running", startMessage, 0, 1);
       let cacheWriteError: unknown = null;
+      const sourceBlocks = translationSourceBlocks;
+      const sourceMetadata = translationSourceMetadata;
 
       try {
         const result = await translateBlocksBestEffort({
@@ -651,18 +740,35 @@ export function useDocumentTranslation({
               return;
             }
 
+            const reusableInMemoryTranslations =
+              blockTranslationTargetLanguage === settings.translationTargetLanguage &&
+              blockTranslationSourceFingerprintRef.current ===
+                sourceMetadata.sourceFingerprint
+                ? selectReusableCachedTranslations(
+                    {
+                      ...sourceMetadata,
+                      translations: blockTranslationsRef.current,
+                    },
+                    sourceBlocks,
+                  )
+                : {};
             const mergedTranslations = mergeReaderTranslations(
-              blockTranslationsRef.current,
+              reusableInMemoryTranslations,
               progress.translations,
             );
 
+            blockTranslationSourceFingerprintRef.current = sourceMetadata.sourceFingerprint;
             setBlockTranslations(mergedTranslations);
             setBlockTranslationTargetLanguage(settings.translationTargetLanguage);
             setTranslationProgressCompleted(progress.translatedCount);
 
             if (progress.translatedCount > 0) {
               try {
-                await saveTranslationCache(currentDocument, mergedTranslations);
+                await saveTranslationCache(
+                  currentDocument,
+                  mergedTranslations,
+                  sourceBlocks,
+                );
               } catch (cacheError) {
                 cacheWriteError = cacheError;
                 console.error('Failed to save retranslated block progress', cacheError);
@@ -682,17 +788,33 @@ export function useDocumentTranslation({
           return;
         }
 
+        const reusableInMemoryTranslations =
+          blockTranslationTargetLanguage === settings.translationTargetLanguage &&
+          blockTranslationSourceFingerprintRef.current === sourceMetadata.sourceFingerprint
+            ? selectReusableCachedTranslations(
+                {
+                  ...sourceMetadata,
+                  translations: blockTranslationsRef.current,
+                },
+                sourceBlocks,
+              )
+            : {};
         const nextTranslations = mergeReaderTranslations(
-          blockTranslationsRef.current,
+          reusableInMemoryTranslations,
           result.translations,
         );
         const translatedText = result.translations[block.blockId]?.trim() ?? "";
 
+        blockTranslationSourceFingerprintRef.current = sourceMetadata.sourceFingerprint;
         setBlockTranslations(nextTranslations);
         setBlockTranslationTargetLanguage(settings.translationTargetLanguage);
         setTranslationProgressCompleted(translatedText ? 1 : 0);
         try {
-          await saveTranslationCache(currentDocument, nextTranslations);
+          await saveTranslationCache(
+            currentDocument,
+            nextTranslations,
+            sourceBlocks,
+          );
         } catch (cacheError) {
           cacheWriteError = cacheError;
           console.error('Failed to save retranslated block', cacheError);
@@ -784,6 +906,7 @@ export function useDocumentTranslation({
     },
     [
       currentDocument,
+      blockTranslationTargetLanguage,
       libraryOperationRunning,
       onOpenPreferences,
       saveTranslationCache,
@@ -794,12 +917,15 @@ export function useDocumentTranslation({
       settings.translationTargetLanguage,
       translating,
       translationModelPreset,
+      translationSourceBlocks,
+      translationSourceMetadata,
       updateLibraryOperation,
       lRef,
     ],
   );
 
   const handleClearTranslations = useCallback(() => {
+    blockTranslationSourceFingerprintRef.current = "";
     setBlockTranslations({});
     setStatusMessage(
       lRef.current(
@@ -999,6 +1125,7 @@ export function useDocumentTranslation({
     documentTranslationAbortControllerRef.current = null;
     documentTranslationRequestIdRef.current += 1;
     selectionRequestKeyRef.current = "";
+    blockTranslationSourceFingerprintRef.current = "";
     setBlockTranslations({});
     setBlockTranslationTargetLanguage("");
     setTranslating(false);

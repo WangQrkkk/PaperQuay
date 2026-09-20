@@ -19,6 +19,7 @@ export interface IncrementalTranslationResult {
   cancelled: boolean;
   failedBlocks: TranslationBlockInput[];
   failureMessages: string[];
+  rateLimited: boolean;
   totalBlocks: number;
   translatedCount: number;
   translations: TranslationMap;
@@ -33,11 +34,14 @@ export interface TranslateBlocksBestEffortOptions {
   concurrency: number;
   existingTranslations?: TranslationMap;
   model: string;
+  beforeBatch?: () => Promise<boolean> | boolean;
+  beforeRequest?: (signal?: AbortSignal) => Promise<void> | void;
   onProgress?: (progress: IncrementalTranslationProgress) => Promise<void> | void;
   reasoningEffort?: OpenAICompatibleTranslateOptions['reasoningEffort'];
   requestsPerMinute?: number;
   signal?: AbortSignal;
   sourceLanguage: string;
+  stopOnRateLimit?: boolean;
   targetLanguage: string;
   temperature?: number;
   translateBatch: (
@@ -55,6 +59,108 @@ function toErrorMessage(error: unknown): string {
   }
 
   return '';
+}
+
+export interface TranslationRequestRateLimiterOptions {
+  now?: () => number;
+  wait?: (milliseconds: number) => Promise<void>;
+}
+
+async function waitForDelayOrAbort(
+  wait: (milliseconds: number) => Promise<void>,
+  milliseconds: number,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (!signal) {
+    await wait(milliseconds);
+    return;
+  }
+
+  if (signal.aborted) {
+    return;
+  }
+
+  let removeAbortListener: () => void = () => {};
+  const aborted = new Promise<void>((resolve) => {
+    const handleAbort = () => resolve();
+    signal.addEventListener('abort', handleAbort, { once: true });
+    removeAbortListener = () => signal.removeEventListener('abort', handleAbort);
+  });
+
+  try {
+    await Promise.race([wait(milliseconds), aborted]);
+  } finally {
+    removeAbortListener();
+  }
+}
+
+export function createTranslationRequestRateLimiter(
+  requestsPerMinute: number | null | undefined,
+  options: TranslationRequestRateLimiterOptions = {},
+): (signal?: AbortSignal) => Promise<void> {
+  const normalizedRequestsPerMinute =
+    typeof requestsPerMinute === 'number' && Number.isFinite(requestsPerMinute)
+      ? Math.max(0, requestsPerMinute)
+      : 0;
+
+  if (normalizedRequestsPerMinute <= 0) {
+    return async () => undefined;
+  }
+
+  const now = options.now ?? Date.now;
+  const wait =
+    options.wait ??
+    ((milliseconds: number) =>
+      new Promise<void>((resolve) => {
+        setTimeout(resolve, milliseconds);
+      }));
+  const intervalMilliseconds = 60_000 / normalizedRequestsPerMinute;
+  let nextStartAt = 0;
+  let chain: Promise<void> = Promise.resolve();
+
+  return (signal?: AbortSignal) => {
+    const scheduled = chain.then(async () => {
+      if (signal?.aborted) {
+        return;
+      }
+
+      const remaining = Math.max(0, nextStartAt - now());
+
+      if (remaining > 0) {
+        await waitForDelayOrAbort(wait, remaining, signal);
+      }
+
+      if (signal?.aborted) {
+        return;
+      }
+
+      const startedAt = now();
+      nextStartAt = Math.max(nextStartAt, startedAt) + intervalMilliseconds;
+    });
+
+    chain = scheduled.catch(() => undefined);
+    return scheduled;
+  };
+}
+
+export function isTranslationRateLimitError(error: unknown): boolean {
+  if (
+    error &&
+    typeof error === 'object' &&
+    'status' in error &&
+    Number((error as { status?: unknown }).status) === 429
+  ) {
+    return true;
+  }
+
+  const message = toErrorMessage(error).toLowerCase();
+  return (
+    /(^|\D)429(\D|$)/.test(message) ||
+    message.includes('too many requests') ||
+    message.includes('rate limit') ||
+    message.includes('rate-limit') ||
+    message.includes('rate_limit')
+  );
 }
 
 export function normalizeTranslationMap(translations: TranslationMap | null | undefined): TranslationMap {
@@ -185,11 +291,14 @@ export async function translateBlocksBestEffort({
   concurrency,
   existingTranslations,
   model,
+  beforeBatch,
+  beforeRequest,
   onProgress,
   reasoningEffort,
   requestsPerMinute,
   signal,
   sourceLanguage,
+  stopOnRateLimit = false,
   targetLanguage,
   temperature,
   translateBatch,
@@ -206,12 +315,15 @@ export async function translateBlocksBestEffort({
     Object.fromEntries(collectedTranslations),
   );
   const batches = chunkTranslationBlocks(pendingBlocks, batchSize);
+  const waitForRequestSlot =
+    beforeRequest ?? createTranslationRequestRateLimiter(requestsPerMinute);
 
   if (requestedBlocks.length === 0) {
     return {
       cancelled: Boolean(signal?.aborted),
       failedBlocks: [],
       failureMessages: [],
+      rateLimited: false,
       totalBlocks: 0,
       translatedCount: 0,
       translations: {},
@@ -249,6 +361,7 @@ export async function translateBlocksBestEffort({
       cancelled: Boolean(signal?.aborted),
       failedBlocks: [],
       failureMessages: [],
+      rateLimited: false,
       totalBlocks: requestedBlocks.length,
       translatedCount: Object.keys(translations).length,
       translations,
@@ -256,16 +369,43 @@ export async function translateBlocksBestEffort({
   }
 
   let cursor = 0;
+  let stoppedByControl = false;
+  let rateLimited = false;
   const runWorker = async () => {
     while (true) {
-      if (signal?.aborted) {
+      if (signal?.aborted || stoppedByControl || rateLimited) {
         return;
       }
 
       const currentIndex = cursor;
       cursor += 1;
 
-      if (currentIndex >= batches.length || signal?.aborted) {
+      if (
+        currentIndex >= batches.length ||
+        signal?.aborted ||
+        stoppedByControl ||
+        rateLimited
+      ) {
+        return;
+      }
+
+      if (beforeBatch && !(await beforeBatch())) {
+        stoppedByControl = true;
+        return;
+      }
+
+      if (signal?.aborted || stoppedByControl || rateLimited) {
+        return;
+      }
+
+      await waitForRequestSlot(signal);
+
+      if (beforeBatch && !(await beforeBatch())) {
+        stoppedByControl = true;
+        return;
+      }
+
+      if (signal?.aborted || stoppedByControl || rateLimited) {
         return;
       }
 
@@ -338,6 +478,10 @@ export async function translateBlocksBestEffort({
           failureMessages.push(message);
         }
 
+        if (stopOnRateLimit && isTranslationRateLimitError(error)) {
+          rateLimited = true;
+        }
+
         for (const block of batch) {
           failedBlocksById.set(block.blockId, block);
         }
@@ -355,9 +499,10 @@ export async function translateBlocksBestEffort({
   const translations = Object.fromEntries(collectedTranslations);
 
   return {
-    cancelled: Boolean(signal?.aborted),
+    cancelled: Boolean(signal?.aborted || stoppedByControl),
     failedBlocks: requestedBlocks.filter((block) => !translations[block.blockId]?.trim()),
     failureMessages,
+    rateLimited,
     totalBlocks: requestedBlocks.length,
     translatedCount: Object.keys(translations).length,
     translations,

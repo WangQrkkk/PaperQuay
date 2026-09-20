@@ -58,9 +58,10 @@ import {
   loadStoredNumber,
 } from './readerWorkspaceShared';
 import {
-  mergeLocalPdfPath,
   createNativeLibraryWorkspaceItem,
+  createNativeLibraryWorkspaceItems,
   getModelRuntimeConfig,
+  mergeWorkspaceItemCollections,
   resolveLanguageLabel,
   type PreferencesSectionKey,
 } from './readerShared';
@@ -165,6 +166,7 @@ function Reader({ workspaceActive = true }: ReaderProps) {
 
   const [standaloneItems, setStandaloneItems] = useState<WorkspaceItem[]>([]);
   const [nativeLibraryItems, setNativeLibraryItems] = useState<WorkspaceItem[]>([]);
+  const [nativeLibraryHydrating, setNativeLibraryHydrating] = useState(false);
   const [selectedLibraryItemId, setSelectedLibraryItemId] = useState<string | null>(null);
   const [libraryLoading, setLibraryLoading] = useState(false);
   const [readerBridges, setReaderBridges] = useState<Record<string, ReaderTabBridgeState>>({});
@@ -227,9 +229,62 @@ function Reader({ workspaceActive = true }: ReaderProps) {
     [settings.uiLanguage],
   );
 
+  const loadNativeLibraryBatchItems = useCallback(async () => {
+    const papers = await listLibraryPapers({
+      limit: 1000,
+      sortBy: 'updatedAt',
+      sortDirection: 'desc',
+    });
+    const hydratedItems = createNativeLibraryWorkspaceItems(
+      papers,
+      librarySettings?.storageDir,
+    );
+
+    // This is an authoritative snapshot of native-library items. Replacing the
+    // previous collection prevents deleted papers or stale attachment paths
+    // from leaking into a later batch run.
+    setNativeLibraryItems(hydratedItems);
+
+    return hydratedItems;
+  }, [librarySettings?.storageDir]);
+
   useEffect(() => {
     setHomeTabTitle(getHomeTabTitle(settings.uiLanguage));
   }, [setHomeTabTitle, settings.uiLanguage]);
+
+  useEffect(() => {
+    if (!configHydrated) {
+      return undefined;
+    }
+
+    let cancelled = false;
+    setNativeLibraryHydrating(true);
+
+    void loadNativeLibraryBatchItems()
+      .catch((nextError) => {
+        if (cancelled) {
+          return;
+        }
+
+        const message =
+          nextError instanceof Error
+            ? nextError.message
+            : settings.uiLanguage === 'en-US'
+              ? 'Failed to load the library for batch processing.'
+              : '加载批处理文库失败。';
+        setError(message);
+        setStatusMessage(message);
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setNativeLibraryHydrating(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [configHydrated, loadNativeLibraryBatchItems, settings.uiLanguage]);
 
   useEffect(() => {
     const fallbackPresetId =
@@ -290,35 +345,21 @@ function Reader({ workspaceActive = true }: ReaderProps) {
     [activeTabId, tabs],
   );
 
-  const workspaceItemMap = useMemo(() => {
-    const itemMap = new Map<string, WorkspaceItem>();
-
-    const applyItems = (items: WorkspaceItem[]) => {
-      for (const item of items) {
-        const existingItem = itemMap.get(item.workspaceId);
-
-        if (!existingItem) {
-          itemMap.set(item.workspaceId, item);
-          continue;
-        }
-
-        itemMap.set(item.workspaceId, {
-          ...existingItem,
-          ...item,
-          localPdfPath: mergeLocalPdfPath(existingItem, item),
-        });
-      }
-    };
-
-    applyItems(standaloneItems);
-    applyItems(nativeLibraryItems);
-
-    return itemMap;
-  }, [nativeLibraryItems, standaloneItems]);
+  const workspaceItemMap = useMemo(
+    () => new Map(
+      mergeWorkspaceItemCollections(standaloneItems, nativeLibraryItems)
+        .map((item) => [item.workspaceId, item]),
+    ),
+    [nativeLibraryItems, standaloneItems],
+  );
 
   const allKnownItems = useMemo(
     () => Array.from(workspaceItemMap.values()),
     [workspaceItemMap],
+  );
+  const mineruBatchCandidateCount = useMemo(
+    () => allKnownItems.filter((item) => item.localPdfPath?.trim()).length,
+    [allKnownItems],
   );
 
   const readerTabs = useMemo(
@@ -427,12 +468,17 @@ function Reader({ workspaceActive = true }: ReaderProps) {
     batchMineruPaused,
     batchMineruProgress,
     batchMineruRunning,
+    batchTranslationPaused,
+    batchTranslationProgress,
+    batchTranslationRunning,
     batchSummaryPaused,
     batchSummaryProgress,
     batchSummaryRunning,
     handleBatchGenerateSummaries,
     handleBatchMineruParse,
+    handleBatchTranslateEnglish,
     handleCancelBatchMineru,
+    handleCancelBatchTranslation,
     handleCancelBatchSummary,
     handleNativeLibraryGenerateSummary,
     handleNativeLibraryMineruParse,
@@ -444,6 +490,7 @@ function Reader({ workspaceActive = true }: ReaderProps) {
     handleListLlmModels,
     handleTestLlmConnection,
     handleToggleBatchMineruPause,
+    handleToggleBatchTranslationPause,
     handleToggleBatchSummaryPause,
     handleWindowClose,
     handleWindowMinimize,
@@ -462,6 +509,7 @@ function Reader({ workspaceActive = true }: ReaderProps) {
     libraryPreviewStates,
     librarySettings,
     loadLibraryPreviewBlocks,
+    loadLibraryBatchItems: loadNativeLibraryBatchItems,
     libraryTranslationSnapshots,
     mineruApiToken,
     settings,
@@ -931,6 +979,10 @@ function Reader({ workspaceActive = true }: ReaderProps) {
           zoteroApiKey={zoteroApiKey}
           zoteroUserId={zoteroUserId}
           libraryLoading={libraryLoading}
+          mineruBatchCandidateCount={mineruBatchCandidateCount}
+          mineruBatchHydrating={nativeLibraryHydrating}
+          statusMessage={statusMessage}
+          errorMessage={error}
           translating={activeReaderBridge?.translating ?? false}
           translatedCount={activeReaderBridge?.translatedCount ?? 0}
           onSettingChange={updateSetting}
@@ -959,16 +1011,22 @@ function Reader({ workspaceActive = true }: ReaderProps) {
           onCancelTranslate={activeReaderBridge?.onCancelTranslate}
           onClearTranslations={activeReaderBridge?.onClearTranslations}
           onBatchMineruParse={() => void handleBatchMineruParse()}
+          onBatchTranslateEnglish={() => void handleBatchTranslateEnglish()}
           onBatchGenerateSummaries={() => void handleBatchGenerateSummaries()}
           onToggleBatchMineruPause={handleToggleBatchMineruPause}
           onCancelBatchMineru={handleCancelBatchMineru}
+          onToggleBatchTranslationPause={handleToggleBatchTranslationPause}
+          onCancelBatchTranslation={handleCancelBatchTranslation}
           onToggleBatchSummaryPause={handleToggleBatchSummaryPause}
           onCancelBatchSummary={handleCancelBatchSummary}
           batchMineruRunning={batchMineruRunning}
+          batchTranslationRunning={batchTranslationRunning}
           batchSummaryRunning={batchSummaryRunning}
           batchMineruPaused={batchMineruPaused}
+          batchTranslationPaused={batchTranslationPaused}
           batchSummaryPaused={batchSummaryPaused}
           batchMineruProgress={batchMineruProgress}
+          batchTranslationProgress={batchTranslationProgress}
           batchSummaryProgress={batchSummaryProgress}
         />
       </div>

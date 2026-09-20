@@ -176,6 +176,7 @@ export const DEFAULT_SETTINGS: ReaderSettings = {
   uiLanguage: 'zh-CN',
   autoLoadSiblingJson: false,
   autoMineruParse: false,
+  autoTranslateEnglishLibrary: false,
   autoGenerateSummary: false,
   localRagEnabled: true,
   localRagTopK: 6,
@@ -582,6 +583,8 @@ export interface TranslationCacheEnvelope {
   targetLanguage: string;
   translatedAt: string;
   translations: TranslationMap;
+  sourceFingerprint?: string;
+  blockSourceFingerprints?: Record<string, string>;
 }
 
 export interface BatchProgressState {
@@ -653,6 +656,10 @@ export function clampBatchConcurrency(value: number): number {
   }
 
   return Math.min(8, Math.max(1, Math.trunc(value)));
+}
+
+export function clampMineruBatchConcurrency(value: number): number {
+  return Math.min(2, clampBatchConcurrency(value));
 }
 
 function getPathSeparator(path: string): string {
@@ -754,10 +761,11 @@ export function normalizeReaderSettings(value?: Partial<ReaderSettings> | null):
   return {
     ...merged,
     uiLanguage: merged.uiLanguage === 'en-US' ? 'en-US' : 'zh-CN',
+    autoTranslateEnglishLibrary: merged.autoTranslateEnglishLibrary === true,
     localRagEnabled: merged.localRagEnabled !== false,
     localRagTopK: clampLocalRagTopK(merged.localRagTopK),
     ragSourceMode: normalizeRagSourceMode(merged.ragSourceMode),
-    libraryBatchConcurrency: clampBatchConcurrency(merged.libraryBatchConcurrency),
+    libraryBatchConcurrency: clampMineruBatchConcurrency(merged.libraryBatchConcurrency),
     showLibraryReadingHeatmap: merged.showLibraryReadingHeatmap !== false,
     enablePdfReadingHeatmap: merged.enablePdfReadingHeatmap !== false,
     enableSelectionTranslation: merged.enableSelectionTranslation !== false,
@@ -963,6 +971,64 @@ export function createNativeLibraryWorkspaceItem(
     workspaceId,
     groupKey: workspaceId,
   };
+}
+
+export function createNativeLibraryWorkspaceItems(
+  papers: LiteraturePaper[],
+  storageDir?: string | null,
+): WorkspaceItem[] {
+  const items: WorkspaceItem[] = [];
+
+  for (const paper of papers) {
+    const item = createNativeLibraryWorkspaceItem(paper, storageDir);
+
+    if (item) {
+      items.push(item);
+    }
+  }
+
+  return items;
+}
+
+export function mergeWorkspaceItemCollections(
+  ...collections: WorkspaceItem[][]
+): WorkspaceItem[] {
+  const itemsByWorkspaceId = new Map<string, WorkspaceItem>();
+
+  for (const items of collections) {
+    for (const item of items) {
+      const existingItem = itemsByWorkspaceId.get(item.workspaceId);
+
+      itemsByWorkspaceId.set(
+        item.workspaceId,
+        existingItem
+          ? {
+              ...existingItem,
+              ...item,
+              localPdfPath: mergeLocalPdfPath(existingItem, item),
+            }
+          : item,
+      );
+    }
+  }
+
+  return Array.from(itemsByWorkspaceId.values());
+}
+
+export function buildAuthoritativeLibraryBatchItems(
+  currentItems: WorkspaceItem[],
+  libraryItems: WorkspaceItem[],
+): WorkspaceItem[] {
+  const standaloneItems = currentItems.filter(
+    (item) => item.source !== 'native-library',
+  );
+
+  return mergeWorkspaceItemCollections(standaloneItems, libraryItems);
+}
+
+export function isMineruRateLimitError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error ?? '');
+  return /(?:http\s*429|rate\s*limit|too many requests)/i.test(message);
 }
 
 export function textSignature(value: string): string {

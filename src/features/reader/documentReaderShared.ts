@@ -44,6 +44,8 @@ export interface ReaderTabBridgeState {
 }
 
 export interface ReaderDocumentTranslationSnapshot {
+  blockSourceFingerprints?: Record<string, string>;
+  sourceFingerprint?: string;
   targetLanguage: string;
   translations: TranslationMap;
   updatedAt: number;

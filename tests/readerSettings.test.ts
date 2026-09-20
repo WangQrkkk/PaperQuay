@@ -31,6 +31,22 @@ test("normalizeReaderSettings defaults review writing model preset", async () =>
   const settings = normalizeReaderSettings();
 
   assert.equal(settings.reviewModelPresetId, DEFAULT_SETTINGS.reviewModelPresetId);
+  assert.equal(settings.autoTranslateEnglishLibrary, false);
+});
+
+test("English-library auto translation remains opt-in", async () => {
+  const { normalizeReaderSettings } = await loadReaderShared();
+
+  assert.equal(
+    normalizeReaderSettings({ autoTranslateEnglishLibrary: true })
+      .autoTranslateEnglishLibrary,
+    true,
+  );
+  assert.equal(
+    normalizeReaderSettings({ autoTranslateEnglishLibrary: false })
+      .autoTranslateEnglishLibrary,
+    false,
+  );
 });
 
 test("normalizeReaderSettings migrates review writing model preset from overview preset", async () => {

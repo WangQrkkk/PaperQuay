@@ -4,6 +4,7 @@ import {
   type MineruCloudParseResult,
 } from '../../services/desktop';
 import { parseMineruPages } from '../../services/mineru';
+import { isMineruRateLimitError } from './readerShared';
 
 export interface MineruParseWithFallbackResult {
   result: MineruCloudParseResult;
@@ -24,14 +25,18 @@ function createEmptyResultError() {
   return new Error('MinerU returned an empty structured result.');
 }
 
-function shouldRetryWithOcr(error: unknown) {
+export function shouldRetryWithOcr(error: unknown) {
   const message = error instanceof Error ? error.message : String(error ?? '');
 
   if (!message.trim()) {
     return true;
   }
 
-  return !/(api\s*token|authorization|unauthori[sz]ed|forbidden|http\s*(?:401|403)|upload url|upload failed|zip download|timed?\s*out|timeout)/i.test(
+  if (isMineruRateLimitError(error)) {
+    return false;
+  }
+
+  return !/(api\s*token|authorization|unauthori[sz]ed|forbidden|http\s*(?:401|403|408|425|5\d\d)|upload url|upload failed|zip download|timed?\s*out|timeout|network|fetch failed|econn|enet|eai_again|socket|service unavailable|bad gateway)/i.test(
     message,
   );
 }

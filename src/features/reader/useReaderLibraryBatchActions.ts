@@ -1,13 +1,25 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { runMineruCloudParse } from '../../services/desktop';
 import { resolveSummaryOutputLanguage } from '../../services/summarySource';
+import { extractTranslatableMarkdownFromMineruBlock } from '../../services/mineru';
+import type { WorkspaceItem } from '../../types/reader';
 import { buildMineruCachePaths } from '../../utils/mineruCache';
+import { runMineruCloudParseWithOcrFallback } from './mineruOcrFallback';
+import { createTranslationRequestRateLimiter } from './readerTranslation';
+import { buildTranslationSourceMetadata } from './readerTranslationSource';
+import {
+  getAutoEnglishTranslationAttemptKey,
+  type LibraryTranslationRunOptions,
+  type LibraryTranslationRunResult,
+} from './readerLibraryTranslationBatch';
 import {
   clampBatchConcurrency,
+  clampMineruBatchConcurrency,
+  buildAuthoritativeLibraryBatchItems,
   EMPTY_BATCH_PROGRESS,
   getAutoParseAttemptKey,
   getAutoSummaryAttemptKey,
+  isMineruRateLimitError,
   sleep,
   type BatchProgressState,
 } from './readerShared';
@@ -22,6 +34,8 @@ interface UseReaderLibraryBatchActionsOptions
     | 'generateLibraryPreview'
     | 'itemParseStatusMap'
     | 'l'
+    | 'loadLibraryBatchItems'
+    | 'loadLibraryPreviewBlocks'
     | 'mineruApiToken'
     | 'saveLibraryMineruParseCache'
     | 'setError'
@@ -30,20 +44,35 @@ interface UseReaderLibraryBatchActionsOptions
     | 'settings'
     | 'summaryConfigured'
     | 'syncLibraryParsedState'
-  > {}
+  > {
+  runLibraryItemTranslation: (
+    item: WorkspaceItem,
+    options?: LibraryTranslationRunOptions,
+  ) => Promise<LibraryTranslationRunResult>;
+  translationConfigurationKey: string;
+  translationConfigured: boolean;
+}
+
+type LibraryBatchKind = 'mineru' | 'summary' | 'translation';
 
 export interface UseReaderLibraryBatchActionsResult {
   batchMineruPaused: boolean;
   batchMineruProgress: BatchProgressState;
   batchMineruRunning: boolean;
+  batchTranslationPaused: boolean;
+  batchTranslationProgress: BatchProgressState;
+  batchTranslationRunning: boolean;
   batchSummaryPaused: boolean;
   batchSummaryProgress: BatchProgressState;
   batchSummaryRunning: boolean;
   handleBatchGenerateSummaries: (options?: { auto?: boolean }) => Promise<void>;
   handleBatchMineruParse: (options?: { auto?: boolean }) => Promise<void>;
+  handleBatchTranslateEnglish: (options?: { auto?: boolean }) => Promise<void>;
   handleCancelBatchMineru: () => void;
+  handleCancelBatchTranslation: () => void;
   handleCancelBatchSummary: () => void;
   handleToggleBatchMineruPause: () => void;
+  handleToggleBatchTranslationPause: () => void;
   handleToggleBatchSummaryPause: () => void;
 }
 
@@ -54,7 +83,10 @@ export function useReaderLibraryBatchActions({
   generateLibraryPreview,
   itemParseStatusMap,
   l,
+  loadLibraryBatchItems,
+  loadLibraryPreviewBlocks,
   mineruApiToken,
+  runLibraryItemTranslation,
   saveLibraryMineruParseCache,
   setError,
   setPreferencesOpen,
@@ -62,33 +94,88 @@ export function useReaderLibraryBatchActions({
   settings,
   summaryConfigured,
   syncLibraryParsedState,
+  translationConfigurationKey,
+  translationConfigured,
 }: UseReaderLibraryBatchActionsOptions): UseReaderLibraryBatchActionsResult {
   const autoMineruAttemptedRef = useRef<Set<string>>(new Set());
+  const autoTranslationAttemptedRef = useRef<Set<string>>(new Set());
   const autoSummaryAttemptedRef = useRef<Set<string>>(new Set());
+  const batchMineruStartingRef = useRef(false);
   const batchMineruRunningRef = useRef(false);
+  const batchTranslationRunningRef = useRef(false);
   const batchSummaryRunningRef = useRef(false);
   const batchMineruPausedRef = useRef(false);
+  const batchTranslationPausedRef = useRef(false);
   const batchSummaryPausedRef = useRef(false);
   const batchMineruCancelRequestedRef = useRef(false);
+  const batchTranslationCancelRequestedRef = useRef(false);
+  const batchTranslationRateLimitAbortControllerRef = useRef<AbortController | null>(null);
   const batchSummaryCancelRequestedRef = useRef(false);
+  const batchCoordinatorRef = useRef<LibraryBatchKind | null>(null);
+  const autoTranslationBlockedSignatureRef = useRef<string | null>(null);
+  const autoPipelineRunningRef = useRef(false);
+  const autoPipelineRerunRequestedRef = useRef(false);
+  const autoPipelineLatestRunRef = useRef<(() => Promise<void>) | null>(null);
 
   const [batchMineruRunning, setBatchMineruRunning] = useState(false);
+  const [batchTranslationRunning, setBatchTranslationRunning] = useState(false);
   const [batchSummaryRunning, setBatchSummaryRunning] = useState(false);
   const [batchMineruPaused, setBatchMineruPaused] = useState(false);
+  const [batchTranslationPaused, setBatchTranslationPaused] = useState(false);
   const [batchSummaryPaused, setBatchSummaryPaused] = useState(false);
   const [batchMineruProgress, setBatchMineruProgress] = useState<BatchProgressState>(
+    EMPTY_BATCH_PROGRESS,
+  );
+  const [batchTranslationProgress, setBatchTranslationProgress] = useState<BatchProgressState>(
     EMPTY_BATCH_PROGRESS,
   );
   const [batchSummaryProgress, setBatchSummaryProgress] = useState<BatchProgressState>(
     EMPTY_BATCH_PROGRESS,
   );
 
+  const acquireBatchCoordinator = useCallback(
+    (kind: LibraryBatchKind, auto: boolean) => {
+      if (batchCoordinatorRef.current !== null) {
+        if (!auto) {
+          setStatusMessage(
+            l(
+              '另一项全库任务正在运行，请等待其结束后再试。',
+              'Another library-wide task is running. Try again after it finishes.',
+            ),
+          );
+        }
+        return false;
+      }
+
+      batchCoordinatorRef.current = kind;
+      return true;
+    },
+    [l, setStatusMessage],
+  );
+
+  const releaseBatchCoordinator = useCallback((kind: LibraryBatchKind) => {
+    if (batchCoordinatorRef.current === kind) {
+      batchCoordinatorRef.current = null;
+    }
+  }, []);
+
   const handleBatchMineruParse = useCallback(
     async (options?: { auto?: boolean }) => {
       const auto = options?.auto ?? false;
 
-      if (batchMineruRunningRef.current) {
+      if (batchMineruStartingRef.current || batchMineruRunningRef.current) {
         return;
+      }
+
+      if (!acquireBatchCoordinator('mineru', auto)) {
+        return;
+      }
+
+      batchMineruStartingRef.current = true;
+
+      if (!auto) {
+        setError('');
+        setStatusMessage(l('正在刷新完整文库…', 'Refreshing the full library…'));
       }
 
       if (!mineruApiToken.trim()) {
@@ -97,19 +184,40 @@ export function useReaderLibraryBatchActions({
           setError(l('缺少 MinerU API Token', 'MinerU API Token is missing'));
           setStatusMessage(l('缺少 MinerU API Token', 'MinerU API Token is missing'));
         }
+        batchMineruStartingRef.current = false;
+        releaseBatchCoordinator('mineru');
         return;
       }
 
-      if (allKnownItems.length === 0) {
+      let batchItems = allKnownItems;
+
+      try {
+        const libraryItems = await loadLibraryBatchItems();
+        batchItems = buildAuthoritativeLibraryBatchItems(allKnownItems, libraryItems);
+      } catch (nextError) {
+        const message =
+          nextError instanceof Error
+            ? nextError.message
+            : l('加载批处理文库失败', 'Failed to load the library for batch processing');
+        setError(message);
+        setStatusMessage(message);
+        batchMineruStartingRef.current = false;
+        releaseBatchCoordinator('mineru');
+        return;
+      }
+
+      if (batchItems.length === 0) {
         if (!auto) {
           setStatusMessage(
             l('当前没有可解析的文献', 'No documents are available for parsing'),
           );
         }
+        batchMineruStartingRef.current = false;
+        releaseBatchCoordinator('mineru');
         return;
       }
 
-      const candidates = allKnownItems.filter((item) => {
+      const candidates = batchItems.filter((item) => {
         const attemptKey = getAutoParseAttemptKey(item);
         return !(auto && autoMineruAttemptedRef.current.has(attemptKey));
       });
@@ -123,12 +231,15 @@ export function useReaderLibraryBatchActions({
             ),
           );
         }
+        batchMineruStartingRef.current = false;
+        releaseBatchCoordinator('mineru');
         return;
       }
 
-      const concurrency = clampBatchConcurrency(settings.libraryBatchConcurrency);
+      const concurrency = clampMineruBatchConcurrency(settings.libraryBatchConcurrency);
 
       batchMineruRunningRef.current = true;
+      batchMineruStartingRef.current = false;
       batchMineruPausedRef.current = false;
       batchMineruCancelRequestedRef.current = false;
       setBatchMineruRunning(true);
@@ -152,6 +263,7 @@ export function useReaderLibraryBatchActions({
       let completedCount = 0;
       let successCount = 0;
       let lastErrorMessage = '';
+      let rateLimited = false;
       let cursor = 0;
 
       const waitForResumeOrCancel = async () => {
@@ -215,6 +327,13 @@ export function useReaderLibraryBatchActions({
                   existingParse.path,
                   l('已复用已有的 MinerU 结果', 'Reused the existing MinerU result'),
                 );
+                if (item.source === 'native-library') {
+                  window.dispatchEvent(
+                    new CustomEvent('paperquay:native-mineru-status-updated', {
+                      detail: { paperId: item.itemKey, mineruParsed: true },
+                    }),
+                  );
+                }
                 existingCount += 1;
                 successCount += 1;
                 continue;
@@ -230,7 +349,7 @@ export function useReaderLibraryBatchActions({
               const cachePaths = settings.mineruCacheDir.trim()
                 ? buildMineruCachePaths(settings.mineruCacheDir.trim(), item)
                 : null;
-              const result = await runMineruCloudParse({
+              const parseResult = await runMineruCloudParseWithOcrFallback({
                 apiToken: mineruApiToken.trim(),
                 apiBaseUrl: settings.mineruApiBaseUrl,
                 pdfPath,
@@ -242,8 +361,17 @@ export function useReaderLibraryBatchActions({
                 isOcr: false,
                 timeoutSecs: 900,
                 pollIntervalSecs: 5,
+              }, () => {
+                if (!auto) {
+                  setStatusMessage(
+                    l(
+                      `普通解析未返回可用结构，正在以 OCR 重试：${currentLabel}`,
+                      `No usable structure was returned. Retrying with OCR: ${currentLabel}`,
+                    ),
+                  );
+                }
               });
-              const jsonText = result.contentJsonText ?? result.middleJsonText;
+              const { result, jsonText } = parseResult;
 
               if (!jsonText?.trim()) {
                 throw new Error(
@@ -265,7 +393,7 @@ export function useReaderLibraryBatchActions({
                 dataId: result.dataId,
                 fileName: result.fileName,
                 zipEntries: result.zipEntries,
-              }).catch(() => null);
+              });
 
               const resolvedJsonPath =
                 result.contentJsonPath ||
@@ -283,6 +411,13 @@ export function useReaderLibraryBatchActions({
                 : l('已完成 MinerU 解析', 'MinerU parsing finished');
 
               syncLibraryParsedState(item, jsonText, resolvedJsonPath, status);
+              if (item.source === 'native-library') {
+                window.dispatchEvent(
+                  new CustomEvent('paperquay:native-mineru-status-updated', {
+                    detail: { paperId: item.itemKey, mineruParsed: true },
+                  }),
+                );
+              }
               parsedCount += 1;
               successCount += 1;
             } catch (nextError) {
@@ -291,6 +426,10 @@ export function useReaderLibraryBatchActions({
                 nextError instanceof Error
                   ? nextError.message
                   : l('MinerU 解析失败', 'MinerU parsing failed');
+              if (isMineruRateLimitError(nextError)) {
+                rateLimited = true;
+                batchMineruCancelRequestedRef.current = true;
+              }
             } finally {
               completedCount += 1;
               autoMineruAttemptedRef.current.add(attemptKey);
@@ -318,7 +457,12 @@ export function useReaderLibraryBatchActions({
           skipped: skippedCount,
           failed: failedCount,
           currentLabel:
-            wasCancelled
+            rateLimited
+              ? l(
+                  `MinerU 触发限流，已停止本轮；已完成 ${completedCount}/${candidates.length}`,
+                  `MinerU rate limit reached; stopped this run after ${completedCount}/${candidates.length}`,
+                )
+              : wasCancelled
               ? l(
                   `MinerU 批处理已取消，已完成 ${completedCount}/${candidates.length}`,
                   `MinerU batch cancelled after ${completedCount}/${candidates.length}`,
@@ -330,6 +474,7 @@ export function useReaderLibraryBatchActions({
                   )
                 : '',
         });
+        releaseBatchCoordinator('mineru');
       }
 
       if (!auto) {
@@ -338,7 +483,12 @@ export function useReaderLibraryBatchActions({
         }
 
         setStatusMessage(
-          batchMineruCancelRequestedRef.current
+          rateLimited
+            ? l(
+                `MinerU 触发限流，已停止本轮：新增 ${parsedCount}，复用 ${existingCount}，跳过 ${skippedCount}，失败 ${failedCount}`,
+                `MinerU rate limit reached; stopped this run: parsed ${parsedCount}, reused ${existingCount}, skipped ${skippedCount}, failed ${failedCount}`,
+              )
+            : batchMineruCancelRequestedRef.current
             ? l(
                 `MinerU 批处理已取消：新增 ${parsedCount}，复用 ${existingCount}，跳过 ${skippedCount}，失败 ${failedCount}`,
                 `MinerU batch cancelled: parsed ${parsedCount}, reused ${existingCount}, skipped ${skippedCount}, failed ${failedCount}`,
@@ -352,9 +502,12 @@ export function useReaderLibraryBatchActions({
     },
     [
       allKnownItems,
+      acquireBatchCoordinator,
       findExistingMineruJson,
       l,
+      loadLibraryBatchItems,
       mineruApiToken,
+      releaseBatchCoordinator,
       saveLibraryMineruParseCache,
       setError,
       setPreferencesOpen,
@@ -366,11 +519,329 @@ export function useReaderLibraryBatchActions({
     ],
   );
 
+  const handleBatchTranslateEnglish = useCallback(
+    async (options?: { auto?: boolean }) => {
+      const auto = options?.auto ?? false;
+
+      if (batchTranslationRunningRef.current) {
+        return;
+      }
+
+      if (!auto) {
+        autoTranslationBlockedSignatureRef.current = null;
+      }
+
+      if (!acquireBatchCoordinator('translation', auto)) {
+        return;
+      }
+
+      if (!translationConfigured) {
+        if (!auto) {
+          setPreferencesOpen(true);
+          setError(l('缺少可用的翻译模型配置', 'Translation model configuration is missing'));
+          setStatusMessage(
+            l('缺少可用的翻译模型配置', 'Translation model configuration is missing'),
+          );
+        }
+        releaseBatchCoordinator('translation');
+        return;
+      }
+
+      let batchItems = allKnownItems;
+
+      try {
+        const libraryItems = await loadLibraryBatchItems();
+        batchItems = buildAuthoritativeLibraryBatchItems(allKnownItems, libraryItems);
+      } catch (nextError) {
+        const message =
+          nextError instanceof Error
+            ? nextError.message
+            : l('加载批处理文库失败', 'Failed to load the library for batch processing');
+        if (!auto) {
+          setError(message);
+          setStatusMessage(message);
+        }
+        releaseBatchCoordinator('translation');
+        return;
+      }
+
+      let preparedItems: Array<{
+        attemptKey: string;
+        item: WorkspaceItem;
+        sourceFingerprint: string;
+      }> = [];
+
+      try {
+        preparedItems = (
+          await Promise.all(
+            batchItems.map(async (item) => {
+              try {
+                const preview = await loadLibraryPreviewBlocks(item);
+                const sourceBlocks = preview.blocks
+                  .map((block) => ({
+                    blockId: block.blockId,
+                    text: extractTranslatableMarkdownFromMineruBlock(block),
+                  }))
+                  .filter((block) => block.text.trim().length > 0);
+
+                if (sourceBlocks.length === 0) {
+                  return null;
+                }
+
+                const { sourceFingerprint } = buildTranslationSourceMetadata(sourceBlocks);
+                return {
+                  attemptKey: getAutoEnglishTranslationAttemptKey(item, sourceFingerprint),
+                  item,
+                  sourceFingerprint,
+                };
+              } catch {
+                return null;
+              }
+            }),
+          )
+        ).filter((candidate): candidate is NonNullable<typeof candidate> => candidate !== null);
+      } catch (nextError) {
+        const message =
+          nextError instanceof Error
+            ? nextError.message
+            : l('检查 MinerU 结构化正文失败', 'Failed to inspect MinerU structured text');
+        if (!auto) {
+          setError(message);
+          setStatusMessage(message);
+        }
+        releaseBatchCoordinator('translation');
+        return;
+      }
+
+      const runSignature = [
+        translationConfigurationKey,
+        ...preparedItems.map(({ attemptKey }) => attemptKey).sort(),
+      ].join('\u001e');
+
+      if (auto && autoTranslationBlockedSignatureRef.current === runSignature) {
+        releaseBatchCoordinator('translation');
+        return;
+      }
+
+      const candidates = preparedItems.filter(
+        ({ attemptKey }) =>
+          !(auto && autoTranslationAttemptedRef.current.has(attemptKey)),
+      );
+
+      if (candidates.length === 0) {
+        if (!auto) {
+          setStatusMessage(
+            l(
+              '当前没有已完成 MinerU 解析、可检查翻译的论文',
+              'No MinerU-parsed papers are ready for translation checks',
+            ),
+          );
+        }
+        releaseBatchCoordinator('translation');
+        return;
+      }
+
+      const waitForTranslationRequestSlot = createTranslationRequestRateLimiter(
+        settings.translationRequestsPerMinute,
+      );
+      const rateLimitAbortController = new AbortController();
+      batchTranslationRateLimitAbortControllerRef.current?.abort();
+      batchTranslationRateLimitAbortControllerRef.current = rateLimitAbortController;
+
+      batchTranslationRunningRef.current = true;
+      batchTranslationPausedRef.current = false;
+      batchTranslationCancelRequestedRef.current = false;
+      setBatchTranslationRunning(true);
+      setBatchTranslationPaused(false);
+      setBatchTranslationProgress({
+        running: true,
+        paused: false,
+        cancelRequested: false,
+        total: candidates.length,
+        completed: 0,
+        succeeded: 0,
+        skipped: 0,
+        failed: 0,
+        currentLabel: candidates[0]?.item.title ?? '',
+      });
+
+      let completedCount = 0;
+      let succeededCount = 0;
+      let skippedCount = 0;
+      let failedCount = 0;
+      let rateLimited = false;
+
+      const waitForResumeOrCancel = async () => {
+        while (
+          batchTranslationPausedRef.current &&
+          !batchTranslationCancelRequestedRef.current
+        ) {
+          await sleep(120);
+        }
+
+        return !batchTranslationCancelRequestedRef.current;
+      };
+
+      const updateProgress = (currentLabel: string) => {
+        setBatchTranslationProgress({
+          running: true,
+          paused: batchTranslationPausedRef.current,
+          cancelRequested: batchTranslationCancelRequestedRef.current,
+          total: candidates.length,
+          completed: completedCount,
+          succeeded: succeededCount,
+          skipped: skippedCount,
+          failed: failedCount,
+          currentLabel,
+        });
+      };
+
+      try {
+        for (let index = 0; index < candidates.length; index += 1) {
+          if (!(await waitForResumeOrCancel())) {
+            break;
+          }
+
+          const candidate = candidates[index];
+          const item = candidate.item;
+          const currentLabel = `${index + 1}/${candidates.length} ${item.title}`;
+
+          if (!auto) {
+            setStatusMessage(
+              l(
+                `正在检查并翻译英文论文：${currentLabel}`,
+                `Checking and translating English papers: ${currentLabel}`,
+              ),
+            );
+          }
+          updateProgress(currentLabel);
+
+          try {
+            const result = await runLibraryItemTranslation(item, {
+              batchSize: 1,
+              beforeRequest: () =>
+                waitForTranslationRequestSlot(rateLimitAbortController.signal),
+              concurrency: 1,
+              englishOnly: true,
+              quiet: true,
+              sourceLanguage: 'English',
+              stopOnRateLimit: true,
+              targetLanguage: 'Chinese',
+              waitForResumeOrCancel,
+            });
+
+            if (result.status === 'success') {
+              succeededCount += 1;
+            } else if (result.status === 'skipped' || result.status === 'cancelled') {
+              skippedCount += 1;
+            } else {
+              failedCount += 1;
+            }
+
+            if (result.status === 'rate-limited') {
+              rateLimited = true;
+              batchTranslationCancelRequestedRef.current = true;
+            }
+          } catch {
+            failedCount += 1;
+          } finally {
+            completedCount += 1;
+            autoTranslationAttemptedRef.current.add(candidate.attemptKey);
+            updateProgress(currentLabel);
+          }
+
+          if (rateLimited || batchTranslationCancelRequestedRef.current) {
+            break;
+          }
+        }
+      } finally {
+        const wasCancelled =
+          batchTranslationCancelRequestedRef.current && !rateLimited;
+        if (rateLimited || wasCancelled) {
+          autoTranslationBlockedSignatureRef.current = runSignature;
+        }
+        batchTranslationRunningRef.current = false;
+        batchTranslationPausedRef.current = false;
+        rateLimitAbortController.abort();
+        if (
+          batchTranslationRateLimitAbortControllerRef.current === rateLimitAbortController
+        ) {
+          batchTranslationRateLimitAbortControllerRef.current = null;
+        }
+        setBatchTranslationRunning(false);
+        setBatchTranslationPaused(false);
+        setBatchTranslationProgress({
+          running: false,
+          paused: false,
+          cancelRequested: wasCancelled,
+          total: candidates.length,
+          completed: completedCount,
+          succeeded: succeededCount,
+          skipped: skippedCount,
+          failed: failedCount,
+          currentLabel: rateLimited
+            ? l(
+                `翻译服务触发 429 限流，已停止本轮；已完成 ${completedCount}/${candidates.length}`,
+                `Translation hit a 429 rate limit; stopped after ${completedCount}/${candidates.length}`,
+              )
+            : wasCancelled
+              ? l(
+                  `英文论文批量翻译已取消，已完成 ${completedCount}/${candidates.length}`,
+                  `English-paper batch translation cancelled after ${completedCount}/${candidates.length}`,
+                )
+              : l(
+                  `英文论文批量翻译进度 ${completedCount}/${candidates.length}`,
+                  `English-paper batch translation progress ${completedCount}/${candidates.length}`,
+                ),
+        });
+        releaseBatchCoordinator('translation');
+      }
+
+      if (!auto || rateLimited) {
+        setStatusMessage(
+          rateLimited
+            ? l(
+                `翻译服务触发 429 限流，已停止本轮：成功 ${succeededCount}，跳过 ${skippedCount}，失败 ${failedCount}`,
+                `Translation hit a 429 rate limit and stopped: succeeded ${succeededCount}, skipped ${skippedCount}, failed ${failedCount}`,
+              )
+            : batchTranslationCancelRequestedRef.current
+              ? l(
+                  `英文论文批量翻译已取消：成功 ${succeededCount}，跳过 ${skippedCount}，失败 ${failedCount}`,
+                  `English-paper batch translation cancelled: succeeded ${succeededCount}, skipped ${skippedCount}, failed ${failedCount}`,
+                )
+              : l(
+                  `英文论文批量翻译完成：成功 ${succeededCount}，跳过 ${skippedCount}，失败 ${failedCount}`,
+                  `English-paper batch translation finished: succeeded ${succeededCount}, skipped ${skippedCount}, failed ${failedCount}`,
+                ),
+        );
+      }
+    },
+    [
+      allKnownItems,
+      acquireBatchCoordinator,
+      l,
+      loadLibraryBatchItems,
+      loadLibraryPreviewBlocks,
+      releaseBatchCoordinator,
+      runLibraryItemTranslation,
+      setError,
+      setPreferencesOpen,
+      setStatusMessage,
+      settings.translationRequestsPerMinute,
+      translationConfigurationKey,
+      translationConfigured,
+    ],
+  );
+
   const handleBatchGenerateSummaries = useCallback(
     async (options?: { auto?: boolean }) => {
       const auto = options?.auto ?? false;
 
       if (batchSummaryRunningRef.current) {
+        return;
+      }
+
+      if (!acquireBatchCoordinator('summary', auto)) {
         return;
       }
 
@@ -382,6 +853,7 @@ export function useReaderLibraryBatchActions({
             l('缺少概览模型配置', 'Overview model configuration is missing'),
           );
         }
+        releaseBatchCoordinator('summary');
         return;
       }
 
@@ -394,31 +866,50 @@ export function useReaderLibraryBatchActions({
             ),
           );
         }
+        releaseBatchCoordinator('summary');
         return;
       }
 
       const concurrency = clampBatchConcurrency(settings.libraryBatchConcurrency);
-      const preparedCandidates = await Promise.all(
-        allKnownItems.map(async (item) => {
-          const parseResult =
-            settings.summarySourceMode === 'mineru-markdown'
-              ? await findExistingMineruJson(item)
-              : null;
-          const hasParse = Boolean(parseResult);
-          const attemptKey = getAutoSummaryAttemptKey(
-            item,
-            settings.summarySourceMode,
-            resolveSummaryOutputLanguage(settings),
-            hasParse,
-          );
+      let preparedCandidates: Array<{
+        attemptKey: string;
+        hasParse: boolean;
+        item: WorkspaceItem;
+      }>;
+      try {
+        preparedCandidates = await Promise.all(
+          allKnownItems.map(async (item) => {
+            const parseResult =
+              settings.summarySourceMode === 'mineru-markdown'
+                ? await findExistingMineruJson(item)
+                : null;
+            const hasParse = Boolean(parseResult);
+            const attemptKey = getAutoSummaryAttemptKey(
+              item,
+              settings.summarySourceMode,
+              resolveSummaryOutputLanguage(settings),
+              hasParse,
+            );
 
-          return {
-            item,
-            hasParse,
-            attemptKey,
-          };
-        }),
-      );
+            return {
+              item,
+              hasParse,
+              attemptKey,
+            };
+          }),
+        );
+      } catch (nextError) {
+        const message =
+          nextError instanceof Error
+            ? nextError.message
+            : l('检查概览候选失败', 'Failed to inspect overview candidates');
+        if (!auto) {
+          setError(message);
+          setStatusMessage(message);
+        }
+        releaseBatchCoordinator('summary');
+        return;
+      }
       const candidates = preparedCandidates.filter(
         ({ attemptKey }) => !(auto && autoSummaryAttemptedRef.current.has(attemptKey)),
       );
@@ -432,6 +923,7 @@ export function useReaderLibraryBatchActions({
             ),
           );
         }
+        releaseBatchCoordinator('summary');
         return;
       }
 
@@ -572,6 +1064,7 @@ export function useReaderLibraryBatchActions({
                   )
                 : '',
         });
+        releaseBatchCoordinator('summary');
       }
 
       if (!auto) {
@@ -589,10 +1082,12 @@ export function useReaderLibraryBatchActions({
       }
     },
     [
+      acquireBatchCoordinator,
       allKnownItems,
       findExistingMineruJson,
       generateLibraryPreview,
       l,
+      releaseBatchCoordinator,
       setError,
       setPreferencesOpen,
       setStatusMessage,
@@ -652,6 +1147,65 @@ export function useReaderLibraryBatchActions({
       l(
         '正在取消 MinerU 批量解析，当前进行中的任务完成后将停止。',
         'Cancelling the MinerU batch parsing. It will stop after the current tasks finish.',
+      ),
+    );
+  }, [l, setStatusMessage]);
+
+  const handleToggleBatchTranslationPause = useCallback(() => {
+    if (!batchTranslationRunningRef.current) {
+      return;
+    }
+
+    const nextPaused = !batchTranslationPausedRef.current;
+    batchTranslationPausedRef.current = nextPaused;
+    setBatchTranslationPaused(nextPaused);
+    setBatchTranslationProgress((current) =>
+      current.running
+        ? {
+            ...current,
+            paused: nextPaused,
+            cancelRequested: batchTranslationCancelRequestedRef.current,
+          }
+        : current,
+    );
+    setStatusMessage(
+      nextPaused
+        ? l('已暂停英文论文批量翻译', 'Paused English-paper batch translation')
+        : l('已继续英文论文批量翻译', 'Resumed English-paper batch translation'),
+    );
+  }, [l, setStatusMessage]);
+
+  const handleCancelBatchTranslation = useCallback(() => {
+    if (
+      !batchTranslationRunningRef.current ||
+      batchTranslationCancelRequestedRef.current
+    ) {
+      return;
+    }
+
+    batchTranslationCancelRequestedRef.current = true;
+    batchTranslationPausedRef.current = false;
+    batchTranslationRateLimitAbortControllerRef.current?.abort();
+    setBatchTranslationPaused(false);
+    setBatchTranslationProgress((current) =>
+      current.running
+        ? {
+            ...current,
+            paused: false,
+            cancelRequested: true,
+            currentLabel:
+              current.currentLabel ||
+              l(
+                '等待当前翻译请求完成并保存后停止…',
+                'Waiting for the current translation request to finish and save before stopping...',
+              ),
+          }
+        : current,
+    );
+    setStatusMessage(
+      l(
+        '当前翻译请求完成并写入缓存后停止；其返回译文会保留。',
+        'The batch will stop after the current translation request is saved; its returned translation will be kept.',
       ),
     );
   }, [l, setStatusMessage]);
@@ -734,55 +1288,94 @@ export function useReaderLibraryBatchActions({
   ]);
 
   useEffect(() => {
-    if (!configHydrated || !settings.autoMineruParse) {
-      return;
-    }
-
-    if (batchMineruRunningRef.current) {
-      return;
-    }
-
-    void handleBatchMineruParse({ auto: true });
+    autoTranslationAttemptedRef.current.clear();
+    autoTranslationBlockedSignatureRef.current = null;
   }, [
-    allKnownItems,
-    configHydrated,
-    handleBatchMineruParse,
-    settings.autoMineruParse,
+    settings.autoLoadSiblingJson,
+    settings.autoTranslateEnglishLibrary,
+    settings.mineruCacheDir,
+    translationConfigurationKey,
+    translationConfigured,
   ]);
 
   useEffect(() => {
-    if (!configHydrated || !settings.autoGenerateSummary || !summaryConfigured) {
+    if (
+      !configHydrated ||
+      (!settings.autoMineruParse &&
+        !settings.autoGenerateSummary &&
+        !settings.autoTranslateEnglishLibrary)
+    ) {
       return;
     }
 
-    if (batchSummaryRunningRef.current) {
+    autoPipelineLatestRunRef.current = async () => {
+      if (settings.autoMineruParse) {
+        await handleBatchMineruParse({ auto: true });
+      }
+
+      if (settings.autoGenerateSummary && summaryConfigured) {
+        await handleBatchGenerateSummaries({ auto: true });
+      }
+
+      if (settings.autoTranslateEnglishLibrary && translationConfigured) {
+        await handleBatchTranslateEnglish({ auto: true });
+      }
+    };
+
+    if (autoPipelineRunningRef.current) {
+      autoPipelineRerunRequestedRef.current = true;
       return;
     }
 
-    void handleBatchGenerateSummaries({ auto: true });
+    autoPipelineRunningRef.current = true;
+    void (async () => {
+      try {
+        do {
+          autoPipelineRerunRequestedRef.current = false;
+          await autoPipelineLatestRunRef.current?.();
+        } while (autoPipelineRerunRequestedRef.current);
+      } finally {
+        autoPipelineRunningRef.current = false;
+      }
+    })();
   }, [
     allKnownItems,
+    batchMineruRunning,
+    batchSummaryRunning,
+    batchTranslationRunning,
     configHydrated,
     handleBatchGenerateSummaries,
+    handleBatchMineruParse,
+    handleBatchTranslateEnglish,
     itemParseStatusMap,
     settings.autoGenerateSummary,
+    settings.autoMineruParse,
+    settings.autoTranslateEnglishLibrary,
     settings.summaryOutputLanguage,
+    settings.summarySourceMode,
     settings.uiLanguage,
     summaryConfigured,
+    translationConfigured,
   ]);
 
   return {
     batchMineruPaused,
     batchMineruProgress,
     batchMineruRunning,
+    batchTranslationPaused,
+    batchTranslationProgress,
+    batchTranslationRunning,
     batchSummaryPaused,
     batchSummaryProgress,
     batchSummaryRunning,
     handleBatchGenerateSummaries,
     handleBatchMineruParse,
+    handleBatchTranslateEnglish,
     handleCancelBatchMineru,
+    handleCancelBatchTranslation,
     handleCancelBatchSummary,
     handleToggleBatchMineruPause,
+    handleToggleBatchTranslationPause,
     handleToggleBatchSummaryPause,
   };
 }
