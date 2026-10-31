@@ -111,6 +111,8 @@ const SCROLL_EMIT_TRAILING_MS = 360;
 const THUMBNAIL_RENDER_IDLE_MS = 420;
 const OVERLAY_PAGE_RADIUS = 1;
 const PDF_VIEWER_MAX_CANVAS_PIXELS = 5_242_880;
+// Reuse the canvas during wheel zoom; redraw at full resolution after input pauses.
+const PDF_WHEEL_ZOOM_DRAWING_DELAY_MS = 60;
 const PDF_SELECTION_COMMIT_RETRY_DELAYS = [48, 120, 240, 420];
 
 type BBoxPageSizeSource = Pick<
@@ -1681,7 +1683,8 @@ function PdfViewer({
     let handlePagesInit: (() => void) | null = null;
     let handlePageChanging: ((event: { pageNumber?: number }) => void) | null = null;
     let handleScaleChanging: ((event: { scale?: number }) => void) | null = null;
-    let handlePageRendered: (() => void) | null = null;
+    let handlePageRender: ((event: { source?: { canvas?: HTMLCanvasElement; zoomLayer?: HTMLElement } }) => void) | null = null;
+    let handlePageRendered: ((event: { source?: { canvas?: HTMLCanvasElement }; cssTransform?: boolean }) => void) | null = null;
     let handleAnnotationEditorUiManager: ((event: { uiManager?: unknown }) => void) | null = null;
     let handleEditorStatesChanged:
       | ((event: { details?: { hasSelectedEditor?: boolean } }) => void)
@@ -1759,7 +1762,19 @@ function PdfViewer({
           );
         };
 
-        handlePageRendered = () => {
+        handlePageRender = (event) => {
+          const { canvas, zoomLayer } = event.source ?? {};
+          // PDF.js exposes a new canvas before its incremental drawing finishes.
+          // Keep its existing zoom layer visible until the replacement is ready.
+          if (canvas && zoomLayer && !zoomLayer.contains(canvas)) {
+            canvas.classList.add('pq-pdf-render-pending');
+          }
+        };
+
+        handlePageRendered = (event) => {
+          if (!event.cssTransform) {
+            event.source?.canvas?.classList.remove('pq-pdf-render-pending');
+          }
           if (syncPageHosts()) {
             retrySavedScrollRestore();
           }
@@ -1770,6 +1785,7 @@ function PdfViewer({
         eventBus.on('pagesinit', handlePagesInit);
         eventBus.on('pagechanging', handlePageChanging);
         eventBus.on('scalechanging', handleScaleChanging);
+        eventBus.on('pagerender', handlePageRender);
         eventBus.on('pagerendered', handlePageRendered);
 
         const loadingTask = getDocument(documentInit as any);
@@ -1834,6 +1850,9 @@ function PdfViewer({
       }
       if (eventBus && handlePageRendered) {
         eventBus.off('pagerendered', handlePageRendered);
+      }
+      if (eventBus && handlePageRender) {
+        eventBus.off('pagerender', handlePageRender);
       }
 
       const pdfDocumentToDestroy = pdfDocumentRef.current;
@@ -2574,12 +2593,43 @@ function PdfViewer({
 
       event.preventDefault();
 
-      if (event.deltaY < 0) {
-        pdfViewerRef.current?.increaseScale?.();
+      if (event.deltaY === 0) {
         return;
       }
 
-      pdfViewerRef.current?.decreaseScale?.();
+      // Let PDF.js preserve the point under the pointer without a scroll animation.
+      const options = {
+        origin: [event.clientX, event.clientY],
+        drawingDelay: PDF_WHEEL_ZOOM_DRAWING_DELAY_MS,
+      };
+      const page = Array.from(
+        viewerRef.current?.querySelectorAll<HTMLDivElement>('.page') ?? [],
+      ).find((element) => {
+        const rect = element.getBoundingClientRect();
+        return event.clientY >= rect.top && event.clientY <= rect.bottom;
+      });
+      const before = page?.getBoundingClientRect();
+      const anchor = before && before.width > 0 && before.height > 0
+        ? {
+            x: (event.clientX - before.left) / before.width,
+            y: (event.clientY - before.top) / before.height,
+          }
+        : null;
+
+      if (event.deltaY < 0) {
+        pdfViewerRef.current?.increaseScale?.(options);
+      } else {
+        pdfViewerRef.current?.decreaseScale?.(options);
+      }
+
+      // Correct for container padding and page rounding using the actual page geometry.
+      // Apply in the same event so no intermediate position is painted or restored later.
+      if (page && anchor) {
+        const after = page.getBoundingClientRect();
+        container.scrollLeft += after.left + anchor.x * after.width - event.clientX;
+        container.scrollTop += after.top + anchor.y * after.height - event.clientY;
+        pdfViewerRef.current?.update?.();
+      }
     };
 
     container.addEventListener('wheel', handleWheel, { passive: false });
