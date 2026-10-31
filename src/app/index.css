@@ -730,7 +730,14 @@ textarea,
 
 .paperquay-pdf-annotation .pdf-annotation-scroll,
 .paperquay-pdf-linked .pdf-annotation-scroll {
-  scroll-behavior: smooth;
+  /* PDF.js adjusts the scroll offset synchronously to preserve the zoom anchor. */
+  scroll-behavior: auto;
+}
+
+/* Keep the previous PDF.js zoom layer visible while the new canvas is drawn. */
+.paperquay-pdf-annotation .pdfViewer canvas.pq-pdf-render-pending,
+.paperquay-pdf-linked .pdfViewer canvas.pq-pdf-render-pending {
+  visibility: hidden;
 }
 
 .paperquay-pdf-annotation .pdfViewer .annotationEditorLayer .editToolbar .buttons > .delete,
